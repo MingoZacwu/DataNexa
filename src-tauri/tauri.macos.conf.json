@@ -1,0 +1,18 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "DataNexa",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 1180,
+        "minHeight": 760,
+        "resizable": true,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "shadow": true
+      }
+    ]
+  }
+}

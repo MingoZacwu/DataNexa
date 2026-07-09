@@ -33,6 +33,7 @@ const zhCN = {
   sidebar: {
     serverRunning: "服务运行中 · {port}",
     serverStopped: "服务已停止",
+    systemTheme: "跟随系统",
     darkMode: "深色模式",
     lightMode: "浅色模式",
     toggleTheme: "切换深浅色"
@@ -142,6 +143,10 @@ const zhCN = {
     legacySse: "兼容旧版 SSE",
     display: "显示",
     language: "界面语言",
+    theme: "主题",
+    themeSystem: "跟随系统",
+    themeLight: "浅色",
+    themeDark: "深色",
     auditLog: "审计日志",
     auditMaxEvents: "最多保留日志条数",
     policyConsole: "策略检查台",
@@ -249,6 +254,7 @@ const en: I18nMessages = {
   sidebar: {
     serverRunning: "Server running · {port}",
     serverStopped: "Server stopped",
+    systemTheme: "Use system theme",
     darkMode: "Dark mode",
     lightMode: "Light mode",
     toggleTheme: "Toggle theme"
@@ -358,6 +364,10 @@ const en: I18nMessages = {
     legacySse: "Legacy SSE compatibility",
     display: "Display",
     language: "Interface language",
+    theme: "Theme",
+    themeSystem: "System",
+    themeLight: "Light",
+    themeDark: "Dark",
     auditLog: "Audit log",
     auditMaxEvents: "Maximum retained log entries",
     policyConsole: "Policy console",

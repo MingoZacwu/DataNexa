@@ -21,6 +21,7 @@ import {
   Logs,
   Minus,
   Moon,
+  Monitor,
   MoreVertical,
   Play,
   Plus,
@@ -66,10 +67,37 @@ import type {
 
 type View = "overview" | "connections" | "server" | "tools" | "audit" | "settings";
 type SettingsTab = "general" | "about";
-type ThemeMode = "light" | "dark";
+type ThemeMode = "system" | "light" | "dark";
+type EffectiveTheme = "light" | "dark";
 type ToastTone = "success" | "error" | "info";
 
 const APP_VERSION = appConfig.version;
+const THEME_STORAGE_KEY = "datanexa.theme";
+
+function isThemeMode(value: string | null): value is ThemeMode {
+  return value === "system" || value === "light" || value === "dark";
+}
+
+function systemTheme(): EffectiveTheme {
+  if (typeof window === "undefined") return "light";
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function resolveTheme(mode: ThemeMode, fallback: EffectiveTheme): EffectiveTheme {
+  return mode === "system" ? fallback : mode;
+}
+
+function detectThemeMode(): ThemeMode {
+  if (typeof window === "undefined") return "system";
+  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+  return isThemeMode(stored) ? stored : "system";
+}
+
+function persistThemeMode(mode: ThemeMode) {
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(THEME_STORAGE_KEY, mode);
+  }
+}
 
 interface ToastMessage {
   id: string;
@@ -107,9 +135,9 @@ function App() {
   const [selectedAudit, setSelectedAudit] = useState<AuditEvent | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   const [locale, setLocale] = useState<Locale>(detectLocale);
-  const [theme, setTheme] = useState<ThemeMode>(() =>
-    document.documentElement.classList.contains("dark") ? "dark" : "light"
-  );
+  const [theme, setTheme] = useState<ThemeMode>(detectThemeMode);
+  const [systemThemeMode, setSystemThemeMode] = useState<EffectiveTheme>(systemTheme);
+  const effectiveTheme = resolveTheme(theme, systemThemeMode);
   const t = messages[locale];
 
   useEffect(() => {
@@ -117,17 +145,25 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const root = document.documentElement;
-    root.dataset.platform = /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent) ? "macos" : "other";
-
     const preventContextMenu = (event: globalThis.MouseEvent) => event.preventDefault();
     document.addEventListener("contextmenu", preventContextMenu);
     return () => document.removeEventListener("contextmenu", preventContextMenu);
   }, []);
 
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", theme === "dark");
-  }, [theme]);
+    const query = window.matchMedia("(prefers-color-scheme: dark)");
+    const updateSystemTheme = () => setSystemThemeMode(query.matches ? "dark" : "light");
+
+    updateSystemTheme();
+    query.addEventListener("change", updateSystemTheme);
+    return () => query.removeEventListener("change", updateSystemTheme);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.classList.toggle("dark", effectiveTheme === "dark");
+    persistThemeMode(theme);
+  }, [theme, effectiveTheme]);
 
   useEffect(() => {
     document.documentElement.lang = locale;
@@ -366,7 +402,8 @@ function App() {
               running={Boolean(snapshot?.server_status.running)}
               port={snapshot?.config.server.port ?? 17321}
               theme={theme}
-              onThemeToggle={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
+              effectiveTheme={effectiveTheme}
+              onThemeToggle={() => setTheme((current) => (current === "system" ? "dark" : current === "dark" ? "light" : "system"))}
             />
           </aside>
 
@@ -426,6 +463,8 @@ function App() {
                   <SettingsView
                     t={t}
                     locale={locale}
+                    theme={theme}
+                    effectiveTheme={effectiveTheme}
                     server={snapshot.config.server}
                     settings={snapshot.config.settings}
                     busy={busy}
@@ -434,6 +473,7 @@ function App() {
                     policyKind={policyKind}
                     policyResult={policyResult}
                     onTabChange={setSettingsTab}
+                    onThemeChange={setTheme}
                     onPolicyKindChange={setPolicyKind}
                     onSqlChange={setPolicySql}
                     onPolicyCheck={runPolicyCheck}
@@ -471,6 +511,8 @@ function App() {
 }
 
 function WindowChrome({ t }: { t: I18nMessages }) {
+  const isMacos = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
   function handleDragStart(event: ReactMouseEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
     if ((event.target as HTMLElement).closest("button")) return;
@@ -482,14 +524,16 @@ function WindowChrome({ t }: { t: I18nMessages }) {
       <div className="window-title" data-tauri-drag-region>
         DataNexa
       </div>
-      <div className="window-controls">
-        <button type="button" className="window-control minimize" onClick={() => void api.minimizeWindow().catch(() => undefined)} aria-label={t.common.minimize}>
-          <Minus size={13} />
-        </button>
-        <button type="button" className="window-control close" onClick={() => void api.hideWindow().catch(() => undefined)} aria-label={t.common.close}>
-          <X size={13} />
-        </button>
-      </div>
+      {!isMacos && (
+        <div className="window-controls">
+          <button type="button" className="window-control minimize" onClick={() => void api.minimizeWindow().catch(() => undefined)} aria-label={t.common.minimize}>
+            <Minus size={13} />
+          </button>
+          <button type="button" className="window-control close" onClick={() => void api.hideWindow().catch(() => undefined)} aria-label={t.common.close}>
+            <X size={13} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -499,15 +543,18 @@ function SidebarFooter({
   running,
   port,
   theme,
+  effectiveTheme,
   onThemeToggle
 }: {
   t: I18nMessages;
   running: boolean;
   port: number;
   theme: ThemeMode;
+  effectiveTheme: EffectiveTheme;
   onThemeToggle: () => void;
 }) {
-  const ThemeIcon = theme === "dark" ? Moon : Sun;
+  const ThemeIcon = theme === "system" ? Monitor : effectiveTheme === "dark" ? Moon : Sun;
+  const themeLabel = theme === "system" ? t.sidebar.systemTheme : effectiveTheme === "dark" ? t.sidebar.darkMode : t.sidebar.lightMode;
   return (
     <div className="sidebar-footer">
       <div className={clsx("sidebar-status-line", running && "running")}>
@@ -515,7 +562,7 @@ function SidebarFooter({
         <span>{running ? formatMessage(t.sidebar.serverRunning, { port }) : t.sidebar.serverStopped}</span>
       </div>
       <span className="footer-divider" aria-hidden="true" />
-      <IconTooltip label={theme === "dark" ? t.sidebar.darkMode : t.sidebar.lightMode}>
+      <IconTooltip label={themeLabel}>
         <button type="button" className="sidebar-theme-button" onClick={onThemeToggle} aria-label={t.sidebar.toggleTheme}>
           <ThemeIcon size={16} />
         </button>
@@ -530,6 +577,45 @@ function NavButton({ icon, label, active, onClick }: { icon: ReactNode; label: s
       {icon}
       <span>{label}</span>
     </button>
+  );
+}
+
+function ThemeModeControl({
+  t,
+  theme,
+  effectiveTheme,
+  disabled,
+  onChange
+}: {
+  t: I18nMessages;
+  theme: ThemeMode;
+  effectiveTheme: EffectiveTheme;
+  disabled?: boolean;
+  onChange: (theme: ThemeMode) => void;
+}) {
+  const options: Array<{ value: ThemeMode; label: string; icon: ReactNode }> = [
+    { value: "system", label: t.settings.themeSystem, icon: <Monitor size={15} /> },
+    { value: "light", label: t.settings.themeLight, icon: <Sun size={15} /> },
+    { value: "dark", label: t.settings.themeDark, icon: <Moon size={15} /> }
+  ];
+
+  return (
+    <div className="theme-mode-control" role="radiogroup" aria-label={t.settings.theme} data-effective-theme={effectiveTheme}>
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          role="radio"
+          aria-checked={theme === option.value}
+          className={clsx(theme === option.value && "active")}
+          disabled={disabled}
+          onClick={() => onChange(option.value)}
+        >
+          {option.icon}
+          <span>{option.label}</span>
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -818,6 +904,8 @@ function AuditView({ t, events, onSelect }: { t: I18nMessages; events: AuditEven
 function SettingsView({
   t,
   locale,
+  theme,
+  effectiveTheme,
   server,
   settings,
   busy,
@@ -826,6 +914,7 @@ function SettingsView({
   policyKind,
   policyResult,
   onTabChange,
+  onThemeChange,
   onPolicyKindChange,
   onSqlChange,
   onPolicyCheck,
@@ -835,6 +924,8 @@ function SettingsView({
 }: {
   t: I18nMessages;
   locale: Locale;
+  theme: ThemeMode;
+  effectiveTheme: EffectiveTheme;
   server: ServerConfig;
   settings: SettingsConfig;
   busy: boolean;
@@ -843,6 +934,7 @@ function SettingsView({
   policyKind: DatabaseType;
   policyResult: PolicyCheckResult | null;
   onTabChange: (tab: SettingsTab) => void;
+  onThemeChange: (theme: ThemeMode) => void;
   onPolicyKindChange: (kind: DatabaseType) => void;
   onSqlChange: (sql: string) => void;
   onPolicyCheck: () => void;
@@ -923,6 +1015,9 @@ function SettingsView({
                     </option>
                   ))}
                 </select>
+              </Field>
+              <Field label={t.settings.theme} span>
+                <ThemeModeControl t={t} theme={theme} effectiveTheme={effectiveTheme} disabled={busy} onChange={onThemeChange} />
               </Field>
             </div>
           </section>

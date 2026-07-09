@@ -147,11 +147,7 @@ p {
 :root[data-platform="macos"] .window-chrome {
   justify-content: flex-start;
   padding-right: 14px;
-  padding-left: 12px;
-}
-
-:root[data-platform="macos"] .window-controls {
-  order: -1;
+  padding-left: 76px;
 }
 
 :root[data-platform="macos"] .window-title {
@@ -871,6 +867,47 @@ p {
 
 .settings-grid {
   align-items: start;
+}
+
+.theme-mode-control {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.10);
+}
+
+.theme-mode-control button {
+  min-width: 0;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  font-weight: 800;
+}
+
+.theme-mode-control button:hover {
+  color: var(--blue);
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.theme-mode-control button.active {
+  color: var(--blue);
+  background: var(--surface-strong);
+  box-shadow: var(--soft-shadow);
+}
+
+.theme-mode-control button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .align-start {
