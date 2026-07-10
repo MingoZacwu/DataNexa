@@ -75,11 +75,7 @@ impl DatabaseManager {
     pub async fn close(&self, connection_id: &str) {
         let pool = self.pools.write().await.remove(connection_id);
         if let Some(pool) = pool {
-            match pool {
-                ManagedPool::Sqlite(pool) => pool.close().await,
-                ManagedPool::Mysql(pool) => pool.close().await,
-                ManagedPool::Postgres(pool) => pool.close().await,
-            }
+            close_pool(pool).await;
         }
     }
 
@@ -113,6 +109,21 @@ impl DatabaseManager {
                 .await??;
             }
         }
+        Ok(started.elapsed())
+    }
+
+    pub async fn test_connection_once(
+        &self,
+        config: &ConnectionConfig,
+        vault: &CredentialVault,
+        password_override: Option<&str>,
+        text: &BackendText,
+    ) -> anyhow::Result<Duration> {
+        let started = Instant::now();
+        let pool = connect_pool_with_password(config, vault, password_override, text).await?;
+        let result = probe_pool(config, &pool).await;
+        close_pool(pool).await;
+        result?;
         Ok(started.elapsed())
     }
 
@@ -399,6 +410,15 @@ async fn connect_pool(
     vault: &CredentialVault,
     text: &BackendText,
 ) -> anyhow::Result<ManagedPool> {
+    connect_pool_with_password(config, vault, None, text).await
+}
+
+async fn connect_pool_with_password(
+    config: &ConnectionConfig,
+    vault: &CredentialVault,
+    password_override: Option<&str>,
+    text: &BackendText,
+) -> anyhow::Result<ManagedPool> {
     let max_connections = config.max_connections.clamp(1, 3);
     match config.kind {
         DbKind::Sqlite => {
@@ -414,7 +434,7 @@ async fn connect_pool(
             Ok(ManagedPool::Sqlite(pool))
         }
         DbKind::Mysql => {
-            let password = resolve_password(config, vault)?;
+            let password = resolve_password(config, vault, password_override)?;
             let host = required(config.host.as_deref(), "MySQL host")?;
             let options = MySqlConnectOptions::new()
                 .host(host)
@@ -445,7 +465,7 @@ async fn connect_pool(
             Ok(ManagedPool::Mysql(pool))
         }
         DbKind::Postgres => {
-            let password = resolve_password(config, vault)?;
+            let password = resolve_password(config, vault, password_override)?;
             let host = required(config.host.as_deref(), "PostgreSQL host")?;
             let ssl_mode = pg_ssl_mode(config)?;
             let options = PgConnectOptions::new()
@@ -471,6 +491,29 @@ async fn connect_pool(
             Ok(ManagedPool::Postgres(pool))
         }
     }
+}
+
+async fn close_pool(pool: ManagedPool) {
+    match pool {
+        ManagedPool::Sqlite(pool) => pool.close().await,
+        ManagedPool::Mysql(pool) => pool.close().await,
+        ManagedPool::Postgres(pool) => pool.close().await,
+    }
+}
+
+async fn probe_pool(config: &ConnectionConfig, pool: &ManagedPool) -> anyhow::Result<()> {
+    match pool {
+        ManagedPool::Sqlite(pool) => {
+            timeout(query_timeout(config), sqlx::query("SELECT 1").execute(pool)).await??;
+        }
+        ManagedPool::Mysql(pool) => {
+            timeout(query_timeout(config), sqlx::query("SELECT 1").execute(pool)).await??;
+        }
+        ManagedPool::Postgres(pool) => {
+            timeout(query_timeout(config), sqlx::query("SELECT 1").execute(pool)).await??;
+        }
+    }
+    Ok(())
 }
 
 fn annotate_connect_error(kind: &DbKind, error: sqlx::Error, text: &BackendText) -> anyhow::Error {
@@ -535,7 +578,15 @@ fn pg_ssl_mode(config: &ConnectionConfig) -> anyhow::Result<PgSslMode> {
     })
 }
 
-fn resolve_password(config: &ConnectionConfig, vault: &CredentialVault) -> anyhow::Result<String> {
+fn resolve_password(
+    config: &ConnectionConfig,
+    vault: &CredentialVault,
+    password_override: Option<&str>,
+) -> anyhow::Result<String> {
+    if let Some(password) = password_override {
+        return Ok(password.to_string());
+    }
+
     match config.credential_ref.as_deref() {
         Some(credential_ref) => Ok(vault.get(credential_ref)?.unwrap_or_default()),
         None => Ok(String::new()),

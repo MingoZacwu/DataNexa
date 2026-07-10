@@ -157,6 +157,35 @@ function withToolEnabled(name: string, enabled: boolean): AppSnapshot {
   };
 }
 
+function withConnectionEnabled(id: string, enabled: boolean): AppSnapshot {
+  return {
+    ...mockSnapshot,
+    config: {
+      ...mockSnapshot.config,
+      connections: mockSnapshot.config.connections.map((connection) =>
+        connection.id === id ? { ...connection, enabled } : connection
+      )
+    }
+  };
+}
+
+function withAllConnectionsDisabled(): AppSnapshot {
+  return {
+    ...mockSnapshot,
+    config: {
+      ...mockSnapshot.config,
+      connections: mockSnapshot.config.connections.map((connection) => ({ ...connection, enabled: false }))
+    }
+  };
+}
+
+function withAuditCleared(): AppSnapshot {
+  return {
+    ...mockSnapshot,
+    audit_events: []
+  };
+}
+
 export const api = {
   snapshot: () => command<AppSnapshot>("get_app_snapshot", undefined, mockSnapshot),
   saveServerConfig: (server: ServerConfig) =>
@@ -168,7 +197,15 @@ export const api = {
   upsertConnection: (input: ConnectionInput) =>
     command<AppSnapshot>("upsert_connection", { input }, mockSnapshot),
   deleteConnection: (id: string) => command<AppSnapshot>("delete_connection", { id }, mockSnapshot),
+  setConnectionEnabled: (id: string, enabled: boolean) =>
+    command<AppSnapshot>("set_connection_enabled", { id, enabled }, withConnectionEnabled(id, enabled)),
+  disableAllConnections: () =>
+    command<AppSnapshot>("disable_all_connections", undefined, withAllConnectionsDisabled()),
+  clearAuditEvents: () =>
+    command<AppSnapshot>("clear_audit_events", undefined, withAuditCleared()),
   testConnection: (id: string) => command<string>("test_connection", { id }, previewText.previewTestConnection),
+  testConnectionInput: (input: ConnectionInput) =>
+    command<string>("test_connection_input", { input }, previewText.previewTestConnection),
   diagnoseConnection: (id: string) =>
     command<ConnectionDiagnostics>("diagnose_connection", { id }, {
       id,

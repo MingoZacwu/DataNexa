@@ -182,6 +182,68 @@ pub async fn delete_connection(
 }
 
 #[tauri::command]
+pub async fn set_connection_enabled(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+    enabled: bool,
+) -> Result<AppSnapshot, String> {
+    {
+        let mut config = state.config.write().await;
+        let Some(connection) = config
+            .connections
+            .iter_mut()
+            .find(|connection| connection.id == id)
+        else {
+            return Err("connection not found".to_string());
+        };
+
+        connection.enabled = enabled;
+        state.store.save(&config).map_err(to_client_error)?;
+    }
+
+    if !enabled {
+        state.db.close(&id).await;
+    }
+
+    snapshot(state.inner()).await.map_err(to_client_error)
+}
+
+#[tauri::command]
+pub async fn disable_all_connections(
+    state: State<'_, Arc<AppState>>,
+) -> Result<AppSnapshot, String> {
+    let connection_ids = {
+        let mut config = state.config.write().await;
+        let connection_ids = config
+            .connections
+            .iter()
+            .map(|connection| connection.id.clone())
+            .collect::<Vec<_>>();
+
+        for connection in &mut config.connections {
+            connection.enabled = false;
+        }
+
+        state.store.save(&config).map_err(to_client_error)?;
+        connection_ids
+    };
+
+    for id in connection_ids {
+        state.db.close(&id).await;
+    }
+
+    snapshot(state.inner()).await.map_err(to_client_error)
+}
+
+#[tauri::command]
+pub async fn clear_audit_events(
+    state: State<'_, Arc<AppState>>,
+) -> Result<AppSnapshot, String> {
+    state.audit.clear().await;
+    snapshot(state.inner()).await.map_err(to_client_error)
+}
+
+#[tauri::command]
 pub async fn test_connection(
     state: State<'_, Arc<AppState>>,
     id: String,
@@ -234,6 +296,70 @@ pub async fn test_connection(
                 to_client_error(error),
                 format_diagnostics_for_client(&diagnostics, &text)
             ))
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn test_connection_input(
+    state: State<'_, Arc<AppState>>,
+    input: ConnectionInput,
+) -> Result<String, String> {
+    let text = text_for_state(state.inner()).await;
+    validate_connection(&input.connection, &text).map_err(to_client_error)?;
+
+    let clear_password = input.clear_password;
+    let password = input.password;
+    let mut connection = normalize_connection(input.connection);
+    if clear_password {
+        connection.credential_ref = None;
+    }
+
+    let started = Instant::now();
+    let max_events = audit_limit(state.inner()).await;
+    let connection_id = connection.id.clone();
+    let password_override = if clear_password {
+        None
+    } else {
+        password.as_deref().filter(|value| !value.is_empty())
+    };
+
+    match state
+        .db
+        .test_connection_once(&connection, &state.vault, password_override, &text)
+        .await
+    {
+        Ok(duration) => {
+            state
+                .audit
+                .record_with_limit(
+                    Some(connection_id),
+                    "test_connection",
+                    AuditStatus::Allowed,
+                    None,
+                    Some(duration.as_millis().try_into().unwrap_or(u64::MAX)),
+                    None,
+                    None,
+                    max_events,
+                )
+                .await;
+            Ok(text.connection_test_ok(duration.as_millis()))
+        }
+        Err(error) => {
+            state
+                .audit
+                .record_with_limit(
+                    Some(connection_id),
+                    "test_connection",
+                    AuditStatus::Error,
+                    Some(sanitize_error(&error)),
+                    Some(started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)),
+                    None,
+                    None,
+                    max_events,
+                )
+                .await;
+            Err(to_client_error(&error))
         }
     }
 }

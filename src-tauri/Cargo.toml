@@ -1,6 +1,6 @@
 [package]
 name = "datanexa"
-version = "0.1.1"
+version = "0.1.2"
 description = "Local readonly MCP database gateway"
 authors = ["Zachary Wu"]
 edition = "2021"

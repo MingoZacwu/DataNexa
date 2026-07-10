@@ -25,6 +25,7 @@ import {
   MoreVertical,
   Play,
   Plus,
+  Power,
   RefreshCw,
   SearchCheck,
   Server,
@@ -39,7 +40,8 @@ import {
 import { useEffect, useState } from "react";
 import type { FormEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import appConfig from "../app.config.json";
-import logoUrl from "../resources/icon.png";
+import appIconUrl from "../resources/icon.png";
+import brandLogoUrl from "../resources/datanexa.png";
 import quickStep1Url from "../resources/quickguide/step1.png";
 import quickStep2Url from "../resources/quickguide/step2.png";
 import quickStep3Url from "../resources/quickguide/step3.png";
@@ -73,6 +75,7 @@ type ToastTone = "success" | "error" | "info";
 
 const APP_VERSION = appConfig.version;
 const THEME_STORAGE_KEY = "datanexa.theme";
+const AUDIT_PAGE_SIZE = 50;
 
 function isThemeMode(value: string | null): value is ThemeMode {
   return value === "system" || value === "light" || value === "dark";
@@ -257,10 +260,73 @@ function App() {
     }
   }
 
+  async function setConnectionEnabled(id: string, enabled: boolean) {
+    setBusy(true);
+    try {
+      const connectionName = snapshot?.config.connections.find((connection) => connection.id === id)?.name ?? id;
+      setSnapshot(await api.setConnectionEnabled(id, enabled));
+      pushToast(
+        formatMessage(enabled ? t.toast.connectionEnabled : t.toast.connectionDisabled, {
+          connection: connectionName
+        }),
+        "info"
+      );
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disableAllConnections() {
+    setBusy(true);
+    try {
+      setSnapshot(await api.disableAllConnections());
+      pushToast(t.toast.allConnectionsDisabled, "info");
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearAuditEvents() {
+    setBusy(true);
+    try {
+      setSnapshot(await api.clearAuditEvents());
+      setSelectedAudit(null);
+      pushToast(t.toast.auditCleared, "info");
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function testConnection(id: string) {
     setBusy(true);
     try {
       pushToast(await api.testConnection(id), "info");
+      await refresh({ quiet: true });
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function testEditingConnection() {
+    if (!editing) return;
+    setBusy(true);
+    try {
+      pushToast(
+        await api.testConnectionInput({
+          connection: editing,
+          password: password.length > 0 ? password : null,
+          clear_password: clearPassword
+        }),
+        "info"
+      );
       await refresh({ quiet: true });
     } catch (error) {
       showError(error);
@@ -382,7 +448,7 @@ function App() {
         <div className="app-body">
           <aside className="sidebar">
             <div className="brand">
-              <img src={logoUrl} alt="DataNexa" />
+              <img src={brandLogoUrl} alt="DataNexa" />
               <div>
                 <strong>DataNexa</strong>
               </div>
@@ -401,9 +467,9 @@ function App() {
               t={t}
               running={Boolean(snapshot?.server_status.running)}
               port={snapshot?.config.server.port ?? 17321}
-              theme={theme}
-              effectiveTheme={effectiveTheme}
-              onThemeToggle={() => setTheme((current) => (current === "system" ? "dark" : current === "dark" ? "light" : "system"))}
+              busy={busy}
+              disabled={!snapshot}
+              onToggle={toggleServer}
             />
           </aside>
 
@@ -411,9 +477,31 @@ function App() {
             <header className="topbar">
               <h1>{viewTitle(t, activeView)}</h1>
               <div className="top-actions">
-                <button type="button" className="icon-button" onClick={() => refresh()} disabled={busy} aria-label={t.common.refresh}>
-                  <RefreshCw size={17} />
-                </button>
+                <div className="top-icon-actions">
+                  {snapshot && activeView === "connections" && (
+                    <IconTooltip label={t.connections.emergencyDisable}>
+                      <button type="button" className="icon-button danger" onClick={disableAllConnections} disabled={busy || connections.length === 0} aria-label={t.connections.emergencyDisable}>
+                        <AlertTriangle size={17} />
+                      </button>
+                    </IconTooltip>
+                  )}
+                  {snapshot && activeView === "audit" && (
+                    <IconTooltip label={t.audit.clear}>
+                      <button type="button" className="icon-button danger" onClick={clearAuditEvents} disabled={busy || snapshot.audit_events.length === 0} aria-label={t.audit.clear}>
+                        <Trash2 size={17} />
+                      </button>
+                    </IconTooltip>
+                  )}
+                  <button type="button" className="icon-button" onClick={() => refresh()} disabled={busy} aria-label={t.common.refresh}>
+                    <RefreshCw size={17} />
+                  </button>
+                </div>
+                {snapshot && activeView === "connections" && (
+                  <button type="button" className="button primary" onClick={openNewConnection} disabled={busy}>
+                    <Plus size={16} />
+                    {t.overview.newConnection}
+                  </button>
+                )}
               </div>
             </header>
 
@@ -439,11 +527,11 @@ function App() {
                     t={t}
                     connections={connections}
                     busy={busy}
-                    onAdd={openNewConnection}
                     onEdit={openExistingConnection}
                     onDelete={deleteConnection}
                     onTest={testConnection}
                     onDiagnose={diagnoseConnection}
+                    onToggleEnabled={setConnectionEnabled}
                   />
                 )}
                 {activeView === "server" && (
@@ -501,6 +589,7 @@ function App() {
             if (checked) setPassword("");
           }}
           onEditingChange={setEditing}
+          onTest={testEditingConnection}
           onSubmit={saveConnection}
           onClose={() => setEditing(null)}
         />
@@ -542,19 +631,18 @@ function SidebarFooter({
   t,
   running,
   port,
-  theme,
-  effectiveTheme,
-  onThemeToggle
+  busy,
+  disabled,
+  onToggle
 }: {
   t: I18nMessages;
   running: boolean;
   port: number;
-  theme: ThemeMode;
-  effectiveTheme: EffectiveTheme;
-  onThemeToggle: () => void;
+  busy: boolean;
+  disabled: boolean;
+  onToggle: () => void;
 }) {
-  const ThemeIcon = theme === "system" ? Monitor : effectiveTheme === "dark" ? Moon : Sun;
-  const themeLabel = theme === "system" ? t.sidebar.systemTheme : effectiveTheme === "dark" ? t.sidebar.darkMode : t.sidebar.lightMode;
+  const toggleLabel = running ? t.server.stop : t.server.start;
   return (
     <div className="sidebar-footer">
       <div className={clsx("sidebar-status-line", running && "running")}>
@@ -562,9 +650,15 @@ function SidebarFooter({
         <span>{running ? formatMessage(t.sidebar.serverRunning, { port }) : t.sidebar.serverStopped}</span>
       </div>
       <span className="footer-divider" aria-hidden="true" />
-      <IconTooltip label={themeLabel}>
-        <button type="button" className="sidebar-theme-button" onClick={onThemeToggle} aria-label={t.sidebar.toggleTheme}>
-          <ThemeIcon size={16} />
+      <IconTooltip label={toggleLabel}>
+        <button
+          type="button"
+          className={clsx("sidebar-service-button", running && "running")}
+          onClick={onToggle}
+          disabled={busy || disabled}
+          aria-label={toggleLabel}
+        >
+          {running ? <Square size={16} /> : <Play size={16} />}
         </button>
       </IconTooltip>
     </div>
@@ -584,12 +678,14 @@ function ThemeModeControl({
   t,
   theme,
   effectiveTheme,
+  labelledBy,
   disabled,
   onChange
 }: {
   t: I18nMessages;
   theme: ThemeMode;
   effectiveTheme: EffectiveTheme;
+  labelledBy?: string;
   disabled?: boolean;
   onChange: (theme: ThemeMode) => void;
 }) {
@@ -600,7 +696,13 @@ function ThemeModeControl({
   ];
 
   return (
-    <div className="theme-mode-control" role="radiogroup" aria-label={t.settings.theme} data-effective-theme={effectiveTheme}>
+    <div
+      className="theme-mode-control"
+      role="radiogroup"
+      aria-label={labelledBy ? undefined : t.settings.theme}
+      aria-labelledby={labelledBy}
+      data-effective-theme={effectiveTheme}
+    >
       {options.map((option) => (
         <button
           key={option.value}
@@ -716,25 +818,24 @@ function ConnectionsView({
   t,
   connections,
   busy,
-  onAdd,
   onEdit,
   onDelete,
   onTest,
-  onDiagnose
+  onDiagnose,
+  onToggleEnabled
 }: {
   t: I18nMessages;
   connections: ConnectionConfig[];
   busy: boolean;
-  onAdd: () => void;
   onEdit: (connection: ConnectionConfig) => void;
   onDelete: (id: string) => void;
   onTest: (id: string) => void;
   onDiagnose: (id: string) => void;
+  onToggleEnabled: (id: string, enabled: boolean) => void;
 }) {
   return (
-    <section className="panel page-panel">
-      <PanelHeader title={t.connections.title} action={t.overview.newConnection} onAction={onAdd} />
-      <div className="connection-list">
+    <section className="panel page-panel list-page-panel">
+      <div className="connection-list page-scroll-list">
         {connections.length === 0 ? (
           <div className="empty-state">{t.connections.empty}</div>
         ) : (
@@ -748,6 +849,7 @@ function ConnectionsView({
               onDelete={onDelete}
               onTest={onTest}
               onDiagnose={onDiagnose}
+              onToggleEnabled={onToggleEnabled}
             />
           ))
         )}
@@ -870,9 +972,18 @@ function ServerView({
 }
 
 function AuditView({ t, events, onSelect }: { t: I18nMessages; events: AuditEvent[]; onSelect: (event: AuditEvent) => void }) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(events.length / AUDIT_PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * AUDIT_PAGE_SIZE;
+  const pageEvents = events.slice(pageStart, pageStart + AUDIT_PAGE_SIZE);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, totalPages));
+  }, [totalPages]);
+
   return (
-    <section className="panel page-panel">
-      <PanelHeader title={t.audit.title} />
+    <section className="panel page-panel list-page-panel audit-page-panel">
       <div className="audit-table">
         <div className="audit-row header">
           <span>{t.audit.time}</span>
@@ -881,20 +992,35 @@ function AuditView({ t, events, onSelect }: { t: I18nMessages; events: AuditEven
           <span>{t.audit.status}</span>
           <span>{t.audit.detail}</span>
         </div>
-        {events.length === 0 ? (
-          <div className="empty-state">{t.audit.empty}</div>
-        ) : (
-          events.map((event) => (
-            <button type="button" className="audit-row audit-button" key={event.id} onClick={() => onSelect(event)}>
-              <span>{new Date(event.timestamp).toLocaleString()}</span>
-              <span>{event.tool}</span>
-              <span>{event.connection_id ?? t.common.system}</span>
-              <span>
-                <StatusPill tone={statusTone(event.status)} label={statusLabel(t, event.status)} />
-              </span>
-              <span>{event.reason ?? formatMessage(t.common.rowsElapsed, { rows: event.row_count ?? 0, elapsed: event.elapsed_ms ?? 0 })}</span>
-            </button>
-          ))
+        <div className="audit-table-body">
+          {events.length === 0 ? (
+            <div className="empty-state">{t.audit.empty}</div>
+          ) : (
+            pageEvents.map((event) => (
+              <button type="button" className="audit-row audit-button" key={event.id} onClick={() => onSelect(event)}>
+                <span>{new Date(event.timestamp).toLocaleString()}</span>
+                <span>{event.tool}</span>
+                <span>{event.connection_id ?? t.common.system}</span>
+                <span>
+                  <StatusPill tone={statusTone(event.status)} label={statusLabel(t, event.status)} />
+                </span>
+                <span>{event.reason ?? formatMessage(t.common.rowsElapsed, { rows: event.row_count ?? 0, elapsed: event.elapsed_ms ?? 0 })}</span>
+              </button>
+            ))
+          )}
+        </div>
+        {events.length > 0 && (
+          <div className="pagination-footer">
+            <span>{formatMessage(t.audit.pageInfo, { page: currentPage, totalPages, total: events.length })}</span>
+            <div className="pagination-actions">
+              <button type="button" className="button ghost" disabled={currentPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
+                {t.common.previous}
+              </button>
+              <button type="button" className="button ghost" disabled={currentPage >= totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}>
+                {t.common.next}
+              </button>
+            </div>
+          </div>
         )}
       </div>
     </section>
@@ -944,6 +1070,7 @@ function SettingsView({
 }) {
   const [serverDraft, setServerDraft] = useState(server);
   const [settingsDraft, setSettingsDraft] = useState(settings);
+  const [policyDialogOpen, setPolicyDialogOpen] = useState(false);
 
   useEffect(() => setServerDraft(server), [server]);
   useEffect(() => setSettingsDraft(settings), [settings]);
@@ -1016,9 +1143,17 @@ function SettingsView({
                   ))}
                 </select>
               </Field>
-              <Field label={t.settings.theme} span>
-                <ThemeModeControl t={t} theme={theme} effectiveTheme={effectiveTheme} disabled={busy} onChange={onThemeChange} />
-              </Field>
+              <div className="field span-all">
+                <span id="settings-theme-mode-label">{t.settings.theme}</span>
+                <ThemeModeControl
+                  t={t}
+                  theme={theme}
+                  effectiveTheme={effectiveTheme}
+                  labelledBy="settings-theme-mode-label"
+                  disabled={busy}
+                  onChange={onThemeChange}
+                />
+              </div>
             </div>
           </section>
 
@@ -1038,49 +1173,74 @@ function SettingsView({
             </div>
           </section>
 
-          <section className="panel policy-panel">
-            <h2>{t.settings.policyConsole}</h2>
-            <div className="policy-toolbar">
-              <Field label={t.settings.sqlDialect}>
-                <select value={policyKind} onChange={(event) => onPolicyKindChange(event.target.value as DatabaseType)}>
-                  <option value="mysql">MySQL</option>
-                  <option value="postgres">PostgreSQL</option>
-                  <option value="sqlite">SQLite</option>
-                </select>
-              </Field>
-              <button type="button" className="button primary" disabled={busy} onClick={onPolicyCheck}>
-                <SearchCheck size={17} />
-                {t.settings.checkSql}
-              </button>
-            </div>
-            <textarea value={policySql} onChange={(event) => onSqlChange(event.target.value)} spellCheck={false} />
-            {policyResult && (
-              <div className={clsx("policy-result", policyResult.allowed ? "allowed" : "denied")}>
-                {policyResult.allowed ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
-                <div>
-                  <strong>{policyResult.allowed ? t.settings.allowed : t.settings.denied}</strong>
-                  <p>{policyResult.reason}</p>
-                  {policyResult.rewritten_sql && <code>{policyResult.rewritten_sql}</code>}
-                </div>
+          <Dialog.Root open={policyDialogOpen} onOpenChange={setPolicyDialogOpen}>
+            <section className="panel safety-panel">
+              <div className="panel-header">
+                <h2>{t.settings.securityPosture}</h2>
+                <Dialog.Trigger asChild>
+                  <button type="button" className="button primary" disabled={busy}>
+                    <SearchCheck size={16} />
+                    {t.settings.checkSql}
+                  </button>
+                </Dialog.Trigger>
               </div>
-            )}
-          </section>
-
-          <section className="panel">
-            <h2>{t.settings.securityPosture}</h2>
-            <ul className="security-list">
-              <li><ShieldCheck size={16} /> {t.settings.securityAst}</li>
-              <li><KeyRound size={16} /> {t.settings.securityVault}</li>
-              <li><FileText size={16} /> {t.settings.securityAudit}</li>
-              <li><ListChecks size={16} /> {t.settings.securityReadonly}</li>
-            </ul>
-          </section>
+              <ul className="security-list">
+                <li><ShieldCheck size={16} /> {t.settings.securityAst}</li>
+                <li><ListChecks size={16} /> {t.settings.securityReadonly}</li>
+                <li><KeyRound size={16} /> {t.settings.securityVault}</li>
+                <li><FileText size={16} /> {t.settings.securityAudit}</li>
+                <li className="security-warning"><AlertTriangle size={16} /> {t.settings.securityWarning}</li>
+              </ul>
+            </section>
+            <Dialog.Portal>
+              <Dialog.Overlay className="dialog-overlay" />
+              <Dialog.Content className="policy-dialog">
+                <div className="dialog-titlebar">
+                  <div>
+                    <Dialog.Title>{t.settings.policyConsole}</Dialog.Title>
+                    <Dialog.Description>{t.settings.policyDescription}</Dialog.Description>
+                  </div>
+                  <Dialog.Close asChild>
+                    <button type="button" className="icon-button" aria-label={t.common.close}>
+                      <X size={18} />
+                    </button>
+                  </Dialog.Close>
+                </div>
+                <div className="policy-panel">
+                  <div className="policy-toolbar">
+                    <Field label={t.settings.sqlDialect}>
+                      <select value={policyKind} onChange={(event) => onPolicyKindChange(event.target.value as DatabaseType)}>
+                        <option value="mysql">MySQL</option>
+                        <option value="postgres">PostgreSQL</option>
+                        <option value="sqlite">SQLite</option>
+                      </select>
+                    </Field>
+                    <button type="button" className="button primary" disabled={busy} onClick={onPolicyCheck}>
+                      <SearchCheck size={17} />
+                      {t.settings.checkSql}
+                    </button>
+                  </div>
+                  <textarea value={policySql} onChange={(event) => onSqlChange(event.target.value)} spellCheck={false} />
+                  {policyResult && (
+                    <div className={clsx("policy-result", policyResult.allowed ? "allowed" : "denied")}>
+                      {policyResult.allowed ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
+                      <div>
+                        <strong>{policyResult.allowed ? t.settings.allowed : t.settings.denied}</strong>
+                        <p>{policyResult.reason}</p>
+                        {policyResult.rewritten_sql && <code>{policyResult.rewritten_sql}</code>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </Dialog.Content>
+            </Dialog.Portal>
+          </Dialog.Root>
         </div>
       ) : (
         <div className="settings-stack">
           <section className="panel about-panel">
             <div className="about-hero">
-              <img src={logoUrl} alt="DataNexa" />
+              <img src={appIconUrl} alt="DataNexa" />
               <div>
                 <h2>DataNexa <span className="version-badge">v{APP_VERSION}</span></h2>
                 <p>{t.settings.aboutText}</p>
@@ -1116,6 +1276,7 @@ function ConnectionDialog({
   onPasswordChange,
   onClearPasswordChange,
   onEditingChange,
+  onTest,
   onSubmit,
   onClose
 }: {
@@ -1127,6 +1288,7 @@ function ConnectionDialog({
   onPasswordChange: (value: string) => void;
   onClearPasswordChange: (checked: boolean) => void;
   onEditingChange: (connection: ConnectionConfig) => void;
+  onTest: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onClose: () => void;
 }) {
@@ -1151,11 +1313,8 @@ function ConnectionDialog({
 
           <form className="connection-form" onSubmit={onSubmit}>
             <FormSection title={t.connectionDialog.basicInfo}>
-              <Field label={t.connectionDialog.name}>
+              <Field label={t.connectionDialog.name} span>
                 <input value={editing.name} onChange={(event) => onEditingChange({ ...editing, name: event.target.value })} required />
-              </Field>
-              <Field label={t.connectionDialog.stableId}>
-                <input value={editing.id} onChange={(event) => onEditingChange({ ...editing, id: event.target.value })} required />
               </Field>
               <Field label={t.connectionDialog.databaseType}>
                 <select
@@ -1170,7 +1329,6 @@ function ConnectionDialog({
                   <option value="postgres">PostgreSQL</option>
                 </select>
               </Field>
-              <SwitchField label={t.connectionDialog.enableConnection} checked={editing.enabled} onCheckedChange={(checked) => onEditingChange({ ...editing, enabled: checked })} />
             </FormSection>
 
             <FormSection title={t.connectionDialog.address}>
@@ -1213,7 +1371,17 @@ function ConnectionDialog({
                   placeholder={editing.credential_ref ? t.connectionDialog.keepExistingPassword : t.connectionDialog.saveToVault}
                 />
               </Field>
-              <SwitchField label={t.connectionDialog.clearSavedCredential} checked={clearPassword} disabled={!editing.credential_ref} onCheckedChange={onClearPasswordChange} />
+              <div className="credential-action-field">
+                <button
+                  type="button"
+                  className={clsx("button ghost credential-clear-button", clearPassword && "pending")}
+                  disabled={!editing.credential_ref || busy || clearPassword}
+                  onClick={() => onClearPasswordChange(true)}
+                >
+                  <Trash2 size={15} />
+                  {t.connectionDialog.clearSavedCredential}
+                </button>
+              </div>
               <Field label={t.connectionDialog.maxRows}>
                 <input type="number" min={1} max={5000} value={editing.max_rows} onChange={(event) => onEditingChange({ ...editing, max_rows: Number(event.target.value) })} />
               </Field>
@@ -1229,6 +1397,10 @@ function ConnectionDialog({
             </FormSection>
 
             <footer>
+              <button type="button" className="button soft" disabled={busy} onClick={onTest}>
+                <Cable size={16} />
+                {t.connections.test}
+              </button>
               <Dialog.Close asChild>
                 <button type="button" className="button ghost">{t.common.cancel}</button>
               </Dialog.Close>
@@ -1314,7 +1486,8 @@ function ConnectionRow({
   onEdit,
   onDelete,
   onTest,
-  onDiagnose
+  onDiagnose,
+  onToggleEnabled
 }: {
   t: I18nMessages;
   connection: ConnectionConfig;
@@ -1323,18 +1496,30 @@ function ConnectionRow({
   onDelete: (id: string) => void;
   onTest: (id: string) => void;
   onDiagnose: (id: string) => void;
+  onToggleEnabled: (id: string, enabled: boolean) => void;
 }) {
   return (
-    <div className="connection-row">
+    <div className={clsx("connection-row", !connection.enabled && "disabled")}>
       <ConnectionListItem t={t} connection={connection} />
       <div className="row-actions">
+        <IconTooltip label={formatMessage(t.connections.toggleEnabled, { name: connection.name })}>
+          <button
+            type="button"
+            className={clsx("icon-button connection-toggle-button", !connection.enabled && "off")}
+            onClick={() => onToggleEnabled(connection.id, !connection.enabled)}
+            disabled={busy}
+            aria-label={formatMessage(t.connections.toggleEnabled, { name: connection.name })}
+          >
+            <Power size={17} />
+          </button>
+        </IconTooltip>
         <IconTooltip label={t.connections.test}>
-          <button type="button" className="icon-button" onClick={() => onTest(connection.id)} disabled={busy}>
+          <button type="button" className="icon-button" onClick={() => onTest(connection.id)} disabled={busy || !connection.enabled}>
             <Cable size={17} />
           </button>
         </IconTooltip>
         <IconTooltip label={t.connections.diagnose}>
-          <button type="button" className="icon-button" onClick={() => onDiagnose(connection.id)} disabled={busy}>
+          <button type="button" className="icon-button" onClick={() => onDiagnose(connection.id)} disabled={busy || !connection.enabled}>
             <SearchCheck size={17} />
           </button>
         </IconTooltip>
@@ -1417,7 +1602,7 @@ function PanelHeader({ title, action, onAction, disabled }: { title: string; act
     <div className="panel-header">
       <h2>{title}</h2>
       {typeof action === "string" && (
-        <button type="button" className="button soft" onClick={onAction} disabled={disabled}>
+        <button type="button" className="button primary" onClick={onAction} disabled={disabled}>
           <Plus size={16} />
           {action}
         </button>

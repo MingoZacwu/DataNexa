@@ -11,10 +11,11 @@ mod vault;
 use std::sync::Arc;
 
 use commands::{
-    delete_connection, diagnose_connection, get_app_snapshot, hide_main_window,
-    minimize_main_window, open_project_homepage, policy_check, rotate_server_token,
-    save_server_config, save_settings_config, set_mcp_tool_enabled, start_mcp_server,
-    start_window_drag, stop_mcp_server, test_connection, upsert_connection,
+    clear_audit_events, delete_connection, diagnose_connection, disable_all_connections,
+    get_app_snapshot, hide_main_window, minimize_main_window, open_project_homepage, policy_check,
+    rotate_server_token, save_server_config, save_settings_config, set_connection_enabled,
+    set_mcp_tool_enabled, start_mcp_server, start_window_drag, stop_mcp_server, test_connection,
+    test_connection_input, upsert_connection,
 };
 use i18n::backend_text;
 use state::AppState;
@@ -90,7 +91,11 @@ pub fn run() {
             set_mcp_tool_enabled,
             upsert_connection,
             delete_connection,
+            set_connection_enabled,
+            disable_all_connections,
+            clear_audit_events,
             test_connection,
+            test_connection_input,
             diagnose_connection,
             start_mcp_server,
             stop_mcp_server,
