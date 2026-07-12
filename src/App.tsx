@@ -1384,6 +1384,7 @@ function ConnectionDialog({
           </div>
 
           <form className="connection-form" onSubmit={onSubmit}>
+            <div className="connection-form-scroll">
             <FormSection title={t.connectionDialog.basicInfo}>
               <Field label={t.connectionDialog.name} span>
                 <input value={editing.name} onChange={(event) => onEditingChange({ ...editing, name: event.target.value })} required />
@@ -1467,6 +1468,7 @@ function ConnectionDialog({
                 {formatMessage(t.connectionDialog.currentCredential, { credential: editing.credential_ref ?? t.connectionDialog.credentialNotSaved })}
               </p>
             </FormSection>
+            </div>
 
             <footer>
               <button type="button" className="button soft" disabled={busy} onClick={onTest}>
