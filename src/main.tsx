@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles.css";
+import "./future-glass.css";
 
 const themeMode = (() => {
   const stored = window.localStorage.getItem("datanexa.theme");

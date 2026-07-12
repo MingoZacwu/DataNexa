@@ -52,7 +52,8 @@ const zhCN = {
     connectionDisabled: "{connection} 已禁用。",
     toolEnabled: "{tool} 已启用。",
     toolDisabled: "{tool} 已关闭。",
-    agentCopied: "Agent 接入配置已复制。"
+    agentCopied: "Agent 接入配置已复制。",
+    connectionTestPassed: "连接可用 · {elapsed} ms"
   },
   overview: {
     loading: "正在加载本地工作区...",
@@ -93,6 +94,11 @@ const zhCN = {
   tools: {
     summary: "{enabled} / {total} 个工具已启用",
     toggle: "切换 {name}",
+    groups: {
+      discovery: "结构发现",
+      access: "数据访问",
+      analysis: "分析与策略"
+    },
     names: {
       datanexa_list_connections: "列出连接",
       datanexa_get_schema: "读取 Schema",
@@ -213,6 +219,7 @@ const zhCN = {
   },
   diagnostics: {
     noHint: "无额外提示。",
+    summary: "诊断完成：{name} · {type} · 凭证{credential}",
     title: "连接诊断：{name} ({type})",
     address: "地址：host={host} port={port} database={database} username={username}",
     credential: "凭证：{credential}；SSL={ssl}；超时={timeout}ms；连接池={pool}",
@@ -285,7 +292,8 @@ const en: I18nMessages = {
     connectionDisabled: "{connection} disabled.",
     toolEnabled: "{tool} enabled.",
     toolDisabled: "{tool} disabled.",
-    agentCopied: "Agent connection config copied."
+    agentCopied: "Agent connection config copied.",
+    connectionTestPassed: "Connection ready · {elapsed} ms"
   },
   overview: {
     loading: "Loading local workspace...",
@@ -326,6 +334,11 @@ const en: I18nMessages = {
   tools: {
     summary: "{enabled} / {total} tools enabled",
     toggle: "Toggle {name}",
+    groups: {
+      discovery: "Discovery",
+      access: "Data access",
+      analysis: "Analysis & policy"
+    },
     names: {
       datanexa_list_connections: "List connections",
       datanexa_get_schema: "Read schema",
@@ -446,6 +459,7 @@ const en: I18nMessages = {
   },
   diagnostics: {
     noHint: "No extra hint.",
+    summary: "Diagnostics complete: {name} · {type} · credential {credential}",
     title: "Connection diagnostics: {name} ({type})",
     address: "Address: host={host} port={port} database={database} username={username}",
     credential: "Credential: {credential}; SSL={ssl}; timeout={timeout}ms; pool={pool}",

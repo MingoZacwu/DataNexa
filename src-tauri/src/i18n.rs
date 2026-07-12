@@ -267,6 +267,13 @@ impl BackendText {
         }
     }
 
+    pub fn tray_mcp_server(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "MCP 服务",
+            Locale::En => "MCP Server",
+        }
+    }
+
     pub fn tray_quit(self) -> &'static str {
         match self.locale {
             Locale::ZhCn => "退出",

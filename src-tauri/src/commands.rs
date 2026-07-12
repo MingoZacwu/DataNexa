@@ -3,7 +3,6 @@ use std::time::Instant;
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use tauri::menu::{Menu, MenuItem};
 use tauri::{AppHandle, State, WebviewWindow};
 
 use crate::audit::AuditStatus;
@@ -16,6 +15,7 @@ use crate::mcp::{self, McpToolInfo, ServerStatus};
 use crate::policy::{PolicyCheckResult, PolicyEngine};
 use crate::state::AppState;
 use crate::vault::CredentialVault;
+use crate::{hide_main_window_to_tray, refresh_tray_menu};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AppSnapshot {
@@ -74,7 +74,8 @@ pub async fn save_settings_config(
         text
     };
 
-    refresh_tray_menu(&app, text).map_err(to_client_error)?;
+    let mcp_running = mcp::status(state.inner()).await.running;
+    refresh_tray_menu(&app, text, mcp_running).map_err(to_client_error)?;
 
     snapshot(state.inner()).await.map_err(to_client_error)
 }
@@ -236,9 +237,7 @@ pub async fn disable_all_connections(
 }
 
 #[tauri::command]
-pub async fn clear_audit_events(
-    state: State<'_, Arc<AppState>>,
-) -> Result<AppSnapshot, String> {
+pub async fn clear_audit_events(state: State<'_, Arc<AppState>>) -> Result<AppSnapshot, String> {
     state.audit.clear().await;
     snapshot(state.inner()).await.map_err(to_client_error)
 }
@@ -377,16 +376,26 @@ pub async fn diagnose_connection(
 }
 
 #[tauri::command]
-pub async fn start_mcp_server(state: State<'_, Arc<AppState>>) -> Result<AppSnapshot, String> {
+pub async fn start_mcp_server(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<AppSnapshot, String> {
     mcp::start(state.inner().clone())
         .await
         .map_err(to_client_error)?;
+    let text = text_for_state(state.inner()).await;
+    refresh_tray_menu(&app, text, true).map_err(to_client_error)?;
     snapshot(state.inner()).await.map_err(to_client_error)
 }
 
 #[tauri::command]
-pub async fn stop_mcp_server(state: State<'_, Arc<AppState>>) -> Result<AppSnapshot, String> {
+pub async fn stop_mcp_server(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<AppSnapshot, String> {
     mcp::stop(state.inner().clone()).await;
+    let text = text_for_state(state.inner()).await;
+    refresh_tray_menu(&app, text, false).map_err(to_client_error)?;
     snapshot(state.inner()).await.map_err(to_client_error)
 }
 
@@ -419,7 +428,7 @@ pub fn minimize_main_window(window: WebviewWindow) -> Result<(), String> {
 
 #[tauri::command]
 pub fn hide_main_window(window: WebviewWindow) -> Result<(), String> {
-    window.hide().map_err(to_client_error)
+    hide_main_window_to_tray(&window).map_err(to_client_error)
 }
 
 #[tauri::command]
@@ -574,16 +583,6 @@ fn format_diagnostics_for_client(
         diagnostics.max_connections,
         hint,
     )
-}
-
-fn refresh_tray_menu(app: &AppHandle, text: BackendText) -> tauri::Result<()> {
-    if let Some(tray) = app.tray_by_id("main") {
-        let show_item = MenuItem::with_id(app, "show", text.tray_show(), true, None::<&str>)?;
-        let quit_item = MenuItem::with_id(app, "quit", text.tray_quit(), true, None::<&str>)?;
-        let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
-        tray.set_menu(Some(tray_menu))?;
-    }
-    Ok(())
 }
 
 fn is_local_host(host: &str) -> bool {

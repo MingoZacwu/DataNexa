@@ -14,5 +14,10 @@
         "shadow": true
       }
     ]
+  },
+  "bundle": {
+    "macOS": {
+      "signingIdentity": "FCE99A30FCBAC87FC1FEA49B8354D2C1328DB6C8"
+    }
   }
 }
