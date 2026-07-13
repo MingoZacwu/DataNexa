@@ -411,7 +411,10 @@ textarea:focus-visible,
   font-weight: 650;
 }
 
-.quick-panel > h2,
+.quick-panel > h2 {
+  font-size: 16px;
+}
+
 .safety-panel > h2 {
   font-size: 14px;
 }
@@ -659,7 +662,7 @@ textarea:focus-visible,
   color: var(--muted);
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
 }
 
@@ -667,13 +670,13 @@ textarea:focus-visible,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 680;
 }
 
 .command-metrics small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .command-button {
@@ -722,6 +725,10 @@ textarea:focus-visible,
 .logs-panel .event-list {
   align-content: start;
   grid-auto-rows: max-content;
+}
+
+.connections-panel .compact-list {
+  gap: 0;
 }
 
 .connections-panel .compact-list::-webkit-scrollbar,
@@ -1596,6 +1603,7 @@ textarea:focus-visible,
   border-radius: 7px;
   color: var(--red);
   background: color-mix(in srgb, var(--red) 12%, transparent);
+  align-self: center;
 }
 
 .transfer-warning ul {
@@ -1603,7 +1611,7 @@ textarea:focus-visible,
   gap: 8px;
   margin: 0;
   padding-left: 18px;
-  color: var(--muted);
+  color: var(--ink);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -1622,9 +1630,49 @@ textarea:focus-visible,
 .transfer-acknowledgement input {
   width: 16px;
   height: 16px;
-  flex: 0 0 auto;
+  min-width: 16px;
+  min-height: 16px;
+  max-width: 16px;
+  max-height: 16px;
+  inline-size: 16px;
+  block-size: 16px;
+  flex: 0 0 16px;
   margin: 1px 0 0;
-  accent-color: var(--red);
+  padding: 0;
+  display: grid;
+  place-content: center;
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--muted) 58%, var(--line));
+  border-radius: 4px;
+  background: var(--surface-strong);
+  box-shadow: inset 0 1px 0 var(--glass-edge);
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.transfer-acknowledgement input::before {
+  width: 10px;
+  height: 8px;
+  content: "";
+  background: white;
+  clip-path: polygon(14% 44%, 0 59%, 40% 100%, 100% 16%, 84% 0, 39% 70%);
+  transform: scale(0);
+  transition: transform 120ms ease;
+}
+
+.transfer-acknowledgement input:checked {
+  border-color: var(--blue);
+  background: var(--blue);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 12%, transparent);
+}
+
+.transfer-acknowledgement input:checked::before {
+  transform: scale(1);
+}
+
+.transfer-acknowledgement input:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--blue) 52%, transparent);
+  outline-offset: 2px;
 }
 
 .transfer-dialog-actions {
