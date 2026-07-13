@@ -11,7 +11,7 @@ import type {
   ServerConfig,
   SettingsConfig
 } from "../types";
-import { formatMessage, messages } from "../i18n";
+import { formatMessage, messages, type Locale } from "../i18n";
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const previewText = messages["zh-CN"].api;
@@ -198,25 +198,29 @@ export const api = {
     command<AppSnapshot>("save_server_config", { server }, mockSnapshot),
   saveSettingsConfig: (settings: SettingsConfig) =>
     command<AppSnapshot>("save_settings_config", { settings }, withSettings(settings)),
-  exportConnections: async () => {
+  exportConnections: async (locale: Locale) => {
     if (!isTauri) {
       throw new Error(formatMessage(previewText.desktopOnly, { name: "export_connections" }));
     }
+    const dialogText = messages[locale].fileDialog;
     const path = await save({
+      title: dialogText.exportConnectionsTitle,
       defaultPath: connectionTransferFileName(),
-      filters: [{ name: "DataNexa connection file", extensions: ["json"] }]
+      filters: [{ name: dialogText.connectionFile, extensions: ["json"] }]
     });
     if (!path) return null;
     return command<number>("export_connections", { path });
   },
-  importConnections: async () => {
+  importConnections: async (locale: Locale) => {
     if (!isTauri) {
       throw new Error(formatMessage(previewText.desktopOnly, { name: "import_connections" }));
     }
+    const dialogText = messages[locale].fileDialog;
     const path = await open({
+      title: dialogText.importConnectionsTitle,
       multiple: false,
       directory: false,
-      filters: [{ name: "DataNexa connection file", extensions: ["json"] }]
+      filters: [{ name: dialogText.connectionFile, extensions: ["json"] }]
     });
     if (!path) return null;
     return command<ImportConnectionsResult>("import_connections", { path });

@@ -418,7 +418,7 @@ function App() {
   async function exportConnections() {
     setBusy(true);
     try {
-      const exportedCount = await api.exportConnections();
+      const exportedCount = await api.exportConnections(locale);
       if (exportedCount !== null) {
         pushToast(formatMessage(t.toast.connectionsExported, { count: exportedCount }), "info");
       }
@@ -432,7 +432,7 @@ function App() {
   async function importConnections() {
     setBusy(true);
     try {
-      const result = await api.importConnections();
+      const result = await api.importConnections(locale);
       if (result) {
         setSnapshot(result.snapshot);
         pushToast(formatMessage(t.toast.connectionsImported, { count: result.imported_count }));

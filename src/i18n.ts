@@ -24,6 +24,11 @@ const zhCN = {
     justNow: "刚刚",
     rowsElapsed: "{rows} 行，耗时 {elapsed}ms"
   },
+  fileDialog: {
+    importConnectionsTitle: "选择要导入的数据库连接文件",
+    exportConnectionsTitle: "选择数据库连接文件的保存位置",
+    connectionFile: "DataNexa 数据库连接文件"
+  },
   nav: {
     overview: "概览",
     connections: "数据库连接",
@@ -277,6 +282,11 @@ const en: I18nMessages = {
     totalSuffix: "/ {total} total",
     justNow: "Just now",
     rowsElapsed: "{rows} rows, {elapsed}ms"
+  },
+  fileDialog: {
+    importConnectionsTitle: "Select database connections to import",
+    exportConnectionsTitle: "Choose where to save database connections",
+    connectionFile: "DataNexa database connection file"
   },
   nav: {
     overview: "Overview",
