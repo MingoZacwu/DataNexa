@@ -3,8 +3,6 @@ export type DatabaseType = "sqlite" | "mysql" | "postgres";
 export interface ServerConfig {
   host: string;
   port: number;
-  streamable_http: boolean;
-  legacy_sse_compat: boolean;
   require_token: boolean;
   token?: string | null;
 }
@@ -27,6 +25,7 @@ export interface ConnectionConfig {
 
 export interface SettingsConfig {
   audit_max_events: number;
+  audit_redact_sql_literals: boolean;
   language: string;
 }
 
@@ -49,6 +48,7 @@ export interface AuditEvent {
   id: string;
   timestamp: string;
   connection_id?: string | null;
+  connection_name?: string | null;
   tool: string;
   status: AuditStatus;
   reason?: string | null;
@@ -81,6 +81,11 @@ export interface ConnectionInput {
   connection: ConnectionConfig;
   password?: string | null;
   clear_password?: boolean;
+}
+
+export interface ImportConnectionsResult {
+  snapshot: AppSnapshot;
+  imported_count: number;
 }
 
 export interface ConnectionDiagnostics {

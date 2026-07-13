@@ -1,5 +1,5 @@
 use keyring::Entry;
-use zeroize::Zeroize;
+use zeroize::Zeroizing;
 
 #[derive(Clone)]
 pub struct CredentialVault {
@@ -17,19 +17,22 @@ impl CredentialVault {
         format!("vault://{connection_id}")
     }
 
-    pub fn put(&self, credential_ref: &str, mut password: String) -> anyhow::Result<()> {
+    pub fn put(&self, credential_ref: &str, password: String) -> anyhow::Result<()> {
+        self.put_secret(credential_ref, Zeroizing::new(password))
+    }
+
+    pub fn put_secret(
+        &self,
+        credential_ref: &str,
+        password: Zeroizing<String>,
+    ) -> anyhow::Result<()> {
         let account = account_from_ref(credential_ref)?;
         let entry = Entry::new(&self.service, &account)?;
-        let result = entry.set_password(&password);
-        password.zeroize();
-        result?;
+        entry.set_password(password.as_str())?;
 
         match self.get(credential_ref)? {
-            Some(mut saved_password) if !saved_password.is_empty() => {
-                saved_password.zeroize();
-            }
-            Some(mut saved_password) => {
-                saved_password.zeroize();
+            Some(saved_password) if !saved_password.is_empty() => {}
+            Some(_) => {
                 return Err(anyhow::anyhow!(
                     "credential was saved but read back as empty; secure storage is not usable"
                 ));
@@ -43,11 +46,11 @@ impl CredentialVault {
         Ok(())
     }
 
-    pub fn get(&self, credential_ref: &str) -> anyhow::Result<Option<String>> {
+    pub fn get(&self, credential_ref: &str) -> anyhow::Result<Option<Zeroizing<String>>> {
         let account = account_from_ref(credential_ref)?;
         let entry = Entry::new(&self.service, &account)?;
         match entry.get_password() {
-            Ok(password) => Ok(Some(password)),
+            Ok(password) => Ok(Some(Zeroizing::new(password))),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(error) => Err(error.into()),
         }

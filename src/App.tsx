@@ -12,7 +12,9 @@ import {
   Clock3,
   Database,
   EyeOff,
+  FileDown,
   FileText,
+  FileUp,
   Github,
   Home,
   KeyRound,
@@ -413,6 +415,35 @@ function App() {
     }
   }
 
+  async function exportConnections() {
+    setBusy(true);
+    try {
+      const exportedCount = await api.exportConnections();
+      if (exportedCount !== null) {
+        pushToast(formatMessage(t.toast.connectionsExported, { count: exportedCount }), "info");
+      }
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importConnections() {
+    setBusy(true);
+    try {
+      const result = await api.importConnections();
+      if (result) {
+        setSnapshot(result.snapshot);
+        pushToast(formatMessage(t.toast.connectionsImported, { count: result.imported_count }));
+      }
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function runPolicyCheck() {
     setBusy(true);
     try {
@@ -588,6 +619,8 @@ function App() {
                     onPolicyCheck={runPolicyCheck}
                     onSaveServer={saveServer}
                     onSaveSettings={saveSettings}
+                    onExportConnections={() => void exportConnections()}
+                    onImportConnections={() => void importConnections()}
                     onOpenProjectHomepage={() => void api.openProjectHomepage().catch(showError)}
                   />
                 )}
@@ -1071,7 +1104,7 @@ function AuditView({ t, events, onSelect }: { t: I18nMessages; events: AuditEven
               <button type="button" className="audit-row audit-button" key={event.id} onClick={() => onSelect(event)}>
                 <span>{new Date(event.timestamp).toLocaleString()}</span>
                 <span>{event.tool}</span>
-                <span>{event.connection_id ?? t.common.system}</span>
+                <span>{event.connection_name ?? event.connection_id ?? "—"}</span>
                 <span>
                   <StatusPill tone={statusTone(event.status)} label={statusLabel(t, event.status)} />
                 </span>
@@ -1117,6 +1150,8 @@ function SettingsView({
   onPolicyCheck,
   onSaveServer,
   onSaveSettings,
+  onExportConnections,
+  onImportConnections,
   onOpenProjectHomepage
 }: {
   t: I18nMessages;
@@ -1137,11 +1172,15 @@ function SettingsView({
   onPolicyCheck: () => void;
   onSaveServer: (server: ServerConfig) => void;
   onSaveSettings: (settings: SettingsConfig) => void;
+  onExportConnections: () => void;
+  onImportConnections: () => void;
   onOpenProjectHomepage: () => void;
 }) {
   const [serverDraft, setServerDraft] = useState(server);
   const [settingsDraft, setSettingsDraft] = useState(settings);
   const [policyDialogOpen, setPolicyDialogOpen] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportAcknowledged, setExportAcknowledged] = useState(false);
 
   useEffect(() => setServerDraft(server), [server]);
   useEffect(() => setSettingsDraft(settings), [settings]);
@@ -1182,11 +1221,6 @@ function SettingsView({
               </Field>
               <SwitchField label={t.settings.requireBearer} checked={serverDraft.require_token} disabled={busy} onCheckedChange={(checked) => {
                 const next = { ...serverDraft, require_token: checked };
-                setServerDraft(next);
-                onSaveServer(next);
-              }} />
-              <SwitchField label={t.settings.legacySse} checked={serverDraft.legacy_sse_compat} disabled={busy} onCheckedChange={(checked) => {
-                const next = { ...serverDraft, legacy_sse_compat: checked };
                 setServerDraft(next);
                 onSaveServer(next);
               }} />
@@ -1241,8 +1275,93 @@ function SettingsView({
                   onBlur={(event) => onSaveSettings({ ...settingsDraft, audit_max_events: Number(event.currentTarget.value) })}
                 />
               </Field>
+              <SwitchField label={t.settings.auditRedactSql} checked={settingsDraft.audit_redact_sql_literals} disabled={busy} onCheckedChange={(checked) => {
+                const next = { ...settingsDraft, audit_redact_sql_literals: checked };
+                setSettingsDraft(next);
+                onSaveSettings(next);
+              }} />
             </div>
           </section>
+
+          <Dialog.Root
+            open={exportDialogOpen}
+            onOpenChange={(open) => {
+              setExportDialogOpen(open);
+              if (!open) setExportAcknowledged(false);
+            }}
+          >
+            <section className="panel transfer-panel">
+              <h2>{t.settings.importExport}</h2>
+              <div className="transfer-actions">
+                <button type="button" className="transfer-action" disabled={busy} onClick={onImportConnections}>
+                  <span className="transfer-action-copy">
+                    <strong>{t.settings.importConnections}</strong>
+                    <span>{t.settings.importConnectionsDescription}</span>
+                  </span>
+                  <span className="transfer-action-icon" aria-hidden="true"><FileUp size={18} /></span>
+                </button>
+                <Dialog.Trigger asChild>
+                  <button type="button" className="transfer-action" disabled={busy}>
+                    <span className="transfer-action-copy">
+                    <strong>{t.settings.exportConnections}</strong>
+                      <span>{t.settings.exportConnectionsDescription}</span>
+                    </span>
+                    <span className="transfer-action-icon" aria-hidden="true"><FileDown size={18} /></span>
+                  </button>
+                </Dialog.Trigger>
+              </div>
+            </section>
+            <Dialog.Portal>
+              <Dialog.Overlay className="dialog-overlay" />
+              <Dialog.Content className="policy-dialog transfer-dialog">
+                <div className="dialog-titlebar">
+                  <div>
+                    <Dialog.Title>{t.settings.exportWarningTitle}</Dialog.Title>
+                    <Dialog.Description>{t.settings.exportWarningDescription}</Dialog.Description>
+                  </div>
+                  <Dialog.Close asChild>
+                    <button type="button" className="icon-button" aria-label={t.common.close}>
+                      <X size={18} />
+                    </button>
+                  </Dialog.Close>
+                </div>
+                <div className="transfer-warning">
+                  <div className="transfer-warning-icon"><AlertTriangle size={22} /></div>
+                  <ul>
+                    <li>{t.settings.exportWarningAccess}</li>
+                    <li>{t.settings.exportWarningLocation}</li>
+                    <li>{t.settings.exportWarningCleanup}</li>
+                  </ul>
+                </div>
+                <label className="transfer-acknowledgement">
+                  <input
+                    type="checkbox"
+                    checked={exportAcknowledged}
+                    onChange={(event) => setExportAcknowledged(event.target.checked)}
+                  />
+                  <span>{t.settings.exportAcknowledgement}</span>
+                </label>
+                <footer className="transfer-dialog-actions">
+                  <Dialog.Close asChild>
+                    <button type="button" className="button ghost">{t.common.cancel}</button>
+                  </Dialog.Close>
+                  <button
+                    type="button"
+                    className="button danger-solid"
+                    disabled={!exportAcknowledged || busy}
+                    onClick={() => {
+                      setExportDialogOpen(false);
+                      setExportAcknowledged(false);
+                      onExportConnections();
+                    }}
+                  >
+                    <FileDown size={16} />
+                    {t.settings.confirmExport}
+                  </button>
+                </footer>
+              </Dialog.Content>
+            </Dialog.Portal>
+          </Dialog.Root>
 
           <Dialog.Root open={policyDialogOpen} onOpenChange={setPolicyDialogOpen}>
             <section className="panel safety-panel">
@@ -1514,7 +1633,7 @@ function AuditDetailDialog({ t, event, onClose }: { t: I18nMessages; event: Audi
                 </div>
                 <div>
                   <dt>{t.audit.connection}</dt>
-                  <dd>{event.connection_id ?? t.common.system}</dd>
+                  <dd>{event.connection_name ?? event.connection_id ?? "—"}</dd>
                 </div>
                 <div>
                   <dt>{t.audit.status}</dt>
@@ -1628,12 +1747,11 @@ function ConnectionListItem({ t, connection, compact = false }: { t: I18nMessage
         <div>
           <strong>{connection.name}</strong>
           <StatusPill tone={connection.enabled ? "green" : "slate"} label={connection.enabled ? t.connections.enabled : t.connections.paused} />
-          <span className={clsx("type-tag", connection.type)}>{dbTypeLabel(connection.type)}</span>
         </div>
         <p>
           {connection.type === "sqlite"
             ? connection.database || t.connections.noDatabaseFile
-            : `${connection.host}:${connection.port ?? defaultPort(connection.type)} / ${connection.username ?? "-"} / ${connection.database}`}
+            : `${connection.host || "-"}:${connection.port ?? defaultPort(connection.type)}`}
         </p>
       </div>
     </div>

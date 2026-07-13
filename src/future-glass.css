@@ -407,8 +407,13 @@ textarea:focus-visible,
 
 .panel-header h2,
 .panel h2 {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 650;
+}
+
+.quick-panel > h2,
+.safety-panel > h2 {
+  font-size: 14px;
 }
 
 .panel-icon-action,
@@ -1114,7 +1119,7 @@ textarea:focus-visible,
 }
 
 .server-console-section h2 {
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .server-console-section .panel-header {
@@ -1123,7 +1128,7 @@ textarea:focus-visible,
 }
 
 .server-console-section .panel-header h2 {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 650;
 }
 
@@ -1203,7 +1208,7 @@ textarea:focus-visible,
 }
 
 .tools-summary h2 {
-  font-size: 15px;
+  font-size: 16px;
 }
 
 .tools-list {
@@ -1227,7 +1232,7 @@ textarea:focus-visible,
   padding: 0 14px;
   border-bottom: 1px solid var(--line);
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 650;
 }
 
@@ -1281,7 +1286,7 @@ textarea:focus-visible,
 }
 
 .tool-title-row code {
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .tool-body p {
@@ -1289,7 +1294,7 @@ textarea:focus-visible,
   color: var(--muted);
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .switch {
@@ -1364,7 +1369,7 @@ textarea:focus-visible,
   padding: 0 7px;
   border: 1px solid transparent;
   border-radius: 5px;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 680;
 }
 
@@ -1485,6 +1490,163 @@ textarea:focus-visible,
   gap: 12px 14px;
 }
 
+.settings-stack > .panel > .transfer-actions {
+  padding: 0;
+}
+
+.transfer-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.transfer-action {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 14px;
+  padding: 15px;
+  border: 0;
+  color: var(--ink);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: color 160ms ease, background 160ms ease;
+}
+
+.transfer-action:first-child {
+  border-right: 1px solid var(--line);
+}
+
+.transfer-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--blue) 7%, transparent);
+}
+
+.transfer-action:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid color-mix(in srgb, var(--blue) 72%, white);
+  outline-offset: -2px;
+}
+
+.transfer-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.transfer-action-copy {
+  min-width: 0;
+  display: block;
+}
+
+.transfer-action-copy strong {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.transfer-action-copy > span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.transfer-action-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--blue) 22%, var(--line));
+  border-radius: 7px;
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 9%, var(--surface-strong));
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.transfer-action:hover:not(:disabled) .transfer-action-icon {
+  color: white;
+  border-color: var(--blue);
+  background: var(--blue);
+  transform: translateY(-1px);
+}
+
+.transfer-dialog {
+  width: min(620px, calc(100vw - 40px));
+}
+
+.transfer-warning {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 15px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--red) 28%, var(--line));
+  border-radius: 7px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--red) 7%, var(--surface-strong));
+}
+
+.transfer-warning-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+}
+
+.transfer-warning ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.transfer-acknowledgement {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 14px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.transfer-acknowledgement input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  margin: 1px 0 0;
+  accent-color: var(--red);
+}
+
+.transfer-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.button.danger-solid {
+  color: white;
+  border-color: color-mix(in srgb, var(--red) 72%, white);
+  background: var(--red);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24), 0 8px 20px color-mix(in srgb, var(--red) 20%, transparent);
+}
+
+.button.danger-solid:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--red) 88%, black);
+}
+
 .field {
   gap: 6px;
 }
@@ -1494,7 +1656,7 @@ textarea:focus-visible,
 :root.dark .field > span,
 :root.dark .switch-row > span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 620;
 }
 
@@ -1778,6 +1940,8 @@ textarea:focus {
   .settings-tabs button { min-width: 86px; text-align: center; }
   .settings-grid,
   .security-list { grid-template-columns: 1fr; }
+  .transfer-actions { grid-template-columns: 1fr; }
+  .transfer-action:first-child { border-right: 0; border-bottom: 1px solid var(--line); }
   .audit-row { grid-template-columns: 140px 1fr 1fr 90px 1.2fr; }
 }
 
