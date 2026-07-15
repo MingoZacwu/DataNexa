@@ -186,7 +186,7 @@ jobs:
         include:
           - platform: macos-15
             rust_targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
-            args: '--config src-tauri/tauri.release.conf.json --features updater --bundles dmg --target universal-apple-darwin'
+            args: '--config src-tauri/tauri.release.conf.json --features updater --bundles app,dmg --target universal-apple-darwin'
           - platform: windows-latest
             rust_targets: ''
             args: '--config src-tauri/tauri.release.conf.json --features updater --bundles nsis'
