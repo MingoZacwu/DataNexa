@@ -775,6 +775,15 @@ pub fn open_project_homepage() -> Result<(), String> {
         .map_err(to_client_error)
 }
 
+#[tauri::command]
+pub fn open_project_releases() -> Result<(), String> {
+    tauri_plugin_opener::open_url(
+        "https://github.com/MingoZacwu/DataNexa/releases",
+        None::<&str>,
+    )
+    .map_err(to_client_error)
+}
+
 async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
     let config = state.config.read().await.clone();
     state.audit.trim(config.settings.audit_max_events).await?;

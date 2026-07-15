@@ -1,6 +1,6 @@
 {
   "name": "datanexa",
-  "version": "0.2.1-rc",
+  "version": "0.3.0-rc",
   "private": true,
   "type": "module",
   "scripts": {
@@ -21,6 +21,8 @@
     "@radix-ui/react-tooltip": "^1.1.8",
     "@tauri-apps/api": "^2.2.0",
     "@tauri-apps/plugin-dialog": "^2.2.0",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",

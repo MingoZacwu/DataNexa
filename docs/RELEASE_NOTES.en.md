@@ -1,6 +1,6 @@
-# DataNexa v0.2.1-rc
+# DataNexa v0.3.0-rc
 
-[中文发布说明](https://github.com/MingoZacwu/DataNexa/blob/v0.2.1-rc/RELEASE_NOTES.md)
+[中文发布说明](https://github.com/MingoZacwu/DataNexa/blob/v0.3.0-rc/RELEASE_NOTES.md)
 
 ## Highlights
 
@@ -46,3 +46,9 @@
 - The macOS application is Developer ID signed but is not yet notarized. macOS may display a Gatekeeper warning on first launch.
 - The Windows installer is not Authenticode signed yet and may display a Microsoft Defender SmartScreen warning.
 - Connection export files can contain database passwords in plaintext. Store them only in a trusted location and delete them immediately after migration.
+
+## Usage Notes
+
+- Data is invaluable, handle with care.
+- Read-only policies cannot fully eliminate all risks. You must still actively restrict the Agent from being prompted or permitted to perform hazardous database operations.
+- DataNexa is under active development; stability and quality are not guaranteed at this stage. Production use is not recommended. If deployment in production is necessary, please assess the risks thoroughly beforehand.
