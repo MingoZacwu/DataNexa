@@ -1,10 +1,10 @@
-# DataNexa v0.3.0-rc
+# DataNexa v0.3.0
 
-[English Release Notes](https://github.com/MingoZacwu/DataNexa/blob/v0.3.0-rc/docs/RELEASE_NOTES.en.md)
+[English Release Notes](https://github.com/MingoZacwu/DataNexa/blob/v0.3.0/docs/RELEASE_NOTES.en.md)
 
 ## 版本亮点
 
-- 这是 DataNexa 的首个候选发布版本。DataNexa 是一款本地只读数据库 MCP 网关，为 AI Agent 提供统一、可控且可审计的结构化数据访问入口。
+- 欢迎使用 DataNexa！这是 DataNexa 的首个发布版本。DataNexa 是一款本地只读数据库 MCP 网关，为 AI Agent 提供统一、可控且可审计的结构化数据访问入口。
 - 数据库连接保留在本机，并在一个桌面应用中集成连接管理、只读 SQL 策略、凭证保护、MCP 工具控制与审计日志。
 - DataNexa 提供适配 Windows 与 macOS Universal 的版本。
 
@@ -25,16 +25,24 @@
 - 支持按数据库连接配置最大返回行数、查询超时时间和连接池大小。
 - 提供持久化审计日志，记录允许、拒绝、失败、超时和结果截断等状态，以及执行耗时、返回行数、连接、工具和失败原因。
 - 支持对审计日志中的 SQL 字面量进行脱敏；查询结果数据不会写入审计日志。
-- 支持导入和导出 DataNexa 数据库连接，便于在不同设备或安装环境之间迁移，并在导出文件包含明文凭证时提供明确的安全警告。
+- 支持导入和导出 DataNexa 数据库连接，便于在不同设备或安装环境之间迁移。
 - 提供完整的桌面管理界面，包括运行概览、连接管理、MCP 服务控制、工具权限、审计记录查看和交互式 SQL 策略检查台。
 - 支持简体中文和英文界面，提供跟随系统、浅色和深色主题，并可通过系统托盘显示 DataNexa 或启动、停止 MCP 服务。
 
+## 调整与改进
+
+- 简化更新提示，点击即可进入“关于更新”页面。
+- 移除独立的更新确认弹窗。
+- 优化更新状态文案与进度条布局。
+
 ## 安装与使用说明
 
-- 本版本为候选发布版本，主要用于在稳定版发布前验证安装流程、数据库兼容性、MCP 接入、跨平台打包和自动发版流水线。
-- macOS 应用使用 Developer ID 签名，但尚未进行 Apple 公证。首次启动时，macOS 仍可能显示 Gatekeeper 安全提示。
+- macOS 应用使用 Developer ID 签名，但尚未进行 Apple 公证。首次启动时，macOS 可能显示 Gatekeeper 安全提示。您可以在终端中执行以下命令来解除警告：
+
+```shell
+sudo xattr -d com.apple.quarantine /Applications/DataNexa.app
+```
 - Windows 安装包暂未进行 Authenticode 代码签名，Microsoft Defender SmartScreen 可能显示安全提示。
-- 导出的连接文件可能包含明文数据库密码。请仅保存到可信且访问受控的位置，并在迁移完成后立即删除文件及其副本。
 
 ## 使用须知
 
