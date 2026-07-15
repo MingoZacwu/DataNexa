@@ -55,6 +55,7 @@ const mockTools: McpToolInfo[] = [
 ];
 
 const mockSnapshot: AppSnapshot = {
+  updater_enabled: false,
   config: {
     version: 1,
     server: {

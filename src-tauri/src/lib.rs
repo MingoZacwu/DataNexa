@@ -79,9 +79,19 @@ pub(crate) fn hide_main_window_to_tray(window: &WebviewWindow) -> tauri::Result<
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_opener::init());
+
+    #[cfg(feature = "updater")]
+    let builder = builder.plugin({
+        let updater = tauri_plugin_updater::Builder::new();
+        #[cfg(target_os = "macos")]
+        let updater = updater.target("darwin-universal");
+        updater.build()
+    });
+
+    builder
         .setup(|app| {
             let mut state = AppState::new(app.handle().clone())?;
             let tray_text = backend_text(&state.config.get_mut().settings.language);

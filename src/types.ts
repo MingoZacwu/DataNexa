@@ -69,6 +69,7 @@ export interface AppSnapshot {
   server_status: ServerStatus;
   audit_events: AuditEvent[];
   tools: McpToolInfo[];
+  updater_enabled: boolean;
 }
 
 export interface McpToolInfo {

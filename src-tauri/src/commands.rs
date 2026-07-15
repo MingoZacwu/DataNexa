@@ -29,6 +29,7 @@ pub struct AppSnapshot {
     pub server_status: ServerStatus,
     pub audit_events: Vec<crate::audit::AuditEvent>,
     pub tools: Vec<McpToolInfo>,
+    pub updater_enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -781,6 +782,7 @@ async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
         server_status: mcp::status(state).await,
         audit_events: state.audit.list().await,
         tools: mcp::tool_infos(&config.tools),
+        updater_enabled: cfg!(feature = "updater"),
         config,
     })
 }
