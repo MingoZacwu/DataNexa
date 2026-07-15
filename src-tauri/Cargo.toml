@@ -1,6 +1,6 @@
 [package]
 name = "datanexa"
-version = "0.2.1-rc"
+version = "0.3.0-rc"
 description = "Local readonly MCP database gateway"
 authors = ["Zachary Wu"]
 edition = "2021"
@@ -29,6 +29,7 @@ sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "postgre
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
+tauri-plugin-process = "2"
 tauri-plugin-updater = { version = "2", optional = true }
 tempfile = "3"
 thiserror = "2.0"

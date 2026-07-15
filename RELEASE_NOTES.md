@@ -1,14 +1,14 @@
-# DataNexa v0.2.1-rc
+# DataNexa v0.3.0-rc
 
-[English Release Notes](https://github.com/MingoZacwu/DataNexa/blob/v0.2.1-rc/docs/RELEASE_NOTES.en.md)
+[English Release Notes](https://github.com/MingoZacwu/DataNexa/blob/v0.3.0-rc/docs/RELEASE_NOTES.en.md)
 
 ## 版本亮点
 
 - 这是 DataNexa 的首个候选发布版本。DataNexa 是一款本地只读数据库 MCP 网关，为 AI Agent 提供统一、可控且可审计的结构化数据访问入口。
 - 数据库连接保留在本机，并在一个桌面应用中集成连接管理、只读 SQL 策略、凭证保护、MCP 工具控制与审计日志。
-- 本版本提供 Windows NSIS 安装包，以及同时支持 Apple Silicon 和 Intel Mac 的 macOS Universal 应用。
+- DataNexa 提供适配 Windows 与 macOS Universal 的版本。
 
-## 新增功能
+## 主要功能
 
 - 支持管理 SQLite、MySQL 和 PostgreSQL 数据库连接，包括连接测试、连接诊断、单独启用或停用连接，以及紧急断开全部连接。
 - 通过操作系统凭证库安全保存数据库密码，常规应用配置中不会写入明文密码。
@@ -28,21 +28,16 @@
 - 支持导入和导出 DataNexa 数据库连接，便于在不同设备或安装环境之间迁移，并在导出文件包含明文凭证时提供明确的安全警告。
 - 提供完整的桌面管理界面，包括运行概览、连接管理、MCP 服务控制、工具权限、审计记录查看和交互式 SQL 策略检查台。
 - 支持简体中文和英文界面，提供跟随系统、浅色和深色主题，并可通过系统托盘显示 DataNexa 或启动、停止 MCP 服务。
-- 集成 Tauri updater 运行时与更新产物签名能力，为后续应用内自动更新提供基础支持。
 
-## 调整与改进
-
-- 建立首个公开版本所需的应用配置、本地数据存储、安全策略和 MCP 工具接口规范。
-- 通过自动化 GitHub Release 流水线统一构建和发布 Windows 与 macOS 安装包。
-
-## 问题修复
-
-- 这是首个公开候选版本，暂无相对于历史公开版本的问题修复记录。
-
-## 安装与升级说明
+## 安装与使用说明
 
 - 本版本为候选发布版本，主要用于在稳定版发布前验证安装流程、数据库兼容性、MCP 接入、跨平台打包和自动发版流水线。
-- updater 后端和带签名的更新产物已经集成，但本候选版本暂未提供前端更新提示和应用内安装交互。
 - macOS 应用使用 Developer ID 签名，但尚未进行 Apple 公证。首次启动时，macOS 仍可能显示 Gatekeeper 安全提示。
 - Windows 安装包暂未进行 Authenticode 代码签名，Microsoft Defender SmartScreen 可能显示安全提示。
 - 导出的连接文件可能包含明文数据库密码。请仅保存到可信且访问受控的位置，并在迁移完成后立即删除文件及其副本。
+
+## 使用须知
+
+- 数据无价，谨慎使用。
+- 只读策略不能完全保证所有风险都被拦截，仍需主动约束 Agent，避免要求或允许其执行危险的数据库操作。
+- DataNexa 仍处于持续开发过程中，当前不保证应用质量与稳定性；不建议直接在生产环境使用，如确需使用请谨慎评估风险。

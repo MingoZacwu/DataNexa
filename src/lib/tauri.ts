@@ -67,6 +67,7 @@ const mockSnapshot: AppSnapshot = {
     settings: {
       audit_max_events: 300,
       audit_redact_sql_literals: false,
+      auto_check_updates: true,
       language: "zh-CN"
     },
     tools: mockTools.map(({ name, enabled }) => ({ name, enabled })),
@@ -284,5 +285,12 @@ export const api = {
       return Promise.resolve();
     }
     return command<void>("open_project_homepage", undefined, undefined);
+  },
+  openProjectReleases: () => {
+    if (!isTauri) {
+      window.open("https://github.com/MingoZacwu/DataNexa/releases", "_blank", "noopener,noreferrer");
+      return Promise.resolve();
+    }
+    return command<void>("open_project_releases", undefined, undefined);
   }
 };

@@ -35,6 +35,8 @@ pub struct SettingsConfig {
     // Enable this explicitly when audit logs must not retain SQL literal values.
     #[serde(default)]
     pub audit_redact_sql_literals: bool,
+    #[serde(default = "default_true")]
+    pub auto_check_updates: bool,
     #[serde(default = "default_language")]
     pub language: String,
 }
@@ -188,6 +190,7 @@ impl Default for SettingsConfig {
         Self {
             audit_max_events: default_audit_max_events(),
             audit_redact_sql_literals: false,
+            auto_check_updates: true,
             language: default_language(),
         }
     }

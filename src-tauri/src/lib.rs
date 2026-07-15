@@ -13,10 +13,10 @@ use std::sync::Arc;
 use commands::{
     clear_audit_events, delete_connection, diagnose_connection, disable_all_connections,
     export_connections, get_app_snapshot, hide_main_window, import_connections,
-    minimize_main_window, open_project_homepage, policy_check, rotate_server_token,
-    save_server_config, save_settings_config, set_connection_enabled, set_mcp_tool_enabled,
-    start_mcp_server, start_window_drag, stop_mcp_server, test_connection, test_connection_input,
-    upsert_connection,
+    minimize_main_window, open_project_homepage, open_project_releases, policy_check,
+    rotate_server_token, save_server_config, save_settings_config, set_connection_enabled,
+    set_mcp_tool_enabled, start_mcp_server, start_window_drag, stop_mcp_server, test_connection,
+    test_connection_input, upsert_connection,
 };
 use i18n::{backend_text, BackendText};
 use state::AppState;
@@ -81,7 +81,8 @@ pub(crate) fn hide_main_window_to_tray(window: &WebviewWindow) -> tauri::Result<
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init());
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init());
 
     #[cfg(feature = "updater")]
     let builder = builder.plugin({
@@ -187,6 +188,7 @@ pub fn run() {
             hide_main_window,
             start_window_drag,
             open_project_homepage,
+            open_project_releases,
             policy_check
         ])
         .build(tauri::generate_context!())

@@ -26,6 +26,7 @@ export interface ConnectionConfig {
 export interface SettingsConfig {
   audit_max_events: number;
   audit_redact_sql_literals: boolean;
+  auto_check_updates: boolean;
   language: string;
 }
 

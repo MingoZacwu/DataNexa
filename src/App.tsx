@@ -11,6 +11,8 @@ import {
   Clipboard,
   Clock3,
   Database,
+  Download,
+  ExternalLink,
   EyeOff,
   FileDown,
   FileText,
@@ -60,6 +62,7 @@ import {
 } from "./i18n";
 import type { I18nMessages, Locale } from "./i18n";
 import { api } from "./lib/tauri";
+import { useAppUpdater, type UpdateState } from "./lib/updater";
 import type {
   AppSnapshot,
   AuditEvent,
@@ -151,9 +154,15 @@ function App() {
   const [locale, setLocale] = useState<Locale>(detectLocale);
   const [theme, setTheme] = useState<ThemeMode>(detectThemeMode);
   const [systemThemeMode, setSystemThemeMode] = useState<EffectiveTheme>(systemTheme);
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+  const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string | null>(null);
   const effectiveTheme = resolveTheme(theme, systemThemeMode);
   const t = messages[locale];
 
+  const updater = useAppUpdater(
+    snapshot?.updater_enabled ?? null,
+    snapshot?.config.settings.auto_check_updates ?? false
+  );
   useEffect(() => {
     void refresh();
   }, []);
@@ -486,6 +495,9 @@ function App() {
   const requireToken = snapshot?.config.server.require_token ?? true;
   const serverToken = snapshot?.server_status.token ?? null;
   const recentEvents = snapshot?.audit_events.slice(0, 8) ?? [];
+  const availableUpdateVersion = updater.state.kind === "available" ? updater.state.version : null;
+  const updateActionVersion = "version" in updater.state ? updater.state.version ?? null : null;
+  const showUpdateReminder = availableUpdateVersion !== null && dismissedUpdateVersion !== availableUpdateVersion;
 
   return (
     <Tooltip.Provider delayDuration={180}>
@@ -512,14 +524,24 @@ function App() {
               <NavButton icon={<Settings />} label={t.nav.settings} active={activeView === "settings"} onClick={() => setActiveView("settings")} />
             </nav>
 
-            <SidebarFooter
-              t={t}
-              running={Boolean(snapshot?.server_status.running)}
-              port={snapshot?.config.server.port ?? 17321}
-              busy={busy}
-              disabled={!snapshot}
-              onToggle={toggleServer}
-            />
+            <div className="sidebar-bottom">
+              {showUpdateReminder && availableUpdateVersion && (
+                <SidebarUpdateReminder
+                  t={t}
+                  version={availableUpdateVersion}
+                  onUpdate={() => setUpdateDialogOpen(true)}
+                  onDismiss={() => setDismissedUpdateVersion(availableUpdateVersion)}
+                />
+              )}
+              <SidebarFooter
+                t={t}
+                running={Boolean(snapshot?.server_status.running)}
+                port={snapshot?.config.server.port ?? 17321}
+                busy={busy}
+                disabled={!snapshot}
+                onToggle={toggleServer}
+              />
+            </div>
           </aside>
 
           <main className="workspace">
@@ -612,6 +634,11 @@ function App() {
                     policySql={policySql}
                     policyKind={policyKind}
                     policyResult={policyResult}
+                    updaterEnabled={snapshot.updater_enabled}
+                    updateState={updater.state}
+                    onCheckUpdate={() => void updater.checkForUpdates()}
+                    onOpenUpdateDialog={() => setUpdateDialogOpen(true)}
+                    onOpenProjectReleases={() => void api.openProjectReleases().catch(showError)}
                     onTabChange={setSettingsTab}
                     onThemeChange={setTheme}
                     onPolicyKindChange={setPolicyKind}
@@ -647,6 +674,14 @@ function App() {
           onSubmit={saveConnection}
           onClose={() => setEditing(null)}
         />
+        <UpdateDialog
+          t={t}
+          open={updateDialogOpen}
+          version={updateActionVersion}
+          onOpenChange={setUpdateDialogOpen}
+          onInstall={() => void updater.installUpdate()}
+          onOpenProjectReleases={() => void api.openProjectReleases().catch(showError)}
+        />
         <AuditDetailDialog t={t} event={selectedAudit} onClose={() => setSelectedAudit(null)} />
       </div>
     </Tooltip.Provider>
@@ -677,6 +712,35 @@ function WindowChrome({ t }: { t: I18nMessages }) {
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+function SidebarUpdateReminder({
+  t,
+  version,
+  onUpdate,
+  onDismiss
+}: {
+  t: I18nMessages;
+  version: string;
+  onUpdate: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="sidebar-update-reminder">
+      <button type="button" className="sidebar-update-main" onClick={onUpdate}>
+        <span className="sidebar-update-icon"><Download size={16} /></span>
+        <span className="sidebar-update-copy">
+          <strong>{t.updates.availableTitle}</strong>
+          <span>{formatMessage(t.updates.availableCompact, { version })}</span>
+        </span>
+      </button>
+      <IconTooltip label={t.updates.dismissReminder}>
+        <button type="button" className="sidebar-update-dismiss" onClick={onDismiss} aria-label={t.updates.dismissReminder}>
+          <X size={14} />
+        </button>
+      </IconTooltip>
     </div>
   );
 }
@@ -1143,6 +1207,11 @@ function SettingsView({
   policySql,
   policyKind,
   policyResult,
+  updaterEnabled,
+  updateState,
+  onCheckUpdate,
+  onOpenUpdateDialog,
+  onOpenProjectReleases,
   onTabChange,
   onThemeChange,
   onPolicyKindChange,
@@ -1165,6 +1234,11 @@ function SettingsView({
   policySql: string;
   policyKind: DatabaseType;
   policyResult: PolicyCheckResult | null;
+  updaterEnabled: boolean;
+  updateState: UpdateState;
+  onCheckUpdate: () => void;
+  onOpenUpdateDialog: () => void;
+  onOpenProjectReleases: () => void;
   onTabChange: (tab: SettingsTab) => void;
   onThemeChange: (theme: ThemeMode) => void;
   onPolicyKindChange: (kind: DatabaseType) => void;
@@ -1259,6 +1333,11 @@ function SettingsView({
                   onChange={onThemeChange}
                 />
               </div>
+              <SwitchField label={t.settings.autoCheckUpdates} checked={settingsDraft.auto_check_updates} disabled={busy || !updaterEnabled} onCheckedChange={(checked) => {
+                const next = { ...settingsDraft, auto_check_updates: checked };
+                setSettingsDraft(next);
+                onSaveSettings(next);
+              }} />
             </div>
           </section>
 
@@ -1437,6 +1516,14 @@ function SettingsView({
                 <p>{t.settings.aboutText}</p>
               </div>
             </div>
+            <AboutUpdateSection
+              t={t}
+              enabled={updaterEnabled}
+              state={updateState}
+              onCheck={onCheckUpdate}
+              onUpdate={onOpenUpdateDialog}
+              onOpenProjectReleases={onOpenProjectReleases}
+            />
             <footer className="about-footer">
               <a
                 className="github-link"
@@ -1457,6 +1544,140 @@ function SettingsView({
     </section>
   );
 }
+function AboutUpdateSection({
+  t,
+  enabled,
+  state,
+  onCheck,
+  onUpdate,
+  onOpenProjectReleases
+}: {
+  t: I18nMessages;
+  enabled: boolean;
+  state: UpdateState;
+  onCheck: () => void;
+  onUpdate: () => void;
+  onOpenProjectReleases: () => void;
+}) {
+  let icon: ReactNode = <RefreshCw size={19} />;
+  let title = t.updates.readyTitle;
+  let description = t.updates.readyDescription;
+
+  if (!enabled || state.kind === "disabled") {
+    icon = <Monitor size={19} />;
+    title = t.updates.localBuildTitle;
+    description = t.updates.localBuildDescription;
+  } else if (state.kind === "checking") {
+    icon = <RefreshCw size={19} />;
+    title = t.updates.checkingTitle;
+    description = t.updates.checkingDescription;
+  } else if (state.kind === "up-to-date") {
+    icon = <CheckCircle2 size={19} />;
+    title = t.updates.upToDateTitle;
+    description = formatMessage(t.updates.upToDateDescription, { version: APP_VERSION });
+  } else if (state.kind === "available") {
+    icon = <Download size={19} />;
+    title = t.updates.availableTitle;
+    description = formatMessage(t.updates.availableDescription, { version: state.version });
+  } else if (state.kind === "downloading") {
+    icon = <Download size={19} />;
+    title = t.updates.downloadingTitle;
+    description = state.total
+      ? formatMessage(t.updates.downloadingProgress, {
+          progress: Math.min(100, Math.round((state.downloaded / state.total) * 100))
+        })
+      : t.updates.downloadingDescription;
+  } else if (state.kind === "relaunching") {
+    icon = <RefreshCw size={19} />;
+    title = t.updates.relaunchingTitle;
+    description = t.updates.relaunchingDescription;
+  } else if (state.kind === "error") {
+    icon = <AlertTriangle size={19} />;
+    if (state.phase === "download") {
+      title = t.updates.downloadFailedTitle;
+      description = t.updates.downloadFailedDescription;
+    } else if (state.phase === "relaunch") {
+      title = t.updates.relaunchFailedTitle;
+      description = t.updates.relaunchFailedDescription;
+    } else {
+      title = t.updates.checkFailedTitle;
+      description = t.updates.checkFailedDescription;
+    }
+  }
+
+  const progress = state.kind === "downloading" && state.total
+    ? Math.min(100, Math.round((state.downloaded / state.total) * 100))
+    : null;
+
+  return (
+    <section className={clsx("about-update-section", "state-" + state.kind)}>
+      <div className={clsx("about-update-icon", (state.kind === "checking" || state.kind === "relaunching") && "is-spinning")}>
+        {icon}
+      </div>
+      <div className="about-update-content">
+        <strong>{title}</strong>
+        <p>{description}</p>
+        {state.kind === "downloading" && (
+          <div
+            className={clsx("update-progress", progress === null && "indeterminate")}
+            role="progressbar"
+            aria-label={t.updates.downloadingTitle}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={progress ?? undefined}
+          >
+            <span style={{ width: progress === null ? "22%" : String(progress) + "%" }} />
+          </div>
+        )}
+      </div>
+      <div className="about-update-actions">
+        {(!enabled || state.kind === "disabled") && (
+          <button type="button" className="button soft" onClick={onOpenProjectReleases}>
+            <ExternalLink size={16} />
+            {t.updates.openReleases}
+          </button>
+        )}
+        {enabled && (state.kind === "idle" || state.kind === "up-to-date" || (state.kind === "error" && state.phase === "check")) && (
+          <button type="button" className="button soft" onClick={onCheck}>
+            <RefreshCw size={16} />
+            {state.kind === "error" ? t.updates.retry : t.updates.checkNow}
+          </button>
+        )}
+        {state.kind === "available" && (
+          <>
+            <button type="button" className="button soft" onClick={onOpenProjectReleases}>
+              <ExternalLink size={16} />
+              {t.updates.viewReleaseNotes}
+            </button>
+            <button type="button" className="button primary" onClick={onUpdate}>
+              <Download size={16} />
+              {t.updates.updateNow}
+            </button>
+          </>
+        )}
+        {state.kind === "error" && state.phase === "download" && (
+          <>
+            <button type="button" className="button soft" onClick={onOpenProjectReleases}>
+              <ExternalLink size={16} />
+              {t.updates.manualDownload}
+            </button>
+            <button type="button" className="button primary" onClick={onUpdate}>
+              <Download size={16} />
+              {t.updates.retry}
+            </button>
+          </>
+        )}
+        {state.kind === "error" && state.phase === "relaunch" && (
+          <button type="button" className="button soft" onClick={onOpenProjectReleases}>
+            <ExternalLink size={16} />
+            {t.updates.openReleases}
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
 
 function ConnectionDialog({
   t,
@@ -1600,6 +1821,69 @@ function ConnectionDialog({
               <button type="submit" className="button primary" disabled={busy}>{t.connectionDialog.save}</button>
             </footer>
           </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function UpdateDialog({
+  t,
+  open,
+  version,
+  onOpenChange,
+  onInstall,
+  onOpenProjectReleases
+}: {
+  t: I18nMessages;
+  open: boolean;
+  version: string | null;
+  onOpenChange: (open: boolean) => void;
+  onInstall: () => void;
+  onOpenProjectReleases: () => void;
+}) {
+  if (!version) return null;
+
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="dialog-overlay" />
+        <Dialog.Content className="policy-dialog update-dialog">
+          <div className="dialog-titlebar">
+            <div>
+              <Dialog.Title>{t.updates.confirmTitle}</Dialog.Title>
+              <Dialog.Description>{formatMessage(t.updates.confirmDescription, { version })}</Dialog.Description>
+            </div>
+            <Dialog.Close asChild>
+              <button type="button" className="icon-button" aria-label={t.common.close}>
+                <X size={18} />
+              </button>
+            </Dialog.Close>
+          </div>
+          <div className="update-confirm-version">
+            <Download size={20} />
+            <div>
+              <span>{t.updates.targetVersion}</span>
+              <strong>DataNexa v{version}</strong>
+            </div>
+          </div>
+          <footer className="update-dialog-actions">
+            <button type="button" className="button soft" onClick={onOpenProjectReleases}>
+              <ExternalLink size={16} />
+              {t.updates.viewReleaseNotes}
+            </button>
+            <button
+              type="button"
+              className="button primary"
+              onClick={() => {
+                onOpenChange(false);
+                onInstall();
+              }}
+            >
+              <Download size={16} />
+              {t.updates.updateNow}
+            </button>
+          </footer>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

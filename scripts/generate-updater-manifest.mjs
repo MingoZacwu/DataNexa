@@ -62,7 +62,6 @@ if (!version) {
 
 const manifest = {
   version,
-  notes: release.body || "",
   pub_date: new Date().toISOString(),
   platforms: {
     "windows-x86_64": windows,
