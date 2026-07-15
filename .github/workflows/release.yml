@@ -1,0 +1,321 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag name (e.g. v0.2.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-tag:
+    name: Resolve tag
+    runs-on: ubuntu-22.04
+    outputs:
+      release_tag: ${{ steps.t.outputs.release_tag }}
+    steps:
+      - name: Resolve release tag
+        id: t
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="$INPUT_TAG"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+          if [[ ! "$tag" =~ $semver ]]; then
+            echo "::error::Invalid release tag. Expected vX.Y.Z semantic version."
+            exit 1
+          fi
+          echo "release_tag=$tag" >> $GITHUB_OUTPUT
+          echo "Resolved tag: $tag"
+
+  validate:
+    name: Validate version & tag
+    needs: resolve-tag
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - name: Checkout (full history for ancestor check)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-tag.outputs.release_tag }}
+          fetch-depth: 0
+
+      - name: Verify tagged commit is on origin/main
+        run: |
+          git fetch origin main
+          TAG_SHA=$(git rev-parse HEAD)
+          MAIN_SHA=$(git rev-parse origin/main)
+          echo "Tag commit:  $TAG_SHA"
+          echo "Main HEAD:   $MAIN_SHA"
+          if git merge-base --is-ancestor "$TAG_SHA" origin/main; then
+            echo "OK: tagged commit is an ancestor of origin/main"
+          else
+            echo "::error::Tagged commit $TAG_SHA is not on origin/main (HEAD: $MAIN_SHA)"
+            exit 1
+          fi
+
+      - name: Verify app.config.json version matches tag
+        id: v
+        run: |
+          tag="${{ needs.resolve-tag.outputs.release_tag }}"
+          version="${tag#v}"
+          app_v=$(jq -r '.version' app.config.json)
+          echo "Tag version:       $version"
+          echo "app.config.json:   $app_v"
+          if [ "$version" != "$app_v" ]; then
+            echo "::error::Version mismatch - tag=$version app.config.json=$app_v"
+            exit 1
+          fi
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Run sync:config and verify no diff
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm sync:config
+          if ! git diff --exit-code; then
+            echo "::error::Working tree has uncommitted changes after sync:config."
+            echo "::error::This means version-dependent files (package.json, tauri.conf.json, Cargo.toml, Cargo.lock)"
+            echo "::error::were manually edited instead of updating app.config.json."
+            exit 1
+          fi
+          echo "OK: all generated files match app.config.json"
+
+  create-draft-release:
+    name: Create draft release
+    needs: [resolve-tag, validate]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.r.outputs.release_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-tag.outputs.release_tag }}
+
+      - name: Create or reuse draft release
+        id: r
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.resolve-tag.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          is_prerelease="false"
+          if [[ "$RELEASE_TAG" == *"-"* ]]; then
+            is_prerelease="true"
+          fi
+
+          if existing=$(gh release view "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json databaseId,isDraft 2>/dev/null); then
+            if [ "$(echo "$existing" | jq -r '.isDraft')" != "true" ]; then
+              echo "::error::Release $RELEASE_TAG already exists and is not a draft."
+              exit 1
+            fi
+
+            gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "DataNexa v$RELEASE_VERSION" \
+              --notes-file RELEASE_NOTES.md
+            release_id=$(echo "$existing" | jq -r '.databaseId')
+          else
+            jq -n \
+              --arg tag "$RELEASE_TAG" \
+              --arg name "DataNexa v$RELEASE_VERSION" \
+              --rawfile body RELEASE_NOTES.md \
+              --argjson prerelease "$is_prerelease" \
+              '{
+                tag_name: $tag,
+                target_commitish: "main",
+                name: $name,
+                body: $body,
+                draft: true,
+                prerelease: $prerelease
+              }' > release-payload.json
+
+            release_id=$(gh api \
+              --method POST \
+              "repos/$GITHUB_REPOSITORY/releases" \
+              --input release-payload.json \
+              --jq '.id')
+          fi
+
+          if [ -z "$release_id" ]; then
+            echo "::error::Failed to create or resolve draft release"
+            exit 1
+          fi
+          echo "Draft release ID: $release_id"
+          echo "release_id=$release_id" >> $GITHUB_OUTPUT
+
+  build:
+    name: Build (${{ matrix.platform }})
+    needs: [resolve-tag, validate, create-draft-release]
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-15
+            rust_targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
+            args: '--config src-tauri/tauri.release.conf.json --features updater --bundles dmg --target universal-apple-darwin'
+          - platform: windows-latest
+            rust_targets: ''
+            args: '--config src-tauri/tauri.release.conf.json --features updater --bundles nsis'
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-tag.outputs.release_tag }}
+
+      - name: Import Apple Developer Certificate
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          identities=$(security find-identity -v -p codesigning build.keychain)
+          echo "$identities"
+          if [ -z "$APPLE_SIGNING_IDENTITY" ] || ! echo "$identities" | grep -Fq "$APPLE_SIGNING_IDENTITY"; then
+            echo "::error::APPLE_SIGNING_IDENTITY was not found in the imported keychain."
+            exit 1
+          fi
+          rm certificate.p12
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - name: Cache Rust dependencies
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and upload to draft release
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && secrets.APPLE_SIGNING_IDENTITY || '' }}
+        with:
+          releaseId: ${{ needs.create-draft-release.outputs.release_id }}
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: true
+          args: ${{ matrix.args }}
+
+  generate-manifest:
+    name: Generate updater manifest
+    needs: [resolve-tag, create-draft-release, build]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-tag.outputs.release_tag }}
+
+      - name: Download release metadata and signatures
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-draft-release.outputs.release_id }}
+          RELEASE_TAG: ${{ needs.resolve-tag.outputs.release_tag }}
+        run: |
+          mkdir -p updater-signatures
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > release.json
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern '*.sig' \
+            --dir updater-signatures
+
+      - name: Generate and validate latest.json
+        run: |
+          node scripts/generate-updater-manifest.mjs \
+            release.json \
+            updater-signatures \
+            latest.json
+          jq -e '
+            .platforms["windows-x86_64"] and
+            .platforms["windows-x86_64-nsis"] and
+            .platforms["darwin-universal"]
+          ' latest.json > /dev/null
+
+      - name: Upload latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.resolve-tag.outputs.release_tag }}
+        run: |
+          gh release upload "$RELEASE_TAG" latest.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+  publish-release:
+    name: Publish release
+    needs: [resolve-tag, create-draft-release, generate-manifest]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.resolve-tag.outputs.release_tag }}
+        run: |
+          gh release edit "$RELEASE_TAG" \
+            --repo "${{ github.repository }}" \
+            --draft=false
+          echo "Release $RELEASE_TAG published."

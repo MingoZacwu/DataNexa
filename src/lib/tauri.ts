@@ -1,15 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import type {
   AppSnapshot,
   ConnectionDiagnostics,
   ConnectionInput,
   DatabaseType,
+  ImportConnectionsResult,
   McpToolInfo,
   PolicyCheckResult,
   ServerConfig,
   SettingsConfig
 } from "../types";
-import { formatMessage, messages } from "../i18n";
+import { formatMessage, messages, type Locale } from "../i18n";
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const previewText = messages["zh-CN"].api;
@@ -53,18 +55,18 @@ const mockTools: McpToolInfo[] = [
 ];
 
 const mockSnapshot: AppSnapshot = {
+  updater_enabled: false,
   config: {
     version: 1,
     server: {
       host: "127.0.0.1",
       port: 17321,
-      streamable_http: true,
-      legacy_sse_compat: true,
       require_token: true,
       token: "local-preview-token"
     },
     settings: {
       audit_max_events: 300,
+      audit_redact_sql_literals: false,
       language: "zh-CN"
     },
     tools: mockTools.map(({ name, enabled }) => ({ name, enabled })),
@@ -113,6 +115,7 @@ const mockSnapshot: AppSnapshot = {
       id: "preview-1",
       timestamp: new Date().toISOString(),
       connection_id: "local_mysql",
+      connection_name: "Local MySQL",
       tool: "datanexa_execute_readonly_sql",
       status: "allowed",
       reason: null,
@@ -186,12 +189,43 @@ function withAuditCleared(): AppSnapshot {
   };
 }
 
+function connectionTransferFileName() {
+  return `datanexa-connections-${new Date().toISOString().slice(0, 10)}.json`;
+}
+
 export const api = {
   snapshot: () => command<AppSnapshot>("get_app_snapshot", undefined, mockSnapshot),
   saveServerConfig: (server: ServerConfig) =>
     command<AppSnapshot>("save_server_config", { server }, mockSnapshot),
   saveSettingsConfig: (settings: SettingsConfig) =>
     command<AppSnapshot>("save_settings_config", { settings }, withSettings(settings)),
+  exportConnections: async (locale: Locale) => {
+    if (!isTauri) {
+      throw new Error(formatMessage(previewText.desktopOnly, { name: "export_connections" }));
+    }
+    const dialogText = messages[locale].fileDialog;
+    const path = await save({
+      title: dialogText.exportConnectionsTitle,
+      defaultPath: connectionTransferFileName(),
+      filters: [{ name: dialogText.connectionFile, extensions: ["json"] }]
+    });
+    if (!path) return null;
+    return command<number>("export_connections", { path });
+  },
+  importConnections: async (locale: Locale) => {
+    if (!isTauri) {
+      throw new Error(formatMessage(previewText.desktopOnly, { name: "import_connections" }));
+    }
+    const dialogText = messages[locale].fileDialog;
+    const path = await open({
+      title: dialogText.importConnectionsTitle,
+      multiple: false,
+      directory: false,
+      filters: [{ name: dialogText.connectionFile, extensions: ["json"] }]
+    });
+    if (!path) return null;
+    return command<ImportConnectionsResult>("import_connections", { path });
+  },
   setMcpToolEnabled: (name: string, enabled: boolean) =>
     command<AppSnapshot>("set_mcp_tool_enabled", { name, enabled }, withToolEnabled(name, enabled)),
   upsertConnection: (input: ConnectionInput) =>

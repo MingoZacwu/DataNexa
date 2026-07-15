@@ -1,21 +1,27 @@
+use std::collections::HashSet;
+use std::fs;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
+use chrono::Utc;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use tauri::menu::{Menu, MenuItem};
 use tauri::{AppHandle, State, WebviewWindow};
+use uuid::Uuid;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::audit::AuditStatus;
 use crate::config::{
     default_port, is_known_tool, AppConfig, ConnectionConfig, DbKind, ServerConfig, SettingsConfig,
 };
 use crate::db::ConnectionDiagnostics;
-use crate::i18n::{backend_text, BackendText};
+use crate::i18n::{backend_text, BackendText, ConnectionDiagnosticText};
 use crate::mcp::{self, McpToolInfo, ServerStatus};
 use crate::policy::{PolicyCheckResult, PolicyEngine};
 use crate::state::AppState;
 use crate::vault::CredentialVault;
+use crate::{hide_main_window_to_tray, refresh_tray_menu};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AppSnapshot {
@@ -23,6 +29,7 @@ pub struct AppSnapshot {
     pub server_status: ServerStatus,
     pub audit_events: Vec<crate::audit::AuditEvent>,
     pub tools: Vec<McpToolInfo>,
+    pub updater_enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -33,6 +40,55 @@ pub struct ConnectionInput {
     #[serde(default)]
     pub clear_password: bool,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ConnectionTransferFile {
+    format: String,
+    version: u16,
+    exported_at: String,
+    connections: Vec<PortableConnection>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PortableConnection {
+    name: String,
+    #[serde(rename = "type")]
+    kind: DbKind,
+    enabled: bool,
+    database: String,
+    #[serde(default)]
+    host: Option<String>,
+    #[serde(default)]
+    port: Option<u16>,
+    #[serde(default)]
+    username: Option<String>,
+    #[serde(default)]
+    password: Option<String>,
+    #[serde(default)]
+    ssl_mode: Option<String>,
+    max_rows: u32,
+    query_timeout_ms: u64,
+    max_connections: u32,
+}
+
+impl Drop for PortableConnection {
+    fn drop(&mut self) {
+        if let Some(password) = self.password.as_mut() {
+            password.zeroize();
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImportConnectionsResult {
+    pub snapshot: AppSnapshot,
+    pub imported_count: usize,
+}
+
+const CONNECTION_TRANSFER_FORMAT: &str = "datanexa-connections";
+const CONNECTION_TRANSFER_VERSION: u16 = 1;
+const MAX_CONNECTION_IMPORT_BYTES: u64 = 5 * 1024 * 1024;
+const MAX_CONNECTION_IMPORT_COUNT: usize = 1000;
 
 #[tauri::command]
 pub async fn get_app_snapshot(state: State<'_, Arc<AppState>>) -> Result<AppSnapshot, String> {
@@ -49,11 +105,9 @@ pub async fn save_server_config(
         return Err(text.local_host_only().to_string());
     }
 
-    {
-        let mut config = state.config.write().await;
-        config.server = server;
-        state.store.save(&config).map_err(to_client_error)?;
-    }
+    mcp::reconfigure(state.inner().clone(), server)
+        .await
+        .map_err(to_client_error)?;
 
     snapshot(state.inner()).await.map_err(to_client_error)
 }
@@ -64,19 +118,181 @@ pub async fn save_settings_config(
     state: State<'_, Arc<AppState>>,
     settings: SettingsConfig,
 ) -> Result<AppSnapshot, String> {
-    let text = {
-        let mut config = state.config.write().await;
+    let text = commit_config(state.inner(), |config| {
         let settings = normalize_settings(settings);
         let text = backend_text(&settings.language);
         config.settings = settings;
-        state.store.save(&config).map_err(to_client_error)?;
-        state.audit.trim(config.settings.audit_max_events).await;
-        text
-    };
+        Ok(text)
+    })
+    .await
+    .map_err(to_client_error)?;
+    let audit_max_events = state.config.read().await.settings.audit_max_events;
+    state
+        .audit
+        .trim(audit_max_events)
+        .await
+        .map_err(to_client_error)?;
 
-    refresh_tray_menu(&app, text).map_err(to_client_error)?;
+    let mcp_running = mcp::status(state.inner()).await.running;
+    refresh_tray_menu(&app, text, mcp_running).map_err(to_client_error)?;
 
     snapshot(state.inner()).await.map_err(to_client_error)
+}
+
+#[tauri::command]
+pub async fn export_connections(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+) -> Result<usize, String> {
+    let path = transfer_path(&path)?;
+    let _transaction = state.config_transaction.read().await;
+    let connections = state.config.read().await.connections.clone();
+    let mut portable_connections = Vec::with_capacity(connections.len());
+
+    for connection in connections {
+        let password = match connection.credential_ref.as_deref() {
+            Some(credential_ref) => Some(
+                state
+                    .vault
+                    .get(credential_ref)
+                    .map_err(to_client_error)?
+                    .ok_or_else(|| {
+                        "A connection references a saved password that is missing from the credential vault."
+                            .to_string()
+                    })?
+                    .as_str()
+                    .to_owned(),
+            ),
+            None => None,
+        };
+
+        portable_connections.push(PortableConnection {
+            name: connection.name,
+            kind: connection.kind,
+            enabled: connection.enabled,
+            database: connection.database,
+            host: connection.host,
+            port: connection.port,
+            username: connection.username,
+            password,
+            ssl_mode: connection.ssl_mode,
+            max_rows: connection.max_rows,
+            query_timeout_ms: connection.query_timeout_ms,
+            max_connections: connection.max_connections,
+        });
+    }
+
+    let exported_count = portable_connections.len();
+    let transfer = ConnectionTransferFile {
+        format: CONNECTION_TRANSFER_FORMAT.to_string(),
+        version: CONNECTION_TRANSFER_VERSION,
+        exported_at: Utc::now().to_rfc3339(),
+        connections: portable_connections,
+    };
+    let mut contents =
+        Zeroizing::new(serde_json::to_vec_pretty(&transfer).map_err(to_client_error)?);
+    contents.push(b'\n');
+    fs::write(path, contents.as_slice()).map_err(to_client_error)?;
+
+    Ok(exported_count)
+}
+
+#[tauri::command]
+pub async fn import_connections(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+) -> Result<ImportConnectionsResult, String> {
+    let path = transfer_path(&path)?;
+    let metadata = fs::metadata(path).map_err(to_client_error)?;
+    if metadata.len() > MAX_CONNECTION_IMPORT_BYTES {
+        return Err("The connection import file is larger than 5 MB.".to_string());
+    }
+
+    let contents = Zeroizing::new(fs::read(path).map_err(to_client_error)?);
+    let mut transfer: ConnectionTransferFile =
+        serde_json::from_slice(contents.as_slice()).map_err(to_client_error)?;
+    if transfer.format != CONNECTION_TRANSFER_FORMAT
+        || transfer.version != CONNECTION_TRANSFER_VERSION
+    {
+        return Err("Unsupported DataNexa connection import file.".to_string());
+    }
+    if transfer.connections.len() > MAX_CONNECTION_IMPORT_COUNT {
+        return Err("A connection import file can contain at most 1000 connections.".to_string());
+    }
+
+    let imported_count = transfer.connections.len();
+    let _transaction = state.config_transaction.write().await;
+    let mut candidate = state.config.read().await.clone();
+    let text = backend_text(&candidate.settings.language);
+    let mut existing_ids = candidate
+        .connections
+        .iter()
+        .map(|connection| connection.id.clone())
+        .collect::<HashSet<_>>();
+    let mut credentials = Vec::new();
+
+    for mut portable in transfer.connections.drain(..) {
+        let id = next_import_connection_id(&mut existing_ids);
+        let password = portable
+            .password
+            .take()
+            .filter(|password| !password.is_empty())
+            .map(Zeroizing::new);
+        let credential_ref = password
+            .as_ref()
+            .map(|_| CredentialVault::credential_ref(&id));
+        let connection = ConnectionConfig {
+            id,
+            name: std::mem::take(&mut portable.name),
+            kind: portable.kind.clone(),
+            enabled: portable.enabled,
+            database: std::mem::take(&mut portable.database),
+            host: portable.host.take(),
+            port: portable.port,
+            username: portable.username.take(),
+            credential_ref: credential_ref.clone(),
+            ssl_mode: portable.ssl_mode.take(),
+            max_rows: portable.max_rows,
+            query_timeout_ms: portable.query_timeout_ms,
+            max_connections: portable.max_connections,
+        };
+        validate_connection(&connection, &text).map_err(to_client_error)?;
+        candidate.connections.push(normalize_connection(connection));
+        if let (Some(credential_ref), Some(password)) = (credential_ref, password) {
+            credentials.push((credential_ref, password));
+        }
+    }
+    candidate
+        .normalize_and_validate()
+        .map_err(to_client_error)?;
+
+    let mut saved_credential_refs = Vec::with_capacity(credentials.len());
+    for (credential_ref, password) in credentials {
+        if let Err(error) = state.vault.put_secret(&credential_ref, password) {
+            return Err(import_failure_with_rollback(
+                "Credential import failed",
+                error,
+                &state.vault,
+                &saved_credential_refs,
+            ));
+        }
+        saved_credential_refs.push(credential_ref);
+    }
+
+    if let Err(error) = persist_config_candidate(&state.store, &state.config, candidate).await {
+        return Err(import_failure_with_rollback(
+            "Configuration import failed",
+            error,
+            &state.vault,
+            &saved_credential_refs,
+        ));
+    }
+    drop(_transaction);
+
+    Ok(ImportConnectionsResult {
+        snapshot: snapshot(state.inner()).await.map_err(to_client_error)?,
+        imported_count,
+    })
 }
 
 #[tauri::command]
@@ -90,14 +306,15 @@ pub async fn set_mcp_tool_enabled(
         return Err(text.unknown_mcp_tool(&name));
     }
 
-    {
-        let mut config = state.config.write().await;
+    commit_config(state.inner(), |config| {
         config.normalize();
         if let Some(tool) = config.tools.iter_mut().find(|tool| tool.name == name) {
             tool.enabled = enabled;
         }
-        state.store.save(&config).map_err(to_client_error)?;
-    }
+        Ok(())
+    })
+    .await
+    .map_err(to_client_error)?;
 
     snapshot(state.inner()).await.map_err(to_client_error)
 }
@@ -107,49 +324,114 @@ pub async fn upsert_connection(
     state: State<'_, Arc<AppState>>,
     input: ConnectionInput,
 ) -> Result<AppSnapshot, String> {
+    validate_password_input(input.clear_password, input.password.as_deref())?;
     let text = text_for_state(state.inner()).await;
     validate_connection(&input.connection, &text).map_err(to_client_error)?;
     let clear_password = input.clear_password;
     let mut connection = normalize_connection(input.connection);
-
-    if clear_password {
-        if let Some(credential_ref) = connection.credential_ref.as_deref() {
-            state
-                .vault
-                .delete(credential_ref)
-                .map_err(to_client_error)?;
-        }
-        connection.credential_ref = None;
-    } else if let Some(password) = input.password.filter(|value| !value.is_empty()) {
-        let credential_ref = connection
-            .credential_ref
+    let password = input.password.filter(|value| !value.is_empty());
+    let updates_credential = password.is_some();
+    {
+        let _transaction = state.config_transaction.write().await;
+        let mut candidate = state.config.read().await.clone();
+        let existing = candidate
+            .connections
+            .iter()
+            .find(|existing| existing.id == connection.id)
+            .cloned();
+        let existing_ref = existing
+            .as_ref()
+            .and_then(|existing| existing.credential_ref.clone());
+        let trusted_ref = existing_ref
             .clone()
             .unwrap_or_else(|| CredentialVault::credential_ref(&connection.id));
-        state
-            .vault
-            .put(&credential_ref, password)
-            .map_err(to_client_error)?;
-        connection.credential_ref = Some(credential_ref);
-    }
 
-    {
-        let mut config = state.config.write().await;
-        if let Some(existing) = config
+        connection.credential_ref = if clear_password {
+            None
+        } else if password.is_some() {
+            Some(trusted_ref.clone())
+        } else {
+            existing_ref.clone()
+        };
+
+        let previous_credential = if password.is_some() {
+            state.vault.get(&trusted_ref).map_err(to_client_error)?
+        } else {
+            None
+        };
+
+        if let Some(existing) = candidate
             .connections
             .iter_mut()
             .find(|existing| existing.id == connection.id)
         {
-            if !clear_password && connection.credential_ref.is_none() {
-                connection.credential_ref = existing.credential_ref.clone();
-            }
             *existing = connection.clone();
         } else {
-            config.connections.push(connection.clone());
+            candidate.connections.push(connection.clone());
         }
-        state.store.save(&config).map_err(to_client_error)?;
-    }
+        candidate
+            .normalize_and_validate()
+            .map_err(to_client_error)?;
+        let credential_to_delete = candidate
+            .connections
+            .iter()
+            .find(|candidate| candidate.id == connection.id)
+            .and_then(|candidate| removed_credential_ref(existing_ref.clone(), candidate));
 
-    state.db.close(&connection.id).await;
+        if let Some(password) = password {
+            if let Err(error) = state.vault.put(&trusted_ref, password) {
+                let rollback = if let Some(previous) = previous_credential {
+                    state.vault.put_secret(&trusted_ref, previous)
+                } else {
+                    state.vault.delete(&trusted_ref)
+                };
+                return Err(match rollback {
+                    Ok(()) => to_client_error(error),
+                    Err(rollback_error) => format!(
+                        "Credential update failed: {}; credential rollback also failed: {}",
+                        to_client_error(error),
+                        to_client_error(rollback_error)
+                    ),
+                });
+            }
+        }
+
+        if let Err(error) = persist_invalidating_candidate(
+            &state.store,
+            &state.config,
+            &state.db,
+            candidate,
+            std::slice::from_ref(&connection.id),
+        )
+        .await
+        {
+            let rollback = if updates_credential {
+                if let Some(previous) = previous_credential {
+                    state.vault.put_secret(&trusted_ref, previous)
+                } else {
+                    state.vault.delete(&trusted_ref)
+                }
+            } else {
+                Ok(())
+            };
+            if let Err(rollback_error) = rollback {
+                return Err(format!(
+                    "Configuration save failed: {}; credential rollback also failed: {}",
+                    to_client_error(error),
+                    to_client_error(rollback_error)
+                ));
+            }
+            return Err(to_client_error(error));
+        }
+        if let Some(credential_ref) = credential_to_delete {
+            state.vault.delete(&credential_ref).map_err(|error| {
+                format!(
+                    "Connection was saved without credentials, but the orphan credential could not be deleted: {}",
+                    to_client_error(error)
+                )
+            })?;
+        }
+    }
     snapshot(state.inner()).await.map_err(to_client_error)
 }
 
@@ -158,25 +440,37 @@ pub async fn delete_connection(
     state: State<'_, Arc<AppState>>,
     id: String,
 ) -> Result<AppSnapshot, String> {
-    let credential_ref = {
-        let mut config = state.config.write().await;
-        let removed = config
-            .connections
-            .iter()
-            .find(|connection| connection.id == id)
-            .and_then(|connection| connection.credential_ref.clone());
-        config.connections.retain(|connection| connection.id != id);
-        state.store.save(&config).map_err(to_client_error)?;
-        removed
-    };
-
-    state.db.close(&id).await;
+    let _transaction = state.config_transaction.write().await;
+    let mut candidate = state.config.read().await.clone();
+    let credential_ref = candidate
+        .connections
+        .iter()
+        .find(|connection| connection.id == id)
+        .and_then(|connection| connection.credential_ref.clone());
+    candidate
+        .connections
+        .retain(|connection| connection.id != id);
+    candidate
+        .normalize_and_validate()
+        .map_err(to_client_error)?;
+    persist_invalidating_candidate(
+        &state.store,
+        &state.config,
+        &state.db,
+        candidate,
+        std::slice::from_ref(&id),
+    )
+    .await
+    .map_err(to_client_error)?;
     if let Some(credential_ref) = credential_ref {
-        state
-            .vault
-            .delete(&credential_ref)
-            .map_err(to_client_error)?;
+        state.vault.delete(&credential_ref).map_err(|error| {
+            format!(
+                "Connection was deleted, but its orphan credential could not be deleted: {}",
+                to_client_error(error)
+            )
+        })?;
     }
+    drop(_transaction);
 
     snapshot(state.inner()).await.map_err(to_client_error)
 }
@@ -187,23 +481,24 @@ pub async fn set_connection_enabled(
     id: String,
     enabled: bool,
 ) -> Result<AppSnapshot, String> {
-    {
-        let mut config = state.config.write().await;
+    let invalidation_ids = (!enabled)
+        .then(|| id.clone())
+        .into_iter()
+        .collect::<Vec<_>>();
+    commit_config_invalidating(state.inner(), &invalidation_ids, |config| {
         let Some(connection) = config
             .connections
             .iter_mut()
             .find(|connection| connection.id == id)
         else {
-            return Err("connection not found".to_string());
+            return Err(anyhow::anyhow!("connection not found"));
         };
 
         connection.enabled = enabled;
-        state.store.save(&config).map_err(to_client_error)?;
-    }
-
-    if !enabled {
-        state.db.close(&id).await;
-    }
+        Ok(())
+    })
+    .await
+    .map_err(to_client_error)?;
 
     snapshot(state.inner()).await.map_err(to_client_error)
 }
@@ -212,34 +507,36 @@ pub async fn set_connection_enabled(
 pub async fn disable_all_connections(
     state: State<'_, Arc<AppState>>,
 ) -> Result<AppSnapshot, String> {
-    let connection_ids = {
-        let mut config = state.config.write().await;
-        let connection_ids = config
-            .connections
-            .iter()
-            .map(|connection| connection.id.clone())
-            .collect::<Vec<_>>();
-
-        for connection in &mut config.connections {
-            connection.enabled = false;
-        }
-
-        state.store.save(&config).map_err(to_client_error)?;
-        connection_ids
-    };
-
-    for id in connection_ids {
-        state.db.close(&id).await;
+    let _transaction = state.config_transaction.write().await;
+    let mut candidate = state.config.read().await.clone();
+    let connection_ids = candidate
+        .connections
+        .iter()
+        .map(|connection| connection.id.clone())
+        .collect::<Vec<_>>();
+    for connection in &mut candidate.connections {
+        connection.enabled = false;
     }
+    candidate
+        .normalize_and_validate()
+        .map_err(to_client_error)?;
+    persist_invalidating_candidate(
+        &state.store,
+        &state.config,
+        &state.db,
+        candidate,
+        &connection_ids,
+    )
+    .await
+    .map_err(to_client_error)?;
+    drop(_transaction);
 
     snapshot(state.inner()).await.map_err(to_client_error)
 }
 
 #[tauri::command]
-pub async fn clear_audit_events(
-    state: State<'_, Arc<AppState>>,
-) -> Result<AppSnapshot, String> {
-    state.audit.clear().await;
+pub async fn clear_audit_events(state: State<'_, Arc<AppState>>) -> Result<AppSnapshot, String> {
+    state.audit.clear().await.map_err(to_client_error)?;
     snapshot(state.inner()).await.map_err(to_client_error)
 }
 
@@ -248,6 +545,7 @@ pub async fn test_connection(
     state: State<'_, Arc<AppState>>,
     id: String,
 ) -> Result<String, String> {
+    let _config_transaction = state.config_transaction.read().await;
     let text = text_for_state(state.inner()).await;
     let connection = find_connection(state.inner(), &id)
         .await
@@ -265,6 +563,7 @@ pub async fn test_connection(
                 .audit
                 .record_with_limit(
                     Some(id),
+                    Some(connection.name.clone()),
                     "test_connection",
                     AuditStatus::Allowed,
                     None,
@@ -273,7 +572,13 @@ pub async fn test_connection(
                     None,
                     max_events,
                 )
-                .await;
+                .await
+                .map_err(|error| {
+                    format!(
+                        "Connection test succeeded, but audit storage is unavailable: {}",
+                        to_client_error(error)
+                    )
+                })?;
             Ok(text.connection_test_ok(duration.as_millis()))
         }
         Err(error) => {
@@ -281,6 +586,7 @@ pub async fn test_connection(
                 .audit
                 .record_with_limit(
                     Some(id),
+                    Some(connection.name.clone()),
                     "test_connection",
                     AuditStatus::Error,
                     Some(sanitize_error(&error)),
@@ -289,7 +595,14 @@ pub async fn test_connection(
                     None,
                     max_events,
                 )
-                .await;
+                .await
+                .map_err(|audit_error| {
+                    format!(
+                        "Connection test failed and audit storage is unavailable: {}; original result: {}",
+                        to_client_error(audit_error),
+                        to_client_error(&error)
+                    )
+                })?;
             let diagnostics = state.db.diagnostics(&connection, &state.vault, &text);
             Err(format!(
                 "{}\n{}",
@@ -305,6 +618,7 @@ pub async fn test_connection_input(
     state: State<'_, Arc<AppState>>,
     input: ConnectionInput,
 ) -> Result<String, String> {
+    let _config_transaction = state.config_transaction.read().await;
     let text = text_for_state(state.inner()).await;
     validate_connection(&input.connection, &text).map_err(to_client_error)?;
 
@@ -334,6 +648,7 @@ pub async fn test_connection_input(
                 .audit
                 .record_with_limit(
                     Some(connection_id),
+                    Some(connection.name.clone()),
                     "test_connection",
                     AuditStatus::Allowed,
                     None,
@@ -342,7 +657,13 @@ pub async fn test_connection_input(
                     None,
                     max_events,
                 )
-                .await;
+                .await
+                .map_err(|error| {
+                    format!(
+                        "Connection test succeeded, but audit storage is unavailable: {}",
+                        to_client_error(error)
+                    )
+                })?;
             Ok(text.connection_test_ok(duration.as_millis()))
         }
         Err(error) => {
@@ -350,6 +671,7 @@ pub async fn test_connection_input(
                 .audit
                 .record_with_limit(
                     Some(connection_id),
+                    Some(connection.name.clone()),
                     "test_connection",
                     AuditStatus::Error,
                     Some(sanitize_error(&error)),
@@ -358,7 +680,14 @@ pub async fn test_connection_input(
                     None,
                     max_events,
                 )
-                .await;
+                .await
+                .map_err(|audit_error| {
+                    format!(
+                        "Connection test failed and audit storage is unavailable: {}; original result: {}",
+                        to_client_error(audit_error),
+                        to_client_error(&error)
+                    )
+                })?;
             Err(to_client_error(&error))
         }
     }
@@ -369,6 +698,7 @@ pub async fn diagnose_connection(
     state: State<'_, Arc<AppState>>,
     id: String,
 ) -> Result<ConnectionDiagnostics, String> {
+    let _config_transaction = state.config_transaction.read().await;
     let text = text_for_state(state.inner()).await;
     let connection = find_connection(state.inner(), &id)
         .await
@@ -377,22 +707,34 @@ pub async fn diagnose_connection(
 }
 
 #[tauri::command]
-pub async fn start_mcp_server(state: State<'_, Arc<AppState>>) -> Result<AppSnapshot, String> {
+pub async fn start_mcp_server(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<AppSnapshot, String> {
     mcp::start(state.inner().clone())
         .await
         .map_err(to_client_error)?;
+    let text = text_for_state(state.inner()).await;
+    refresh_tray_menu(&app, text, true).map_err(to_client_error)?;
     snapshot(state.inner()).await.map_err(to_client_error)
 }
 
 #[tauri::command]
-pub async fn stop_mcp_server(state: State<'_, Arc<AppState>>) -> Result<AppSnapshot, String> {
+pub async fn stop_mcp_server(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<AppSnapshot, String> {
     mcp::stop(state.inner().clone()).await;
+    let text = text_for_state(state.inner()).await;
+    refresh_tray_menu(&app, text, false).map_err(to_client_error)?;
     snapshot(state.inner()).await.map_err(to_client_error)
 }
 
 #[tauri::command]
 pub async fn rotate_server_token(state: State<'_, Arc<AppState>>) -> Result<AppSnapshot, String> {
-    mcp::rotate_token(state.inner()).await;
+    mcp::rotate_token(state.inner())
+        .await
+        .map_err(to_client_error)?;
     snapshot(state.inner()).await.map_err(to_client_error)
 }
 
@@ -419,7 +761,7 @@ pub fn minimize_main_window(window: WebviewWindow) -> Result<(), String> {
 
 #[tauri::command]
 pub fn hide_main_window(window: WebviewWindow) -> Result<(), String> {
-    window.hide().map_err(to_client_error)
+    hide_main_window_to_tray(&window).map_err(to_client_error)
 }
 
 #[tauri::command]
@@ -435,13 +777,71 @@ pub fn open_project_homepage() -> Result<(), String> {
 
 async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
     let config = state.config.read().await.clone();
-    state.audit.trim(config.settings.audit_max_events).await;
+    state.audit.trim(config.settings.audit_max_events).await?;
     Ok(AppSnapshot {
         server_status: mcp::status(state).await,
         audit_events: state.audit.list().await,
         tools: mcp::tool_infos(&config.tools),
+        updater_enabled: cfg!(feature = "updater"),
         config,
     })
+}
+
+async fn commit_config<T>(
+    state: &Arc<AppState>,
+    update: impl FnOnce(&mut AppConfig) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let _transaction = state.config_transaction.write().await;
+    let mut candidate = state.config.read().await.clone();
+    let result = update(&mut candidate)?;
+    candidate.normalize_and_validate()?;
+    persist_config_candidate(&state.store, &state.config, candidate).await?;
+    Ok(result)
+}
+
+async fn commit_config_invalidating<T>(
+    state: &Arc<AppState>,
+    connection_ids: &[String],
+    update: impl FnOnce(&mut AppConfig) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let _transaction = state.config_transaction.write().await;
+    let mut candidate = state.config.read().await.clone();
+    let result = update(&mut candidate)?;
+    candidate.normalize_and_validate()?;
+    persist_invalidating_candidate(
+        &state.store,
+        &state.config,
+        &state.db,
+        candidate,
+        connection_ids,
+    )
+    .await?;
+    Ok(result)
+}
+
+async fn persist_invalidating_candidate(
+    store: &crate::config::ConfigStore,
+    current: &tokio::sync::RwLock<AppConfig>,
+    db: &crate::db::DatabaseManager,
+    candidate: AppConfig,
+    connection_ids: &[String],
+) -> anyhow::Result<()> {
+    store.save(&candidate)?;
+    for connection_id in connection_ids {
+        db.close(connection_id).await;
+    }
+    *current.write().await = candidate;
+    Ok(())
+}
+
+async fn persist_config_candidate(
+    store: &crate::config::ConfigStore,
+    current: &tokio::sync::RwLock<AppConfig>,
+    candidate: AppConfig,
+) -> anyhow::Result<()> {
+    store.save(&candidate)?;
+    *current.write().await = candidate;
+    Ok(())
 }
 
 async fn find_connection(state: &Arc<AppState>, id: &str) -> anyhow::Result<ConnectionConfig> {
@@ -454,6 +854,47 @@ async fn find_connection(state: &Arc<AppState>, id: &str) -> anyhow::Result<Conn
         .find(|connection| connection.id == id)
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("connection not found"))
+}
+
+fn transfer_path(path: &str) -> Result<&Path, String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("A connection import or export file must be selected.".to_string());
+    }
+    Ok(Path::new(path))
+}
+
+fn next_import_connection_id(existing_ids: &mut HashSet<String>) -> String {
+    loop {
+        let id = format!("connection_{}", Uuid::new_v4().simple());
+        if existing_ids.insert(id.clone()) {
+            return id;
+        }
+    }
+}
+
+fn import_failure_with_rollback(
+    context: &str,
+    error: anyhow::Error,
+    vault: &CredentialVault,
+    credential_refs: &[String],
+) -> String {
+    let mut rollback_error = None;
+    for credential_ref in credential_refs.iter().rev() {
+        if let Err(error) = vault.delete(credential_ref) {
+            rollback_error.get_or_insert(error);
+        }
+    }
+
+    match rollback_error {
+        Some(rollback_error) => format!(
+            "{}: {}; credential rollback also failed: {}",
+            context,
+            to_client_error(error),
+            to_client_error(rollback_error)
+        ),
+        None => format!("{}: {}", context, to_client_error(error)),
+    }
 }
 
 fn validate_connection(connection: &ConnectionConfig, text: &BackendText) -> anyhow::Result<()> {
@@ -562,30 +1003,123 @@ fn format_diagnostics_for_client(
         .as_deref()
         .unwrap_or_else(|| text.no_extra_hint());
 
-    text.diagnostics_for_client(
-        &diagnostics.database_type,
+    text.diagnostics_for_client(ConnectionDiagnosticText {
+        database_type: &diagnostics.database_type,
         host,
-        &port,
-        &diagnostics.database,
+        port: &port,
+        database: &diagnostics.database,
         username,
-        &diagnostics.credential_state,
+        credential: &diagnostics.credential_state,
         ssl_mode,
-        diagnostics.query_timeout_ms,
-        diagnostics.max_connections,
+        timeout_ms: diagnostics.query_timeout_ms,
+        pool_size: diagnostics.max_connections,
         hint,
-    )
-}
-
-fn refresh_tray_menu(app: &AppHandle, text: BackendText) -> tauri::Result<()> {
-    if let Some(tray) = app.tray_by_id("main") {
-        let show_item = MenuItem::with_id(app, "show", text.tray_show(), true, None::<&str>)?;
-        let quit_item = MenuItem::with_id(app, "quit", text.tray_quit(), true, None::<&str>)?;
-        let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
-        tray.set_menu(Some(tray_menu))?;
-    }
-    Ok(())
+    })
 }
 
 fn is_local_host(host: &str) -> bool {
     matches!(host, "127.0.0.1" | "localhost")
+}
+
+fn validate_password_input(clear_password: bool, password: Option<&str>) -> Result<(), String> {
+    if clear_password && password.is_some_and(|password| !password.is_empty()) {
+        return Err("clear_password cannot be combined with a non-empty password".to_string());
+    }
+    Ok(())
+}
+
+fn removed_credential_ref(
+    existing_ref: Option<String>,
+    candidate: &ConnectionConfig,
+) -> Option<String> {
+    candidate
+        .credential_ref
+        .is_none()
+        .then_some(existing_ref)
+        .flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn password_clear_and_update_are_mutually_exclusive() {
+        assert!(validate_password_input(true, Some("TEST_SECRET")).is_err());
+        assert!(validate_password_input(true, None).is_ok());
+        assert!(validate_password_input(true, Some("")).is_ok());
+        assert!(validate_password_input(false, Some("TEST_SECRET")).is_ok());
+    }
+
+    #[tokio::test]
+    async fn failed_config_save_does_not_publish_candidate() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let invalid_target = directory.path().join("config-target");
+        fs::create_dir(&invalid_target).expect("directory target");
+        let store = crate::config::ConfigStore::for_test(invalid_target);
+        let current = tokio::sync::RwLock::new(AppConfig::default());
+        let mut candidate = AppConfig::default();
+        candidate.server.require_token = false;
+
+        assert!(persist_config_candidate(&store, &current, candidate)
+            .await
+            .is_err());
+        assert!(current.read().await.server.require_token);
+    }
+
+    #[tokio::test]
+    async fn failed_connection_mutation_does_not_invalidate_any_pool() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let invalid_target = directory.path().join("config-target");
+        fs::create_dir(&invalid_target).expect("directory target");
+        let store = crate::config::ConfigStore::for_test(invalid_target);
+        let current = tokio::sync::RwLock::new(AppConfig::default());
+        let db = crate::db::DatabaseManager::default();
+        let ids = ["upsert", "delete", "disable", "disable_all"]
+            .map(str::to_string)
+            .to_vec();
+
+        assert!(
+            persist_invalidating_candidate(&store, &current, &db, AppConfig::default(), &ids,)
+                .await
+                .is_err()
+        );
+        for id in ids {
+            assert_eq!(db.generation_for_test(&id).await, 0);
+        }
+        assert!(current.read().await.server.require_token);
+    }
+
+    #[test]
+    fn remote_to_sqlite_transition_schedules_old_credential_cleanup() {
+        let mut config = AppConfig::default();
+        config.connections.push(ConnectionConfig {
+            id: "transition_db".to_string(),
+            name: "Transition".to_string(),
+            kind: DbKind::Sqlite,
+            enabled: true,
+            database: "local.db".to_string(),
+            host: Some("localhost".to_string()),
+            port: Some(5432),
+            username: Some("readonly".to_string()),
+            credential_ref: Some("vault://transition_db".to_string()),
+            ssl_mode: None,
+            max_rows: 100,
+            query_timeout_ms: 1_000,
+            max_connections: 1,
+        });
+        config
+            .normalize_and_validate()
+            .expect("SQLite transition normalizes");
+        assert_eq!(
+            removed_credential_ref(
+                Some("vault://transition_db".to_string()),
+                &config.connections[0]
+            )
+            .as_deref(),
+            Some("vault://transition_db")
+        );
+    }
 }

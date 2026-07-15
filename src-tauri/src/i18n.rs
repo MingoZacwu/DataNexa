@@ -19,6 +19,19 @@ pub struct BackendText {
     locale: Locale,
 }
 
+pub struct ConnectionDiagnosticText<'a> {
+    pub database_type: &'a str,
+    pub host: &'a str,
+    pub port: &'a str,
+    pub database: &'a str,
+    pub username: &'a str,
+    pub credential: &'a str,
+    pub ssl_mode: &'a str,
+    pub timeout_ms: u64,
+    pub pool_size: u32,
+    pub hint: &'a str,
+}
+
 pub fn backend_text(language: &str) -> BackendText {
     BackendText {
         locale: Locale::from_language(language),
@@ -82,19 +95,19 @@ impl BackendText {
         }
     }
 
-    pub fn diagnostics_for_client(
-        self,
-        database_type: &str,
-        host: &str,
-        port: &str,
-        database: &str,
-        username: &str,
-        credential: &str,
-        ssl_mode: &str,
-        timeout_ms: u64,
-        pool_size: u32,
-        hint: &str,
-    ) -> String {
+    pub fn diagnostics_for_client(self, diagnostics: ConnectionDiagnosticText<'_>) -> String {
+        let ConnectionDiagnosticText {
+            database_type,
+            host,
+            port,
+            database,
+            username,
+            credential,
+            ssl_mode,
+            timeout_ms,
+            pool_size,
+            hint,
+        } = diagnostics;
         match self.locale {
             Locale::ZhCn => format!(
                 "连接诊断：type={database_type} host={host} port={port} database={database} username={username} credential={credential} ssl={ssl_mode} timeout={timeout_ms}ms pool={pool_size}。提示：{hint}"
@@ -264,6 +277,13 @@ impl BackendText {
         match self.locale {
             Locale::ZhCn => "显示 DataNexa",
             Locale::En => "Show DataNexa",
+        }
+    }
+
+    pub fn tray_mcp_server(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "MCP 服务",
+            Locale::En => "MCP Server",
         }
     }
 

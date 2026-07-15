@@ -12,9 +12,10 @@ import {
   Clock3,
   Database,
   EyeOff,
+  FileDown,
   FileText,
+  FileUp,
   Github,
-  HardDrive,
   Home,
   KeyRound,
   ListChecks,
@@ -38,10 +39,14 @@ import {
   X
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import type { FormEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import appConfig from "../app.config.json";
 import appIconUrl from "../resources/icon.png";
 import brandLogoUrl from "../resources/datanexa.png";
+import mysqlLogoUrl from "../resources/db-logo/mysql.png";
+import postgresLogoUrl from "../resources/db-logo/postgres.png";
+import sqliteLogoUrl from "../resources/db-logo/sqlite.png";
 import quickStep1Url from "../resources/quickguide/step1.png";
 import quickStep2Url from "../resources/quickguide/step2.png";
 import quickStep3Url from "../resources/quickguide/step3.png";
@@ -76,6 +81,11 @@ type ToastTone = "success" | "error" | "info";
 const APP_VERSION = appConfig.version;
 const THEME_STORAGE_KEY = "datanexa.theme";
 const AUDIT_PAGE_SIZE = 50;
+const DATABASE_LOGOS: Record<DatabaseType, string> = {
+  mysql: mysqlLogoUrl,
+  postgres: postgresLogoUrl,
+  sqlite: sqliteLogoUrl
+};
 
 function isThemeMode(value: string | null): value is ThemeMode {
   return value === "system" || value === "light" || value === "dark";
@@ -106,6 +116,7 @@ interface ToastMessage {
   id: string;
   message: string;
   tone: ToastTone;
+  leaving?: boolean;
 }
 
 const defaultConnection = (name: string): ConnectionConfig => ({
@@ -206,8 +217,15 @@ function App() {
     const id = crypto.randomUUID();
     setToasts((items) => [{ id, message, tone }, ...items].slice(0, 4));
     window.setTimeout(() => {
+      dismissToast(id);
+    }, tone === "error" ? 4200 : 2400);
+  }
+
+  function dismissToast(id: string) {
+    setToasts((items) => items.map((item) => item.id === id ? { ...item, leaving: true } : item));
+    window.setTimeout(() => {
       setToasts((items) => items.filter((item) => item.id !== id));
-    }, tone === "error" ? 6500 : 3800);
+    }, 180);
   }
 
   function showError(error: unknown) {
@@ -306,10 +324,10 @@ function App() {
   async function testConnection(id: string) {
     setBusy(true);
     try {
-      pushToast(await api.testConnection(id), "info");
+      pushToast(formatConnectionTest(t, await api.testConnection(id)), "info");
       await refresh({ quiet: true });
     } catch (error) {
-      showError(error);
+      pushToast(compactConnectionError(error), "error");
     } finally {
       setBusy(false);
     }
@@ -320,16 +338,16 @@ function App() {
     setBusy(true);
     try {
       pushToast(
-        await api.testConnectionInput({
+        formatConnectionTest(t, await api.testConnectionInput({
           connection: editing,
           password: password.length > 0 ? password : null,
           clear_password: clearPassword
-        }),
+        })),
         "info"
       );
       await refresh({ quiet: true });
     } catch (error) {
-      showError(error);
+      pushToast(compactConnectionError(error), "error");
     } finally {
       setBusy(false);
     }
@@ -341,7 +359,7 @@ function App() {
       pushToast(formatDiagnostics(t, await api.diagnoseConnection(id)), "info");
       await refresh({ quiet: true });
     } catch (error) {
-      showError(error);
+      pushToast(compactConnectionError(error), "error");
     } finally {
       setBusy(false);
     }
@@ -397,6 +415,35 @@ function App() {
     }
   }
 
+  async function exportConnections() {
+    setBusy(true);
+    try {
+      const exportedCount = await api.exportConnections(locale);
+      if (exportedCount !== null) {
+        pushToast(formatMessage(t.toast.connectionsExported, { count: exportedCount }), "info");
+      }
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importConnections() {
+    setBusy(true);
+    try {
+      const result = await api.importConnections(locale);
+      if (result) {
+        setSnapshot(result.snapshot);
+        pushToast(formatMessage(t.toast.connectionsImported, { count: result.imported_count }));
+      }
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function runPolicyCheck() {
     setBusy(true);
     try {
@@ -443,14 +490,16 @@ function App() {
   return (
     <Tooltip.Provider delayDuration={180}>
       <div className="app-shell">
+        <div className="ambient-grid" aria-hidden="true" />
         <WindowChrome t={t} />
 
         <div className="app-body">
           <aside className="sidebar">
             <div className="brand">
-              <img src={brandLogoUrl} alt="DataNexa" />
+              <div className="brand-mark"><img src={brandLogoUrl} alt="DataNexa" /></div>
               <div>
                 <strong>DataNexa</strong>
+                <span>MCP DATABASE GATEWAY</span>
               </div>
             </div>
 
@@ -475,7 +524,9 @@ function App() {
 
           <main className="workspace">
             <header className="topbar">
-              <h1>{viewTitle(t, activeView)}</h1>
+              <div className="page-title-block">
+                <h1>{viewTitle(t, activeView)}</h1>
+              </div>
               <div className="top-actions">
                 <div className="top-icon-actions">
                   {snapshot && activeView === "connections" && (
@@ -492,7 +543,7 @@ function App() {
                       </button>
                     </IconTooltip>
                   )}
-                  <button type="button" className="icon-button" onClick={() => refresh()} disabled={busy} aria-label={t.common.refresh}>
+                  <button type="button" className={clsx("icon-button", busy && "is-spinning")} onClick={() => refresh()} disabled={busy} aria-label={t.common.refresh}>
                     <RefreshCw size={17} />
                   </button>
                 </div>
@@ -508,7 +559,7 @@ function App() {
             {!snapshot ? (
               <div className="loading-panel">{t.overview.loading}</div>
             ) : (
-              <>
+              <div className={clsx("view-stage", `view-${activeView}`)} key={activeView}>
                 {activeView === "overview" && (
                   <OverviewView
                     t={t}
@@ -520,6 +571,7 @@ function App() {
                     onOpenAudit={() => setActiveView("audit")}
                     onSelectAudit={setSelectedAudit}
                     onCopyAgentPrompt={() => copyAgentPrompt(serverEndpoint, requireToken, serverToken)}
+                    onToggleServer={toggleServer}
                   />
                 )}
                 {activeView === "connections" && (
@@ -567,15 +619,17 @@ function App() {
                     onPolicyCheck={runPolicyCheck}
                     onSaveServer={saveServer}
                     onSaveSettings={saveSettings}
+                    onExportConnections={() => void exportConnections()}
+                    onImportConnections={() => void importConnections()}
                     onOpenProjectHomepage={() => void api.openProjectHomepage().catch(showError)}
                   />
                 )}
-              </>
+              </div>
             )}
           </main>
         </div>
 
-        <ToastViewport t={t} toasts={toasts} onDismiss={(id) => setToasts((items) => items.filter((item) => item.id !== id))} />
+        <ToastViewport t={t} toasts={toasts} onDismiss={dismissToast} />
 
         <ConnectionDialog
           t={t}
@@ -730,7 +784,8 @@ function OverviewView({
   onOpenConnections,
   onOpenAudit,
   onSelectAudit,
-  onCopyAgentPrompt
+  onCopyAgentPrompt,
+  onToggleServer
 }: {
   t: I18nMessages;
   snapshot: AppSnapshot;
@@ -741,43 +796,37 @@ function OverviewView({
   onOpenAudit: () => void;
   onSelectAudit: (event: AuditEvent) => void;
   onCopyAgentPrompt: () => void;
+  onToggleServer: () => void;
 }) {
   const totalConnections = snapshot.config.connections.length;
   const enabledTools = snapshot.tools.filter((tool) => tool.enabled).length;
   const uptime = snapshot.server_status.started_at ? relativeDuration(t, snapshot.server_status.started_at) : t.overview.notStarted;
 
-  return (
-    <section className="overview-grid">
-      <div className="metric-card blue">
-        <MetricIcon icon={<Database />} />
-        <div>
-          <span>{t.overview.metricConnections}</span>
-          <MetricValue value={enabledConnections} suffix={formatMessage(t.common.totalSuffix, { total: totalConnections })} />
-        </div>
-      </div>
-      <div className="metric-card violet">
-        <MetricIcon icon={<Wrench />} />
-        <div>
-          <span>{t.overview.metricTools}</span>
-          <MetricValue value={enabledTools} suffix={formatMessage(t.common.totalSuffix, { total: snapshot.tools.length })} />
-        </div>
-      </div>
-      <div className="metric-card green">
-        <MetricIcon icon={<Activity />} />
-        <div>
-          <span>{t.overview.metricServer}</span>
-          <strong>{snapshot.server_status.running ? t.overview.running : t.overview.stopped}</strong>
-        </div>
-      </div>
-      <div className="metric-card amber">
-        <MetricIcon icon={<Clock3 />} />
-        <div>
-          <span>{t.overview.metricUptime}</span>
-          <strong>{uptime}</strong>
-        </div>
-      </div>
+  const onboardingComplete = totalConnections > 0;
 
-      <section className="panel connections-panel">
+  return (
+    <section className="overview-page">
+      <section className={clsx("status-command", snapshot.server_status.running && "running")}>
+        <div className="status-command-core">
+          <span className="status-beacon"><Activity size={19} /></span>
+          <div>
+            <span>{t.overview.metricServer}</span>
+            <strong>{snapshot.server_status.running ? t.overview.running : t.overview.stopped}</strong>
+          </div>
+        </div>
+        <div className="command-metrics">
+          <div><span>{t.overview.metricConnections}</span><strong>{enabledConnections}<small> / {totalConnections}</small></strong></div>
+          <div><span>{t.overview.metricTools}</span><strong>{enabledTools}<small> / {snapshot.tools.length}</small></strong></div>
+          <div><span>{t.overview.metricUptime}</span><strong>{uptime}</strong></div>
+        </div>
+        <button type="button" className={clsx("button command-button", snapshot.server_status.running ? "stop" : "primary")} onClick={onToggleServer}>
+          {snapshot.server_status.running ? <Square size={15} /> : <Play size={16} />}
+          {snapshot.server_status.running ? t.server.stop : t.server.start}
+        </button>
+      </section>
+
+      <div className="overview-grid">
+        <section className="panel connections-panel">
         <PanelHeader
           title={t.connections.title}
           action={(
@@ -792,17 +841,18 @@ function OverviewView({
             <ConnectionListItem t={t} key={connection.id} connection={connection} compact />
           ))}
         </div>
-      </section>
+        </section>
 
-      <section className="panel logs-panel">
+        <section className="panel logs-panel">
         <PanelHeader
           title={t.overview.recentLogs}
           action={<PanelIconAction icon={<ChevronRight size={16} />} label={t.overview.viewAll} onClick={onOpenAudit} />}
         />
         <EventList t={t} events={recentEvents} onSelect={onSelectAudit} />
-      </section>
+        </section>
+      </div>
 
-      <section className="panel quick-panel">
+      <section className={clsx("panel quick-panel", onboardingComplete && "is-compact")}>
         <h2>{t.overview.quickStart}</h2>
         <div className="quick-steps">
           <QuickStep image={quickStep1Url} title={t.overview.quickConnectTitle} text={t.overview.quickConnectText} />
@@ -833,9 +883,17 @@ function ConnectionsView({
   onDiagnose: (id: string) => void;
   onToggleEnabled: (id: string, enabled: boolean) => void;
 }) {
+  const [selectedId, setSelectedId] = useState(connections[0]?.id ?? "");
+  const selected = connections.find((connection) => connection.id === selectedId) ?? connections[0];
+
   return (
-    <section className="panel page-panel list-page-panel">
-      <div className="connection-list page-scroll-list">
+    <section className="connections-workbench">
+      <div className="panel connection-browser">
+        <div className="data-list-header">
+          <span>{t.connections.title}</span>
+          <span>{connections.length}</span>
+        </div>
+        <div className="connection-list page-scroll-list">
         {connections.length === 0 ? (
           <div className="empty-state">{t.connections.empty}</div>
         ) : (
@@ -850,10 +908,37 @@ function ConnectionsView({
               onTest={onTest}
               onDiagnose={onDiagnose}
               onToggleEnabled={onToggleEnabled}
+              selected={selected?.id === connection.id}
+              onSelect={() => setSelectedId(connection.id)}
             />
           ))
         )}
+        </div>
       </div>
+      <aside className="panel connection-inspector">
+        {selected ? (
+          <>
+            <div className="inspector-heading">
+              <ConnectionListItem t={t} connection={selected} />
+              <button type="button" className="button ghost" onClick={() => onEdit(selected)}>{t.connections.edit}</button>
+            </div>
+            <dl className="inspector-grid">
+              <div><dt>{t.connectionDialog.host}</dt><dd><code>{selected.type === "sqlite" ? "LOCAL" : selected.host || "-"}</code></dd></div>
+              <div><dt>{t.connectionDialog.port}</dt><dd><code>{selected.type === "sqlite" ? "-" : selected.port ?? defaultPort(selected.type)}</code></dd></div>
+              <div><dt>{t.connectionDialog.database}</dt><dd><code>{selected.database || "-"}</code></dd></div>
+              <div><dt>{t.connectionDialog.username}</dt><dd><code>{selected.username || "-"}</code></dd></div>
+              <div><dt>{t.connectionDialog.sslMode}</dt><dd>{selected.ssl_mode || "-"}</dd></div>
+              <div><dt>{t.connectionDialog.maxRows}</dt><dd>{selected.max_rows}</dd></div>
+              <div><dt>{t.connectionDialog.queryTimeoutMs}</dt><dd>{selected.query_timeout_ms} ms</dd></div>
+              <div><dt>{t.connectionDialog.maxConnections}</dt><dd>{selected.max_connections}</dd></div>
+            </dl>
+            <div className="inspector-actions">
+              <button type="button" className="button soft" disabled={busy || !selected.enabled} onClick={() => onTest(selected.id)}><Cable size={15} />{t.connections.test}</button>
+              <button type="button" className="button ghost" disabled={busy || !selected.enabled} onClick={() => onDiagnose(selected.id)}><SearchCheck size={15} />{t.connections.diagnose}</button>
+            </div>
+          </>
+        ) : <div className="empty-state">{t.connections.empty}</div>}
+      </aside>
     </section>
   );
 }
@@ -870,6 +955,11 @@ function ToolsView({
   onToggle: (name: string, enabled: boolean) => void;
 }) {
   const enabledCount = tools.filter((tool) => tool.enabled).length;
+  const groups = [
+    { key: "discovery" as const, tools: tools.filter((tool) => ["datanexa_list_connections", "datanexa_get_schema", "datanexa_describe_table"].includes(tool.name)) },
+    { key: "access" as const, tools: tools.filter((tool) => ["datanexa_sample_rows", "datanexa_execute_readonly_sql"].includes(tool.name)) },
+    { key: "analysis" as const, tools: tools.filter((tool) => ["datanexa_explain_sql", "datanexa_policy_check"].includes(tool.name)) }
+  ];
 
   return (
     <section className="tools-page">
@@ -880,21 +970,27 @@ function ToolsView({
       </div>
 
       <div className="tools-list">
-        {tools.map((tool) => (
-          <article className={clsx("tool-card", !tool.enabled && "disabled")} key={tool.name}>
-            <div className="tool-body">
-              <div className="tool-title-row">
-                <div>
-                  <strong>{toolDisplayName(t, tool.name)}</strong>
-                  <code>{tool.name}</code>
+        {groups.map((group) => (
+          <section className="tool-group" key={group.key}>
+            <header><span>{t.tools.groups[group.key]}</span><small>{group.tools.filter((tool) => tool.enabled).length} / {group.tools.length}</small></header>
+            {group.tools.map((tool) => (
+              <article className={clsx("tool-card", !tool.enabled && "disabled")} key={tool.name}>
+                <span className="tool-signal" />
+                <div className="tool-body">
+                  <div className="tool-title-row">
+                    <div>
+                      <strong>{toolDisplayName(t, tool.name)}</strong>
+                      <code>{tool.name}</code>
+                    </div>
+                  </div>
+                  <p>{toolIntro(t, tool)}</p>
                 </div>
-              </div>
-              <p>{toolIntro(t, tool)}</p>
-            </div>
-            <Switch.Root className="switch" checked={tool.enabled} disabled={busy} onCheckedChange={(checked) => onToggle(tool.name, checked)} aria-label={formatMessage(t.tools.toggle, { name: tool.name })}>
-              <Switch.Thumb className="switch-thumb" />
-            </Switch.Root>
-          </article>
+                <Switch.Root className="switch" checked={tool.enabled} disabled={busy} onCheckedChange={(checked) => onToggle(tool.name, checked)} aria-label={formatMessage(t.tools.toggle, { name: tool.name })}>
+                  <Switch.Thumb className="switch-thumb" />
+                </Switch.Root>
+              </article>
+            ))}
+          </section>
         ))}
       </div>
     </section>
@@ -921,37 +1017,43 @@ function ServerView({
   const requireToken = snapshot.config.server.require_token;
 
   return (
-    <section className="server-layout">
-      <div className="panel server-card">
-        <span className="panel-kicker">{t.server.endpoint}</span>
-        <h2>{endpoint}</h2>
-        <div className="server-actions">
-          <button type="button" className={clsx("button", snapshot.server_status.running ? "stop" : "primary")} onClick={onToggle} disabled={busy}>
-            {snapshot.server_status.running ? <Square size={17} /> : <Play size={17} />}
-            {snapshot.server_status.running ? t.server.stop : t.server.start}
-          </button>
-          <button type="button" className="button ghost" onClick={() => navigator.clipboard.writeText(endpoint)}>
-            <Clipboard size={16} />
-            {t.server.copyEndpoint}
-          </button>
+    <section className={clsx("server-console", snapshot.server_status.running && "running")}>
+      <div className="server-hero">
+        <div className="server-identity">
+          <span className="server-emblem"><Server size={25} /></span>
+          <div><span className="panel-kicker">{t.overview.metricServer}</span><h2>{snapshot.server_status.running ? t.overview.running : t.overview.stopped}</h2></div>
         </div>
+        <button type="button" className={clsx("button", snapshot.server_status.running ? "stop" : "primary")} onClick={onToggle} disabled={busy}>
+          {snapshot.server_status.running ? <Square size={16} /> : <Play size={17} />}
+          {snapshot.server_status.running ? t.server.stop : t.server.start}
+        </button>
       </div>
 
+      <div className="server-console-grid">
+        <div className="server-console-section endpoint-section">
+          <PanelHeader title={t.server.endpoint} />
+          <div className="console-value">
+            <code>{endpoint}</code>
+            <button type="button" className="icon-button" onClick={() => navigator.clipboard.writeText(endpoint)} aria-label={t.server.copyEndpoint}><Clipboard size={16} /></button>
+          </div>
+          <StatusPill tone={snapshot.server_status.running ? "green" : "slate"} label={snapshot.server_status.running ? t.overview.running : t.overview.stopped} />
+        </div>
+
       {requireToken ? (
-        <div className="panel">
+        <div className="server-console-section token-section">
           <PanelHeader
             title={t.server.accessToken}
             action={<PanelIconAction icon={<RefreshCw size={16} />} label={t.server.rotateToken} onClick={onRotate} disabled={busy} />}
           />
-          <div className="token-row">
-            <code>{snapshot.server_status.token ?? t.server.generatedOnStart}</code>
+          <div className="token-row console-value">
+            <code>{snapshot.server_status.token ? "•••• •••• •••• •••• ••••" : t.server.generatedOnStart}</code>
             <button type="button" className="icon-button" onClick={() => navigator.clipboard.writeText(snapshot.server_status.token ?? "")} aria-label={t.server.copyToken}>
               <Clipboard size={16} />
             </button>
           </div>
         </div>
       ) : (
-        <div className="panel key-disabled-panel">
+        <div className="server-console-section key-disabled-panel">
           <div className="key-disabled-icon">
             <EyeOff size={20} />
           </div>
@@ -960,12 +1062,14 @@ function ServerView({
         </div>
       )}
 
-      <div className="panel agent-copy-panel wide">
+        <div className="server-console-section agent-copy-panel">
         <h2>{t.server.agentAccess}</h2>
-        <button type="button" className="button primary" onClick={onCopyAgentPrompt}>
+        <p className="muted">{t.overview.quickAgentText}</p>
+        <button type="button" className="button soft" onClick={onCopyAgentPrompt}>
           <Clipboard size={16} />
           {t.server.copyToAgent}
         </button>
+      </div>
       </div>
     </section>
   );
@@ -1000,7 +1104,7 @@ function AuditView({ t, events, onSelect }: { t: I18nMessages; events: AuditEven
               <button type="button" className="audit-row audit-button" key={event.id} onClick={() => onSelect(event)}>
                 <span>{new Date(event.timestamp).toLocaleString()}</span>
                 <span>{event.tool}</span>
-                <span>{event.connection_id ?? t.common.system}</span>
+                <span>{event.connection_name ?? event.connection_id ?? "—"}</span>
                 <span>
                   <StatusPill tone={statusTone(event.status)} label={statusLabel(t, event.status)} />
                 </span>
@@ -1046,6 +1150,8 @@ function SettingsView({
   onPolicyCheck,
   onSaveServer,
   onSaveSettings,
+  onExportConnections,
+  onImportConnections,
   onOpenProjectHomepage
 }: {
   t: I18nMessages;
@@ -1066,11 +1172,15 @@ function SettingsView({
   onPolicyCheck: () => void;
   onSaveServer: (server: ServerConfig) => void;
   onSaveSettings: (settings: SettingsConfig) => void;
+  onExportConnections: () => void;
+  onImportConnections: () => void;
   onOpenProjectHomepage: () => void;
 }) {
   const [serverDraft, setServerDraft] = useState(server);
   const [settingsDraft, setSettingsDraft] = useState(settings);
   const [policyDialogOpen, setPolicyDialogOpen] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportAcknowledged, setExportAcknowledged] = useState(false);
 
   useEffect(() => setServerDraft(server), [server]);
   useEffect(() => setSettingsDraft(settings), [settings]);
@@ -1111,11 +1221,6 @@ function SettingsView({
               </Field>
               <SwitchField label={t.settings.requireBearer} checked={serverDraft.require_token} disabled={busy} onCheckedChange={(checked) => {
                 const next = { ...serverDraft, require_token: checked };
-                setServerDraft(next);
-                onSaveServer(next);
-              }} />
-              <SwitchField label={t.settings.legacySse} checked={serverDraft.legacy_sse_compat} disabled={busy} onCheckedChange={(checked) => {
-                const next = { ...serverDraft, legacy_sse_compat: checked };
                 setServerDraft(next);
                 onSaveServer(next);
               }} />
@@ -1170,19 +1275,105 @@ function SettingsView({
                   onBlur={(event) => onSaveSettings({ ...settingsDraft, audit_max_events: Number(event.currentTarget.value) })}
                 />
               </Field>
+              <SwitchField label={t.settings.auditRedactSql} checked={settingsDraft.audit_redact_sql_literals} disabled={busy} onCheckedChange={(checked) => {
+                const next = { ...settingsDraft, audit_redact_sql_literals: checked };
+                setSettingsDraft(next);
+                onSaveSettings(next);
+              }} />
             </div>
           </section>
+
+          <Dialog.Root
+            open={exportDialogOpen}
+            onOpenChange={(open) => {
+              setExportDialogOpen(open);
+              if (!open) setExportAcknowledged(false);
+            }}
+          >
+            <section className="panel transfer-panel">
+              <h2>{t.settings.importExport}</h2>
+              <div className="transfer-actions">
+                <button type="button" className="transfer-action" disabled={busy} onClick={onImportConnections}>
+                  <span className="transfer-action-copy">
+                    <strong>{t.settings.importConnections}</strong>
+                    <span>{t.settings.importConnectionsDescription}</span>
+                  </span>
+                  <span className="transfer-action-icon" aria-hidden="true"><FileUp size={18} /></span>
+                </button>
+                <Dialog.Trigger asChild>
+                  <button type="button" className="transfer-action" disabled={busy}>
+                    <span className="transfer-action-copy">
+                    <strong>{t.settings.exportConnections}</strong>
+                      <span>{t.settings.exportConnectionsDescription}</span>
+                    </span>
+                    <span className="transfer-action-icon" aria-hidden="true"><FileDown size={18} /></span>
+                  </button>
+                </Dialog.Trigger>
+              </div>
+            </section>
+            <Dialog.Portal>
+              <Dialog.Overlay className="dialog-overlay" />
+              <Dialog.Content className="policy-dialog transfer-dialog">
+                <div className="dialog-titlebar">
+                  <div>
+                    <Dialog.Title>{t.settings.exportWarningTitle}</Dialog.Title>
+                    <Dialog.Description>{t.settings.exportWarningDescription}</Dialog.Description>
+                  </div>
+                  <Dialog.Close asChild>
+                    <button type="button" className="icon-button" aria-label={t.common.close}>
+                      <X size={18} />
+                    </button>
+                  </Dialog.Close>
+                </div>
+                <div className="transfer-warning">
+                  <div className="transfer-warning-icon"><AlertTriangle size={22} /></div>
+                  <ul>
+                    <li>{t.settings.exportWarningAccess}</li>
+                    <li>{t.settings.exportWarningLocation}</li>
+                    <li>{t.settings.exportWarningCleanup}</li>
+                  </ul>
+                </div>
+                <label className="transfer-acknowledgement">
+                  <input
+                    type="checkbox"
+                    checked={exportAcknowledged}
+                    onChange={(event) => setExportAcknowledged(event.target.checked)}
+                  />
+                  <span>{t.settings.exportAcknowledgement}</span>
+                </label>
+                <footer className="transfer-dialog-actions">
+                  <Dialog.Close asChild>
+                    <button type="button" className="button ghost">{t.common.cancel}</button>
+                  </Dialog.Close>
+                  <button
+                    type="button"
+                    className="button danger-solid"
+                    disabled={!exportAcknowledged || busy}
+                    onClick={() => {
+                      setExportDialogOpen(false);
+                      setExportAcknowledged(false);
+                      onExportConnections();
+                    }}
+                  >
+                    <FileDown size={16} />
+                    {t.settings.confirmExport}
+                  </button>
+                </footer>
+              </Dialog.Content>
+            </Dialog.Portal>
+          </Dialog.Root>
 
           <Dialog.Root open={policyDialogOpen} onOpenChange={setPolicyDialogOpen}>
             <section className="panel safety-panel">
               <div className="panel-header">
                 <h2>{t.settings.securityPosture}</h2>
-                <Dialog.Trigger asChild>
-                  <button type="button" className="button primary" disabled={busy}>
-                    <SearchCheck size={16} />
-                    {t.settings.checkSql}
-                  </button>
-                </Dialog.Trigger>
+                <IconTooltip label={t.settings.checkSql}>
+                  <Dialog.Trigger asChild>
+                    <button type="button" className="policy-check-button" disabled={busy} aria-label={t.settings.checkSql}>
+                      <SearchCheck size={17} />
+                    </button>
+                  </Dialog.Trigger>
+                </IconTooltip>
               </div>
               <ul className="security-list">
                 <li><ShieldCheck size={16} /> {t.settings.securityAst}</li>
@@ -1312,6 +1503,7 @@ function ConnectionDialog({
           </div>
 
           <form className="connection-form" onSubmit={onSubmit}>
+            <div className="connection-form-scroll">
             <FormSection title={t.connectionDialog.basicInfo}>
               <Field label={t.connectionDialog.name} span>
                 <input value={editing.name} onChange={(event) => onEditingChange({ ...editing, name: event.target.value })} required />
@@ -1395,6 +1587,7 @@ function ConnectionDialog({
                 {formatMessage(t.connectionDialog.currentCredential, { credential: editing.credential_ref ?? t.connectionDialog.credentialNotSaved })}
               </p>
             </FormSection>
+            </div>
 
             <footer>
               <button type="button" className="button soft" disabled={busy} onClick={onTest}>
@@ -1440,7 +1633,7 @@ function AuditDetailDialog({ t, event, onClose }: { t: I18nMessages; event: Audi
                 </div>
                 <div>
                   <dt>{t.audit.connection}</dt>
-                  <dd>{event.connection_id ?? t.common.system}</dd>
+                  <dd>{event.connection_name ?? event.connection_id ?? "—"}</dd>
                 </div>
                 <div>
                   <dt>{t.audit.status}</dt>
@@ -1487,7 +1680,9 @@ function ConnectionRow({
   onDelete,
   onTest,
   onDiagnose,
-  onToggleEnabled
+  onToggleEnabled,
+  selected,
+  onSelect
 }: {
   t: I18nMessages;
   connection: ConnectionConfig;
@@ -1497,10 +1692,14 @@ function ConnectionRow({
   onTest: (id: string) => void;
   onDiagnose: (id: string) => void;
   onToggleEnabled: (id: string, enabled: boolean) => void;
+  selected?: boolean;
+  onSelect?: () => void;
 }) {
   return (
-    <div className={clsx("connection-row", !connection.enabled && "disabled")}>
-      <ConnectionListItem t={t} connection={connection} />
+    <div className={clsx("connection-row", !connection.enabled && "disabled", selected && "selected")}>
+      <button type="button" className="connection-select" onClick={onSelect}>
+        <ConnectionListItem t={t} connection={connection} />
+      </button>
       <div className="row-actions">
         <IconTooltip label={formatMessage(t.connections.toggleEnabled, { name: connection.name })}>
           <button
@@ -1542,18 +1741,17 @@ function ConnectionListItem({ t, connection, compact = false }: { t: I18nMessage
   return (
     <div className={clsx("connection-item", compact && "compact")}>
       <div className={clsx("db-badge", connection.type)}>
-        {connection.type === "sqlite" ? <HardDrive /> : <Database />}
+        <img src={DATABASE_LOGOS[connection.type]} alt="" aria-hidden="true" />
       </div>
       <div className="connection-info">
         <div>
           <strong>{connection.name}</strong>
           <StatusPill tone={connection.enabled ? "green" : "slate"} label={connection.enabled ? t.connections.enabled : t.connections.paused} />
-          <span className={clsx("type-tag", connection.type)}>{dbTypeLabel(connection.type)}</span>
         </div>
         <p>
           {connection.type === "sqlite"
             ? connection.database || t.connections.noDatabaseFile
-            : `${connection.host}:${connection.port ?? defaultPort(connection.type)} / ${connection.username ?? "-"} / ${connection.database}`}
+            : `${connection.host || "-"}:${connection.port ?? defaultPort(connection.type)}`}
         </p>
       </div>
     </div>
@@ -1582,10 +1780,10 @@ function EventList({ t, events, onSelect }: { t: I18nMessages; events: AuditEven
 function ToastViewport({ t, toasts, onDismiss }: { t: I18nMessages; toasts: ToastMessage[]; onDismiss: (id: string) => void }) {
   if (toasts.length === 0) return null;
 
-  return (
+  return createPortal(
     <div className="toast-viewport" role="status" aria-live="polite">
       {toasts.map((toast) => (
-        <div className={clsx("toast", toast.tone)} key={toast.id}>
+        <div className={clsx("toast", toast.tone, toast.leaving && "leaving")} key={toast.id}>
           {toast.tone === "error" ? <AlertTriangle size={18} /> : <CheckCircle2 size={18} />}
           <span>{toast.message}</span>
           <button type="button" onClick={() => onDismiss(toast.id)} aria-label={t.common.closeNotice}>
@@ -1593,7 +1791,8 @@ function ToastViewport({ t, toasts, onDismiss }: { t: I18nMessages; toasts: Toas
           </button>
         </div>
       ))}
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1764,23 +1963,23 @@ function statusLabel(t: I18nMessages, status: AuditEvent["status"]) {
 }
 
 function formatDiagnostics(t: I18nMessages, diagnostics: ConnectionDiagnostics) {
-  const host = diagnostics.host ?? "-";
-  const port = diagnostics.port ?? "-";
-  const username = diagnostics.username ?? "-";
-  const sslMode = diagnostics.ssl_mode ?? "default";
-  const hint = diagnostics.hint ?? t.diagnostics.noHint;
+  const summary = formatMessage(t.diagnostics.summary, {
+    name: diagnostics.name,
+    type: dbTypeLabel(diagnostics.database_type),
+    credential: credentialStateLabel(t, diagnostics.credential_state)
+  });
+  return diagnostics.hint ? `${summary}\n${diagnostics.hint.trim()}` : summary;
+}
 
-  return [
-    formatMessage(t.diagnostics.title, { name: diagnostics.name, type: diagnostics.database_type }),
-    formatMessage(t.diagnostics.address, { host, port, database: diagnostics.database, username }),
-    formatMessage(t.diagnostics.credential, {
-      credential: credentialStateLabel(t, diagnostics.credential_state),
-      ssl: sslMode,
-      timeout: diagnostics.query_timeout_ms,
-      pool: diagnostics.max_connections
-    }),
-    formatMessage(t.diagnostics.hint, { hint })
-  ].join("\n");
+function formatConnectionTest(t: I18nMessages, message: string) {
+  const elapsed = message.match(/(\d+)\s*ms/i)?.[1] ?? "-";
+  return formatMessage(t.toast.connectionTestPassed, { elapsed });
+}
+
+function compactConnectionError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const lines = message.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return [...new Set(lines)].join("\n") || message;
 }
 
 function credentialStateLabel(t: I18nMessages, state: string) {

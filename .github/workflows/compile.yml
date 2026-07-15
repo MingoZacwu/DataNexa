@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main
+      - development
   pull_request:
     branches:
       - main
+      - development
   workflow_dispatch:
 
 permissions:
@@ -57,4 +59,10 @@ jobs:
         run: pnpm run build
 
       - name: Check Tauri Rust code
-        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Test Tauri Rust code
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+      - name: Lint Tauri Rust code
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings

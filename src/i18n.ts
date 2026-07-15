@@ -24,6 +24,11 @@ const zhCN = {
     justNow: "刚刚",
     rowsElapsed: "{rows} 行，耗时 {elapsed}ms"
   },
+  fileDialog: {
+    importConnectionsTitle: "选择要导入的数据库连接文件",
+    exportConnectionsTitle: "选择数据库连接文件的保存位置",
+    connectionFile: "DataNexa 数据库连接文件"
+  },
   nav: {
     overview: "概览",
     connections: "数据库连接",
@@ -52,7 +57,10 @@ const zhCN = {
     connectionDisabled: "{connection} 已禁用。",
     toolEnabled: "{tool} 已启用。",
     toolDisabled: "{tool} 已关闭。",
-    agentCopied: "Agent 接入配置已复制。"
+    agentCopied: "Agent 接入配置已复制。",
+    connectionTestPassed: "连接可用 · {elapsed} ms",
+    connectionsExported: "已导出 {count} 个数据库连接。请妥善保管包含明文密码的文件。",
+    connectionsImported: "已新建 {count} 个数据库连接。"
   },
   overview: {
     loading: "正在加载本地工作区...",
@@ -93,6 +101,11 @@ const zhCN = {
   tools: {
     summary: "{enabled} / {total} 个工具已启用",
     toggle: "切换 {name}",
+    groups: {
+      discovery: "结构发现",
+      access: "数据访问",
+      analysis: "分析与策略"
+    },
     names: {
       datanexa_list_connections: "列出连接",
       datanexa_get_schema: "读取 Schema",
@@ -150,7 +163,6 @@ const zhCN = {
     listenHost: "监听地址",
     port: "端口",
     requireBearer: "要求 Bearer 密钥",
-    legacySse: "兼容旧版 SSE",
     display: "显示",
     language: "界面语言",
     theme: "主题",
@@ -159,6 +171,19 @@ const zhCN = {
     themeDark: "深色",
     auditLog: "审计日志",
     auditMaxEvents: "最多保留日志条数",
+    auditRedactSql: "脱敏 SQL 字面量（关闭后可能记录敏感数据）",
+    importExport: "导入/导出",
+    importConnections: "导入连接",
+    importConnectionsDescription: "从 DataNexa JSON 文件追加连接，不会修改现有连接。",
+    exportConnections: "导出连接",
+    exportConnectionsDescription: "将当前数据库连接及密码保存为可迁移的 JSON 文件。",
+    exportWarningTitle: "导出文件包含明文密码",
+    exportWarningDescription: "导出后，数据库密码将不再受 OS 凭证库保护。继续前请确认你了解以下风险。",
+    exportWarningAccess: "任何能读取该文件的人都可能使用其中的数据库凭证。",
+    exportWarningLocation: "仅保存到可信且访问受控的位置，不要上传到代码仓库或公共网盘。",
+    exportWarningCleanup: "完成迁移后请及时删除文件，并清理备份、同步目录和回收站中的副本。",
+    exportAcknowledgement: "我了解导出文件会以明文保存数据库密码",
+    confirmExport: "选择位置并导出",
     policyConsole: "策略检查台",
     policyDescription: "只做静态 SQL 策略预检查，不连接真实数据库，也不写入审计日志。",
     sqlDialect: "SQL 方言",
@@ -167,7 +192,7 @@ const zhCN = {
     denied: "已拒绝",
     securityPosture: "安全策略",
     securityAst: "只允许 SELECT、安全 WITH SELECT 和 EXPLAIN",
-    securityVault: "凭证只保存到 OS 凭证库，配置文件不写明文密码",
+    securityVault: "凭证日常只保存到 OS 凭证库，常规配置文件不写明文密码",
     securityAudit: "审计日志不记录查询结果",
     securityReadonly: "默认只读会话，并应用行数、超时和连接数限额",
     securityWarning: "只读策略不能完全保证所有风险都被拦截，仍需约束 Agent，避免要求或允许其执行危险行为。",
@@ -213,6 +238,7 @@ const zhCN = {
   },
   diagnostics: {
     noHint: "无额外提示。",
+    summary: "诊断完成：{name} · {type} · 凭证{credential}",
     title: "连接诊断：{name} ({type})",
     address: "地址：host={host} port={port} database={database} username={username}",
     credential: "凭证：{credential}；SSL={ssl}；超时={timeout}ms；连接池={pool}",
@@ -257,6 +283,11 @@ const en: I18nMessages = {
     justNow: "Just now",
     rowsElapsed: "{rows} rows, {elapsed}ms"
   },
+  fileDialog: {
+    importConnectionsTitle: "Select database connections to import",
+    exportConnectionsTitle: "Choose where to save database connections",
+    connectionFile: "DataNexa database connection file"
+  },
   nav: {
     overview: "Overview",
     connections: "Connections",
@@ -285,7 +316,10 @@ const en: I18nMessages = {
     connectionDisabled: "{connection} disabled.",
     toolEnabled: "{tool} enabled.",
     toolDisabled: "{tool} disabled.",
-    agentCopied: "Agent connection config copied."
+    agentCopied: "Agent connection config copied.",
+    connectionTestPassed: "Connection ready · {elapsed} ms",
+    connectionsExported: "Exported {count} database connections. Protect the file containing plaintext passwords.",
+    connectionsImported: "Created {count} database connections."
   },
   overview: {
     loading: "Loading local workspace...",
@@ -326,6 +360,11 @@ const en: I18nMessages = {
   tools: {
     summary: "{enabled} / {total} tools enabled",
     toggle: "Toggle {name}",
+    groups: {
+      discovery: "Discovery",
+      access: "Data access",
+      analysis: "Analysis & policy"
+    },
     names: {
       datanexa_list_connections: "List connections",
       datanexa_get_schema: "Read schema",
@@ -383,7 +422,6 @@ const en: I18nMessages = {
     listenHost: "Listen host",
     port: "Port",
     requireBearer: "Require Bearer token",
-    legacySse: "Legacy SSE compatibility",
     display: "Display",
     language: "Interface language",
     theme: "Theme",
@@ -392,6 +430,19 @@ const en: I18nMessages = {
     themeDark: "Dark",
     auditLog: "Audit log",
     auditMaxEvents: "Maximum retained log entries",
+    auditRedactSql: "Redact SQL literals (off may record sensitive data)",
+    importExport: "Import / export",
+    importConnections: "Import connections",
+    importConnectionsDescription: "Append connections from a DataNexa JSON file without changing existing connections.",
+    exportConnections: "Export connections",
+    exportConnectionsDescription: "Save the current database connections and passwords as a portable JSON file.",
+    exportWarningTitle: "The export file contains plaintext passwords",
+    exportWarningDescription: "After export, database passwords are no longer protected by the OS credential vault. Confirm that you understand these risks.",
+    exportWarningAccess: "Anyone who can read the file may be able to use its database credentials.",
+    exportWarningLocation: "Save it only to a trusted, access-controlled location. Never upload it to a source repository or public drive.",
+    exportWarningCleanup: "Delete the file after migration, including copies in backups, synced folders, and the recycle bin.",
+    exportAcknowledgement: "I understand that database passwords are stored in plaintext in the export file",
+    confirmExport: "Choose location and export",
     policyConsole: "Policy console",
     policyDescription: "Runs static SQL policy validation only. It does not connect to real databases or write audit logs.",
     sqlDialect: "SQL dialect",
@@ -400,7 +451,7 @@ const en: I18nMessages = {
     denied: "Denied",
     securityPosture: "Security policy",
     securityAst: "Only SELECT, safe WITH SELECT, and EXPLAIN are allowed",
-    securityVault: "Credentials stay in the OS vault and plaintext passwords are not written to config",
+    securityVault: "Credentials normally stay in the OS vault and plaintext passwords are not written to regular config",
     securityAudit: "Audit logs do not store query results",
     securityReadonly: "Read-only sessions apply row, timeout, and connection limits by default",
     securityWarning: "Read-only policy cannot guarantee every risk is blocked. Constrain agents and avoid asking or allowing them to perform dangerous actions.",
@@ -446,6 +497,7 @@ const en: I18nMessages = {
   },
   diagnostics: {
     noHint: "No extra hint.",
+    summary: "Diagnostics complete: {name} · {type} · credential {credential}",
     title: "Connection diagnostics: {name} ({type})",
     address: "Address: host={host} port={port} database={database} username={username}",
     credential: "Credential: {credential}; SSL={ssl}; timeout={timeout}ms; pool={pool}",
