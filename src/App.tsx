@@ -154,7 +154,6 @@ function App() {
   const [locale, setLocale] = useState<Locale>(detectLocale);
   const [theme, setTheme] = useState<ThemeMode>(detectThemeMode);
   const [systemThemeMode, setSystemThemeMode] = useState<EffectiveTheme>(systemTheme);
-  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
   const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string | null>(null);
   const effectiveTheme = resolveTheme(theme, systemThemeMode);
   const t = messages[locale];
@@ -496,7 +495,6 @@ function App() {
   const serverToken = snapshot?.server_status.token ?? null;
   const recentEvents = snapshot?.audit_events.slice(0, 8) ?? [];
   const availableUpdateVersion = updater.state.kind === "available" ? updater.state.version : null;
-  const updateActionVersion = "version" in updater.state ? updater.state.version ?? null : null;
   const showUpdateReminder = availableUpdateVersion !== null && dismissedUpdateVersion !== availableUpdateVersion;
 
   return (
@@ -529,7 +527,10 @@ function App() {
                 <SidebarUpdateReminder
                   t={t}
                   version={availableUpdateVersion}
-                  onUpdate={() => setUpdateDialogOpen(true)}
+                  onOpenAbout={() => {
+                    setActiveView("settings");
+                    setSettingsTab("about");
+                  }}
                   onDismiss={() => setDismissedUpdateVersion(availableUpdateVersion)}
                 />
               )}
@@ -637,7 +638,7 @@ function App() {
                     updaterEnabled={snapshot.updater_enabled}
                     updateState={updater.state}
                     onCheckUpdate={() => void updater.checkForUpdates()}
-                    onOpenUpdateDialog={() => setUpdateDialogOpen(true)}
+                    onUpdate={() => void updater.installUpdate()}
                     onOpenProjectReleases={() => void api.openProjectReleases().catch(showError)}
                     onTabChange={setSettingsTab}
                     onThemeChange={setTheme}
@@ -673,14 +674,6 @@ function App() {
           onTest={testEditingConnection}
           onSubmit={saveConnection}
           onClose={() => setEditing(null)}
-        />
-        <UpdateDialog
-          t={t}
-          open={updateDialogOpen}
-          version={updateActionVersion}
-          onOpenChange={setUpdateDialogOpen}
-          onInstall={() => void updater.installUpdate()}
-          onOpenProjectReleases={() => void api.openProjectReleases().catch(showError)}
         />
         <AuditDetailDialog t={t} event={selectedAudit} onClose={() => setSelectedAudit(null)} />
       </div>
@@ -719,17 +712,17 @@ function WindowChrome({ t }: { t: I18nMessages }) {
 function SidebarUpdateReminder({
   t,
   version,
-  onUpdate,
+  onOpenAbout,
   onDismiss
 }: {
   t: I18nMessages;
   version: string;
-  onUpdate: () => void;
+  onOpenAbout: () => void;
   onDismiss: () => void;
 }) {
   return (
     <div className="sidebar-update-reminder">
-      <button type="button" className="sidebar-update-main" onClick={onUpdate}>
+      <button type="button" className="sidebar-update-main" onClick={onOpenAbout}>
         <span className="sidebar-update-icon"><Download size={16} /></span>
         <span className="sidebar-update-copy">
           <strong>{t.updates.availableTitle}</strong>
@@ -1210,7 +1203,7 @@ function SettingsView({
   updaterEnabled,
   updateState,
   onCheckUpdate,
-  onOpenUpdateDialog,
+  onUpdate,
   onOpenProjectReleases,
   onTabChange,
   onThemeChange,
@@ -1237,7 +1230,7 @@ function SettingsView({
   updaterEnabled: boolean;
   updateState: UpdateState;
   onCheckUpdate: () => void;
-  onOpenUpdateDialog: () => void;
+  onUpdate: () => void;
   onOpenProjectReleases: () => void;
   onTabChange: (tab: SettingsTab) => void;
   onThemeChange: (theme: ThemeMode) => void;
@@ -1521,7 +1514,7 @@ function SettingsView({
               enabled={updaterEnabled}
               state={updateState}
               onCheck={onCheckUpdate}
-              onUpdate={onOpenUpdateDialog}
+              onUpdate={onUpdate}
               onOpenProjectReleases={onOpenProjectReleases}
             />
             <footer className="about-footer">
@@ -1617,6 +1610,8 @@ function AboutUpdateSection({
       <div className="about-update-content">
         <strong>{title}</strong>
         <p>{description}</p>
+      </div>
+      <div className="about-update-actions">
         {state.kind === "downloading" && (
           <div
             className={clsx("update-progress", progress === null && "indeterminate")}
@@ -1629,8 +1624,6 @@ function AboutUpdateSection({
             <span style={{ width: progress === null ? "22%" : String(progress) + "%" }} />
           </div>
         )}
-      </div>
-      <div className="about-update-actions">
         {(!enabled || state.kind === "disabled") && (
           <button type="button" className="button soft" onClick={onOpenProjectReleases}>
             <ExternalLink size={16} />
@@ -1821,69 +1814,6 @@ function ConnectionDialog({
               <button type="submit" className="button primary" disabled={busy}>{t.connectionDialog.save}</button>
             </footer>
           </form>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-  );
-}
-
-function UpdateDialog({
-  t,
-  open,
-  version,
-  onOpenChange,
-  onInstall,
-  onOpenProjectReleases
-}: {
-  t: I18nMessages;
-  open: boolean;
-  version: string | null;
-  onOpenChange: (open: boolean) => void;
-  onInstall: () => void;
-  onOpenProjectReleases: () => void;
-}) {
-  if (!version) return null;
-
-  return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="policy-dialog update-dialog">
-          <div className="dialog-titlebar">
-            <div>
-              <Dialog.Title>{t.updates.confirmTitle}</Dialog.Title>
-              <Dialog.Description>{formatMessage(t.updates.confirmDescription, { version })}</Dialog.Description>
-            </div>
-            <Dialog.Close asChild>
-              <button type="button" className="icon-button" aria-label={t.common.close}>
-                <X size={18} />
-              </button>
-            </Dialog.Close>
-          </div>
-          <div className="update-confirm-version">
-            <Download size={20} />
-            <div>
-              <span>{t.updates.targetVersion}</span>
-              <strong>DataNexa v{version}</strong>
-            </div>
-          </div>
-          <footer className="update-dialog-actions">
-            <button type="button" className="button soft" onClick={onOpenProjectReleases}>
-              <ExternalLink size={16} />
-              {t.updates.viewReleaseNotes}
-            </button>
-            <button
-              type="button"
-              className="button primary"
-              onClick={() => {
-                onOpenChange(false);
-                onInstall();
-              }}
-            >
-              <Download size={16} />
-              {t.updates.updateNow}
-            </button>
-          </footer>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
