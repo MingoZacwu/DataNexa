@@ -5,11 +5,13 @@ import clsx from "clsx";
 import {
   Activity,
   AlertTriangle,
+  CalendarDays,
   Cable,
   CheckCircle2,
   ChevronRight,
   Clipboard,
   Clock3,
+  ChevronLeft,
   Database,
   Download,
   ExternalLink,
@@ -17,6 +19,7 @@ import {
   FileDown,
   FileText,
   FileUp,
+  Filter,
   Github,
   Home,
   KeyRound,
@@ -40,7 +43,7 @@ import {
   Wrench,
   X
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { FormEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import appConfig from "../app.config.json";
@@ -80,6 +83,14 @@ type SettingsTab = "general" | "about";
 type ThemeMode = "system" | "light" | "dark";
 type EffectiveTheme = "light" | "dark";
 type ToastTone = "success" | "error" | "info";
+type AuditFilters = { from: string; to: string; tool: string; connection: string; status: string };
+
+function parseAuditDate(value: string, endOfDay = false) {
+  const normalized = value.trim().replace(/[年月]/g, "-").replace(/日$/, "").replace(/\//g, "-");
+  if (!/^\d{4}-\d{1,2}-\d{1,2}$/.test(normalized)) return null;
+  const date = new Date(`${normalized}${endOfDay ? "T23:59:59.999" : "T00:00:00"}`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
 
 const APP_VERSION = appConfig.version;
 const THEME_STORAGE_KEY = "datanexa.theme";
@@ -150,6 +161,9 @@ function App() {
   const [policyKind, setPolicyKind] = useState<DatabaseType>("mysql");
   const [policyResult, setPolicyResult] = useState<PolicyCheckResult | null>(null);
   const [selectedAudit, setSelectedAudit] = useState<AuditEvent | null>(null);
+  const [auditFilterOpen, setAuditFilterOpen] = useState(false);
+  const [auditFilters, setAuditFilters] = useState<AuditFilters>({ from: "", to: "", tool: "", connection: "", status: "" });
+  const [showAuditClear, setShowAuditClear] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   const [locale, setLocale] = useState<Locale>(detectLocale);
   const [theme, setTheme] = useState<ThemeMode>(detectThemeMode);
@@ -157,6 +171,7 @@ function App() {
   const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string | null>(null);
   const effectiveTheme = resolveTheme(theme, systemThemeMode);
   const t = messages[locale];
+  const hasAuditFilters = Object.values(auditFilters).some(Boolean);
 
   const updater = useAppUpdater(
     snapshot?.updater_enabled ?? null,
@@ -165,6 +180,16 @@ function App() {
   useEffect(() => {
     void refresh();
   }, []);
+
+  useEffect(() => {
+    if (hasAuditFilters) {
+      setShowAuditClear(true);
+      return;
+    }
+    if (!showAuditClear) return;
+    const timer = window.setTimeout(() => setShowAuditClear(false), 240);
+    return () => window.clearTimeout(timer);
+  }, [hasAuditFilters, showAuditClear]);
 
   useEffect(() => {
     const preventContextMenu = (event: globalThis.MouseEvent) => event.preventDefault();
@@ -551,6 +576,24 @@ function App() {
                 <h1>{viewTitle(t, activeView)}</h1>
               </div>
               <div className="top-actions">
+                {snapshot && activeView === "audit" && (
+                  <div className={clsx("top-filter-actions", hasAuditFilters && "active", !hasAuditFilters && showAuditClear && "leaving")}>
+                    <IconTooltip label={t.audit.filter}>
+                      <button type="button" className={clsx("icon-button", hasAuditFilters && "active-filter")} onClick={() => setAuditFilterOpen(true)} aria-label={t.audit.filter}>
+                        <Filter size={17} />
+                      </button>
+                    </IconTooltip>
+                    {showAuditClear && (
+                      <span className={clsx("audit-clear-action", !hasAuditFilters && "leaving")}>
+                        <IconTooltip label={t.audit.clearFilter}>
+                          <button type="button" className="icon-button" onClick={() => setAuditFilters({ from: "", to: "", tool: "", connection: "", status: "" })} aria-label={t.audit.clearFilter}>
+                            <X size={17} />
+                          </button>
+                        </IconTooltip>
+                      </span>
+                    )}
+                  </div>
+                )}
                 <div className="top-icon-actions">
                   {snapshot && activeView === "connections" && (
                     <IconTooltip label={t.connections.emergencyDisable}>
@@ -621,7 +664,7 @@ function App() {
                   />
                 )}
                 {activeView === "tools" && <ToolsView t={t} tools={snapshot.tools} busy={busy} onToggle={setToolEnabled} />}
-                {activeView === "audit" && <AuditView t={t} events={snapshot.audit_events} onSelect={setSelectedAudit} />}
+                {activeView === "audit" && <AuditView t={t} events={snapshot.audit_events} tools={snapshot.tools} connections={snapshot.config.connections} filters={auditFilters} onFiltersChange={setAuditFilters} filterOpen={auditFilterOpen} onFilterOpenChange={setAuditFilterOpen} onSelect={setSelectedAudit} />}
                 {activeView === "settings" && (
                   <SettingsView
                     t={t}
@@ -1132,16 +1175,99 @@ function ServerView({
   );
 }
 
-function AuditView({ t, events, onSelect }: { t: I18nMessages; events: AuditEvent[]; onSelect: (event: AuditEvent) => void }) {
+function AuditDateField({ t, value, minDate, maxDate, onChange }: { t: I18nMessages; value: string; minDate?: Date | null; maxDate?: Date | null; onChange: (value: string) => void }) {
+  const initial = parseAuditDate(value) ?? new Date();
+  const [open, setOpen] = useState(false);
+  const [month, setMonth] = useState(new Date(initial.getFullYear(), initial.getMonth(), 1));
+  const fieldRef = useRef<HTMLDivElement>(null);
+  const calendarRef = useRef<HTMLDivElement>(null);
+  const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  const startOffset = new Date(month.getFullYear(), month.getMonth(), 1).getDay();
+  const cells = Array.from({ length: Math.ceil((startOffset + daysInMonth) / 7) * 7 }, (_, index) => {
+    const day = index - startOffset + 1;
+    return day > 0 && day <= daysInMonth ? day : null;
+  });
+  const selectedKey = initial ? `${initial.getFullYear()}-${initial.getMonth()}-${initial.getDate()}` : "";
+  const weekdays = [t.audit.weekdaySun, t.audit.weekdayMon, t.audit.weekdayTue, t.audit.weekdayWed, t.audit.weekdayThu, t.audit.weekdayFri, t.audit.weekdaySat];
+  const selectDay = (day: number) => {
+    const selected = new Date(month.getFullYear(), month.getMonth(), day);
+    if ((minDate && selected < minDate) || (maxDate && selected > maxDate)) return;
+    const formatted = `${selected.getFullYear()}/${String(selected.getMonth() + 1).padStart(2, "0")}/${String(day).padStart(2, "0")}`;
+    onChange(formatted);
+    setOpen(false);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const closeWhenOutside = (target: EventTarget | null) => {
+      if (!(target instanceof Node) || fieldRef.current?.contains(target) || calendarRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onPointerDown = (event: PointerEvent) => closeWhenOutside(event.target);
+    const onKeyDown = (event: KeyboardEvent) => event.key === "Escape" && setOpen(false);
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className="audit-date-field" ref={fieldRef}>
+      <input className="audit-date-input" type="text" inputMode="numeric" placeholder={t.audit.datePlaceholder} value={value} onFocus={() => setOpen(true)} onChange={(event) => onChange(event.target.value)} />
+      <button type="button" className="audit-date-trigger" aria-label={t.audit.selectDate} onClick={() => setOpen((current) => !current)}><CalendarDays size={16} /></button>
+      {open && (
+        <div className="audit-calendar" role="dialog" aria-label={t.audit.selectDate} ref={calendarRef} onPointerDown={(event) => event.stopPropagation()}>
+          <div className="audit-calendar-header"><button type="button" aria-label={t.audit.previousMonth} onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}><ChevronLeft size={15} /></button><strong>{formatMessage(t.audit.calendarMonth, { year: month.getFullYear(), month: month.getMonth() + 1 })}</strong><button type="button" aria-label={t.audit.nextMonth} onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}><ChevronRight size={15} /></button></div>
+          <div className="audit-calendar-weekdays">{weekdays.map((day) => <span key={day}>{day}</span>)}</div>
+          <div className="audit-calendar-days">{cells.map((day, index) => {
+            if (!day) return <span key={`empty-${index}`} />;
+            const date = new Date(month.getFullYear(), month.getMonth(), day);
+            const disabled = Boolean((minDate && date < minDate) || (maxDate && date > maxDate));
+            return <button type="button" key={`${day}-${index}`} disabled={disabled} className={selectedKey === `${month.getFullYear()}-${month.getMonth()}-${day}` ? "selected" : ""} onClick={() => selectDay(day)}>{day}</button>;
+          })}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AuditView({ t, events, tools, connections, filters, onFiltersChange, filterOpen, onFilterOpenChange, onSelect }: { t: I18nMessages; events: AuditEvent[]; tools: McpToolInfo[]; connections: ConnectionConfig[]; filters: AuditFilters; onFiltersChange: (filters: AuditFilters) => void; filterOpen: boolean; onFilterOpenChange: (open: boolean) => void; onSelect: (event: AuditEvent) => void }) {
   const [page, setPage] = useState(1);
-  const totalPages = Math.max(1, Math.ceil(events.length / AUDIT_PAGE_SIZE));
+  const [draftFilters, setDraftFilters] = useState(filters);
+  const auditBodyRef = useRef<HTMLDivElement>(null);
+  const draftFrom = draftFilters.from ? parseAuditDate(draftFilters.from) : null;
+  const draftTo = draftFilters.to ? parseAuditDate(draftFilters.to) : null;
+  const invalidDateRange = Boolean(draftFrom && draftTo && draftTo < draftFrom);
+  const filteredEvents = events.filter((event) => {
+    const date = new Date(event.timestamp);
+    const from = filters.from ? parseAuditDate(filters.from) : null;
+    const to = filters.to ? parseAuditDate(filters.to, true) : null;
+    return (!from || date >= from) && (!to || date <= to) && (!filters.tool || event.tool === filters.tool) && (!filters.connection || (event.connection_id ?? "") === filters.connection) && (!filters.status || event.status === filters.status);
+  });
+  const totalPages = Math.max(1, Math.ceil(filteredEvents.length / AUDIT_PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
   const pageStart = (currentPage - 1) * AUDIT_PAGE_SIZE;
-  const pageEvents = events.slice(pageStart, pageStart + AUDIT_PAGE_SIZE);
+  const pageEvents = filteredEvents.slice(pageStart, pageStart + AUDIT_PAGE_SIZE);
+  const pageNumbers = Array.from({ length: Math.min(3, totalPages) }, (_, index) => {
+    if (totalPages <= 3) return index + 1;
+    if (currentPage <= 2) return index + 1;
+    if (currentPage >= totalPages - 1) return totalPages - 2 + index;
+    return currentPage - 1 + index;
+  });
 
   useEffect(() => {
     setPage((current) => Math.min(current, totalPages));
   }, [totalPages]);
+
+  useEffect(() => {
+    auditBodyRef.current?.scrollTo({ top: 0 });
+  }, [currentPage]);
+
+  useEffect(() => {
+    if (filterOpen) setDraftFilters(filters);
+  }, [filterOpen, filters]);
 
   return (
     <section className="panel page-panel list-page-panel audit-page-panel">
@@ -1153,8 +1279,8 @@ function AuditView({ t, events, onSelect }: { t: I18nMessages; events: AuditEven
           <span>{t.audit.status}</span>
           <span>{t.audit.detail}</span>
         </div>
-        <div className="audit-table-body">
-          {events.length === 0 ? (
+        <div className="audit-table-body" ref={auditBodyRef}>
+          {filteredEvents.length === 0 ? (
             <div className="empty-state">{t.audit.empty}</div>
           ) : (
             pageEvents.map((event) => (
@@ -1170,13 +1296,16 @@ function AuditView({ t, events, onSelect }: { t: I18nMessages; events: AuditEven
             ))
           )}
         </div>
-        {events.length > 0 && (
+        {filteredEvents.length > 0 && (
           <div className="pagination-footer">
-            <span>{formatMessage(t.audit.pageInfo, { page: currentPage, totalPages, total: events.length })}</span>
+            <span>{formatMessage(t.audit.pageInfo, { page: currentPage, totalPages, total: filteredEvents.length })}</span>
             <div className="pagination-actions">
               <button type="button" className="button ghost" disabled={currentPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
                 {t.common.previous}
               </button>
+              <div className="page-number-actions">
+                {pageNumbers.map((pageNumber) => <button type="button" key={pageNumber} className={clsx("page-number", pageNumber === currentPage && "active")} onClick={() => setPage(pageNumber)}>{pageNumber}</button>)}
+              </div>
               <button type="button" className="button ghost" disabled={currentPage >= totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}>
                 {t.common.next}
               </button>
@@ -1184,6 +1313,28 @@ function AuditView({ t, events, onSelect }: { t: I18nMessages; events: AuditEven
           </div>
         )}
       </div>
+      <Dialog.Root open={filterOpen} onOpenChange={onFilterOpenChange}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="dialog-overlay" />
+          <Dialog.Content className="policy-dialog audit-filter-dialog">
+            <div className="dialog-titlebar">
+              <Dialog.Title>{t.audit.filterTitle}</Dialog.Title>
+              <Dialog.Close asChild>
+                <button type="button" className="icon-button" aria-label={t.common.close}><X size={18} /></button>
+              </Dialog.Close>
+            </div>
+            <div className="audit-filter-grid">
+              <label><span>{t.audit.from}</span><AuditDateField t={t} value={draftFilters.from} maxDate={draftTo} onChange={(from) => setDraftFilters({ ...draftFilters, from })} /></label>
+              <label><span>{t.audit.to}</span><AuditDateField t={t} value={draftFilters.to} minDate={draftFrom} onChange={(to) => setDraftFilters({ ...draftFilters, to })} /></label>
+              <label><span>{t.audit.tool}</span><select value={draftFilters.tool} onChange={(event) => setDraftFilters({ ...draftFilters, tool: event.target.value })}><option value="">{t.audit.all}</option>{tools.map((tool) => <option key={tool.name} value={tool.name}>{tool.name}</option>)}</select></label>
+              <label><span>{t.audit.connection}</span><select value={draftFilters.connection} onChange={(event) => setDraftFilters({ ...draftFilters, connection: event.target.value })}><option value="">{t.audit.all}</option>{connections.map((connection) => <option key={connection.id} value={connection.id}>{connection.name}</option>)}</select></label>
+              <label><span>{t.audit.status}</span><select value={draftFilters.status} onChange={(event) => setDraftFilters({ ...draftFilters, status: event.target.value })}><option value="">{t.audit.all}</option>{(["allowed", "denied", "error", "timeout", "truncated"] as AuditEvent["status"][]).map((status) => <option key={status} value={status}>{statusLabel(t, status)}</option>)}</select></label>
+            </div>
+            {invalidDateRange && <p className="audit-filter-error">{t.audit.invalidDateRange}</p>}
+            <div className="dialog-actions"><button type="button" className="button ghost" onClick={() => onFilterOpenChange(false)}>{t.common.cancel}</button><button type="button" className="button primary" disabled={invalidDateRange} onClick={() => { onFiltersChange(draftFilters); setPage(1); onFilterOpenChange(false); }}>{t.audit.applyFilter}</button></div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </section>
   );
 }
