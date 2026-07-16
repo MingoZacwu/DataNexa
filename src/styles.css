@@ -119,6 +119,12 @@ p {
   text-align: center;
 }
 
+:root:not([data-platform="macos"]) .window-title {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
 .window-controls {
   display: flex;
   align-items: center;
@@ -2120,6 +2126,37 @@ pre {
   padding: 16px 0;
   border-top: 1px solid var(--line);
 }
+.about-update-preferences {
+  grid-column: 1 / -1;
+  margin-top: 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.about-update-switch-row {
+  min-height: var(--control-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.about-update-switch-row > span {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 24px;
+}
+
+:root.dark .about-update-switch-row > span {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 400;
+}
+
+
+
+
 
 .about-update-section + .about-footer {
   margin-top: 0;

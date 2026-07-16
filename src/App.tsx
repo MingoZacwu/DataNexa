@@ -1326,11 +1326,6 @@ function SettingsView({
                   onChange={onThemeChange}
                 />
               </div>
-              <SwitchField label={t.settings.autoCheckUpdates} checked={settingsDraft.auto_check_updates} disabled={busy || !updaterEnabled} onCheckedChange={(checked) => {
-                const next = { ...settingsDraft, auto_check_updates: checked };
-                setSettingsDraft(next);
-                onSaveSettings(next);
-              }} />
             </div>
           </section>
 
@@ -1513,6 +1508,12 @@ function SettingsView({
               t={t}
               enabled={updaterEnabled}
               state={updateState}
+              autoCheckUpdates={settingsDraft.auto_check_updates}
+              onAutoCheckUpdatesChange={(checked) => {
+                const next = { ...settingsDraft, auto_check_updates: checked };
+                setSettingsDraft(next);
+                onSaveSettings(next);
+              }}
               onCheck={onCheckUpdate}
               onUpdate={onUpdate}
               onOpenProjectReleases={onOpenProjectReleases}
@@ -1541,6 +1542,8 @@ function AboutUpdateSection({
   t,
   enabled,
   state,
+  autoCheckUpdates,
+  onAutoCheckUpdatesChange,
   onCheck,
   onUpdate,
   onOpenProjectReleases
@@ -1548,6 +1551,8 @@ function AboutUpdateSection({
   t: I18nMessages;
   enabled: boolean;
   state: UpdateState;
+  autoCheckUpdates: boolean;
+  onAutoCheckUpdatesChange: (checked: boolean) => void;
   onCheck: () => void;
   onUpdate: () => void;
   onOpenProjectReleases: () => void;
@@ -1666,6 +1671,14 @@ function AboutUpdateSection({
             {t.updates.openReleases}
           </button>
         )}
+      </div>
+      <div className="about-update-preferences">
+        <label className="about-update-switch-row">
+          <span>{t.settings.autoCheckUpdates}</span>
+          <Switch.Root className="switch" checked={enabled && autoCheckUpdates} disabled={!enabled} onCheckedChange={onAutoCheckUpdatesChange}>
+            <Switch.Thumb className="switch-thumb" />
+          </Switch.Root>
+        </label>
       </div>
     </section>
   );
