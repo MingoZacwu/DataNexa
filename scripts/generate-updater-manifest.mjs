@@ -17,6 +17,12 @@ const signatureDir = resolve(signatureDirArg);
 const outputPath = resolve(outputArg);
 const release = JSON.parse(readFileSync(releaseJsonPath, "utf8"));
 const assets = Array.isArray(release.assets) ? release.assets : [];
+const releaseTag = String(release.tag_name || "");
+const version = releaseTag.replace(/^v/, "");
+
+if (!releaseTag || !version) {
+  throw new Error("Release tag_name is missing or invalid");
+}
 
 function findSingleAsset(suffix) {
   const matches = assets.filter((asset) => asset.name.endsWith(suffix));
@@ -48,17 +54,28 @@ function createPlatformEntry(signatureSuffix) {
 
   return {
     signature,
-    url: bundleAsset.browser_download_url,
+    url: stableAssetDownloadUrl(bundleAsset),
   };
+}
+
+function stableAssetDownloadUrl(asset) {
+  const url = new URL(asset.browser_download_url);
+  const marker = "/releases/download/";
+  const markerIndex = url.pathname.indexOf(marker);
+
+  if (url.protocol !== "https:" || markerIndex <= 0) {
+    throw new Error(`Release asset ${asset.name} has an invalid browser_download_url`);
+  }
+
+  const repositoryPath = url.pathname.slice(0, markerIndex);
+  url.pathname = `${repositoryPath}${marker}${encodeURIComponent(releaseTag)}/${encodeURIComponent(asset.name)}`;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
 }
 
 const windows = createPlatformEntry(".exe.sig");
 const macosUniversal = createPlatformEntry(".app.tar.gz.sig");
-const version = String(release.tag_name || "").replace(/^v/, "");
-
-if (!version) {
-  throw new Error("Release tag_name is missing or invalid");
-}
 
 const manifest = {
   version,
