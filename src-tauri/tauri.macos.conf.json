@@ -5,11 +5,16 @@
         "title": "DataNexa",
         "width": 1180,
         "height": 760,
+        "center": true,
         "minWidth": 1180,
         "minHeight": 760,
         "resizable": true,
         "decorations": true,
         "titleBarStyle": "Overlay",
+        "trafficLightPosition": {
+          "x": 14,
+          "y": 12
+        },
         "hiddenTitle": true,
         "shadow": true
       }
