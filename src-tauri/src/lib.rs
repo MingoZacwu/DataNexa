@@ -5,6 +5,7 @@ mod db;
 mod i18n;
 mod mcp;
 mod policy;
+mod startup;
 mod state;
 mod vault;
 
@@ -28,6 +29,7 @@ fn create_tray_menu(
     app: &AppHandle,
     text: BackendText,
     mcp_running: bool,
+    startup_error: bool,
 ) -> tauri::Result<Menu<tauri::Wry>> {
     let show_item = MenuItem::with_id(app, "show", text.tray_show(), true, None::<&str>)?;
     let mcp_item = CheckMenuItem::with_id(
@@ -39,17 +41,37 @@ fn create_tray_menu(
         None::<&str>,
     )?;
     let separator = PredefinedMenuItem::separator(app)?;
+    let error_item = MenuItem::with_id(
+        app,
+        "mcp_error",
+        text.tray_mcp_startup_error(),
+        false,
+        None::<&str>,
+    )?;
     let quit_item = MenuItem::with_id(app, "quit", text.tray_quit(), true, None::<&str>)?;
-    Menu::with_items(app, &[&show_item, &mcp_item, &separator, &quit_item])
+    if startup_error {
+        Menu::with_items(
+            app,
+            &[&show_item, &mcp_item, &separator, &error_item, &quit_item],
+        )
+    } else {
+        Menu::with_items(app, &[&show_item, &mcp_item, &separator, &quit_item])
+    }
 }
 
 pub(crate) fn refresh_tray_menu(
     app: &AppHandle,
     text: BackendText,
     mcp_running: bool,
+    startup_error: bool,
 ) -> tauri::Result<()> {
     if let Some(tray) = app.tray_by_id("main") {
-        tray.set_menu(Some(create_tray_menu(app, text, mcp_running)?))?;
+        tray.set_menu(Some(create_tray_menu(
+            app,
+            text,
+            mcp_running,
+            startup_error,
+        )?))?;
     }
     Ok(())
 }
@@ -65,6 +87,7 @@ fn set_dock_visibility(app: &AppHandle, visible: bool) -> tauri::Result<()> {
 }
 
 fn show_main_window(app: &AppHandle) {
+    let _ = startup::set_activation_policy(true);
     let _ = set_dock_visibility(app, true);
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -75,6 +98,7 @@ fn show_main_window(app: &AppHandle) {
 
 pub(crate) fn hide_main_window_to_tray(window: &WebviewWindow) -> tauri::Result<()> {
     window.hide()?;
+    let _ = startup::set_activation_policy(false);
     set_dock_visibility(window.app_handle(), false)
 }
 
@@ -112,7 +136,7 @@ pub fn run() {
             let tray_icon =
                 tauri::image::Image::new(include_bytes!("../../resources/trayicon.rgba"), 32, 32);
 
-            let tray_menu = create_tray_menu(app.handle(), tray_text, false)?;
+            let tray_menu = create_tray_menu(app.handle(), tray_text, false, false)?;
             TrayIconBuilder::with_id("main")
                 .icon(tray_icon)
                 .tooltip("DataNexa")
@@ -130,6 +154,43 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            let state = app.state::<Arc<AppState>>().inner().clone();
+            let autostart = std::env::args().any(|arg| arg == "--autostart");
+            let login_launch = autostart || startup::launched_at_login();
+            let configured = state
+                .config
+                .try_read()
+                .map(|config| config.settings.auto_start_mcp)
+                .unwrap_or(false);
+            if configured && login_launch {
+                let app_handle = app.handle().clone();
+                let state_for_task = state.clone();
+                tauri::async_runtime::spawn(async move {
+                    let started = std::time::Instant::now();
+                    if let Err(error) = mcp::start(state_for_task.clone()).await {
+                        let reason = error.to_string();
+                        state_for_task.mcp.write().await.startup_error = Some(reason.clone());
+                        commands::record_startup_event(
+                            &state_for_task,
+                            "system.auto_start_mcp",
+                            reason,
+                            started.elapsed(),
+                        )
+                        .await;
+                    }
+                    let running = mcp::status(&state_for_task).await.running;
+                    let error = state_for_task.mcp.read().await.startup_error.is_some();
+                    let language = state_for_task.config.read().await.settings.language.clone();
+                    let _ = refresh_tray_menu(&app_handle, backend_text(&language), running, error);
+                });
+            }
+            if login_launch {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = hide_main_window_to_tray(&window);
+                }
+            } else {
+                show_main_window(app.handle());
+            }
             Ok(())
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -145,7 +206,21 @@ pub fn run() {
                         mcp::stop(state.clone()).await;
                         Ok(())
                     } else {
-                        mcp::start(state.clone()).await.map(|_| ())
+                        let started = std::time::Instant::now();
+                        match mcp::start(state.clone()).await {
+                            Ok(_) => Ok(()),
+                            Err(error) => {
+                                let reason = error.to_string();
+                                commands::record_startup_event(
+                                    &state,
+                                    "system.start_mcp",
+                                    reason,
+                                    started.elapsed(),
+                                )
+                                .await;
+                                Err(error)
+                            }
+                        }
                     };
 
                     if let Err(error) = result {
@@ -154,7 +229,10 @@ pub fn run() {
 
                     let running = mcp::status(&state).await.running;
                     let language = state.config.read().await.settings.language.clone();
-                    if let Err(error) = refresh_tray_menu(&app, backend_text(&language), running) {
+                    let startup_error = state.mcp.read().await.startup_error.is_some();
+                    if let Err(error) =
+                        refresh_tray_menu(&app, backend_text(&language), running, startup_error)
+                    {
                         eprintln!("failed to refresh tray menu: {error}");
                     }
                 });

@@ -39,6 +39,12 @@ pub fn backend_text(language: &str) -> BackendText {
 }
 
 impl BackendText {
+    pub fn tray_mcp_startup_error(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "MCP 自动启动失败（打开应用查看详情）",
+            Locale::En => "MCP auto-start failed (open app for details)",
+        }
+    }
     pub fn local_host_only(self) -> &'static str {
         match self.locale {
             Locale::ZhCn => "DataNexa v1 仅允许绑定 127.0.0.1 或 localhost。",

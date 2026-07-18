@@ -9,5 +9,7 @@
     <string>zh-Hans</string>
     <string>en</string>
   </array>
+  <key>LSUIElement</key>
+  <true/>
 </dict>
 </plist>

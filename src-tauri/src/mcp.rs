@@ -30,6 +30,7 @@ pub struct McpRuntime {
     pub shutdown: Option<oneshot::Sender<()>>,
     pub generation: u64,
     pub task: Option<JoinHandle<()>>,
+    pub startup_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,7 +87,11 @@ pub async fn status(app: &Arc<AppState>) -> ServerStatus {
 
 pub async fn start(app: Arc<AppState>) -> anyhow::Result<ServerStatus> {
     let _lifecycle = app.mcp_lifecycle.lock().await;
-    start_locked(app.clone()).await
+    let result = start_locked(app.clone()).await;
+    if result.is_ok() {
+        app.mcp.write().await.startup_error = None;
+    }
+    result
 }
 
 async fn start_locked(app: Arc<AppState>) -> anyhow::Result<ServerStatus> {
@@ -156,6 +161,7 @@ fn mcp_router(app: Arc<AppState>) -> Router {
 pub async fn stop(app: Arc<AppState>) -> ServerStatus {
     let _lifecycle = app.mcp_lifecycle.lock().await;
     stop_locked(&app).await;
+    app.mcp.write().await.startup_error = None;
     status(&app).await
 }
 

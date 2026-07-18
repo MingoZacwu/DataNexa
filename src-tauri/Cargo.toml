@@ -1,6 +1,6 @@
 [package]
 name = "datanexa"
-version = "0.3.1"
+version = "0.4.0"
 description = "Local readonly MCP database gateway"
 authors = ["Zachary Wu"]
 edition = "2021"
@@ -12,6 +12,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+cc = "1.2"
 
 [dependencies]
 anyhow = "1.0"
@@ -41,6 +42,9 @@ urlencoding = "2.1"
 uuid = { version = "1.11", features = ["serde", "v4"] }
 rust_decimal = "1"
 zeroize = "1.8"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
 
 [features]
 default = []
