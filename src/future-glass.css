@@ -24,6 +24,10 @@
   --glow-blue: 0 0 0 1px rgba(36, 107, 254, 0.14), 0 6px 16px rgba(36, 107, 254, 0.09);
 }
 
+:root[data-platform="macos"] {
+  --titlebar-height: 34px;
+}
+
 :root.dark {
   --bg: #080b10;
   --surface: rgba(18, 24, 33, 0.68);
@@ -348,6 +352,17 @@ textarea:focus-visible,
   background: color-mix(in srgb, var(--surface) 82%, transparent);
   box-shadow: inset 0 1px 0 var(--glass-edge);
   backdrop-filter: blur(16px);
+}
+
+/* Keep the audit filter group visually aligned with the adjacent action group. */
+.top-filter-actions {
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  box-shadow: inset 0 1px 0 var(--glass-edge);
+  backdrop-filter: blur(16px);
+}
+
+.top-filter-actions.active {
+  background: var(--surface-strong);
 }
 
 .top-icon-actions .icon-button {
