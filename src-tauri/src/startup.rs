@@ -10,6 +10,7 @@ const MAC_LOGIN_ITEM_ERROR: &str = "macOS 登录项注册失败，请确认应�
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(not(any(target_os = "windows", target_os = "macos")), allow(dead_code))]
 pub enum AutoStartStatus {
     Enabled,
     Disabled,
