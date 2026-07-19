@@ -13,6 +13,7 @@ const MAC_LOGIN_ITEM_ERROR: &str = "macOS 登录项注册失败，请确认应�
 pub enum AutoStartStatus {
     Enabled,
     Disabled,
+    #[cfg(target_os = "macos")]
     RequiresApproval,
     Unknown,
 }

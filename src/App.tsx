@@ -916,8 +916,6 @@ function OverviewView({
   const enabledTools = snapshot.tools.filter((tool) => tool.enabled).length;
   const uptime = snapshot.server_status.started_at ? relativeDuration(t, snapshot.server_status.started_at) : t.overview.notStarted;
 
-  const onboardingComplete = totalConnections > 0;
-
   return (
     <section className="overview-page">
       <section className={clsx("status-command", snapshot.server_status.running && "running")}>
@@ -966,7 +964,7 @@ function OverviewView({
         </section>
       </div>
 
-      <section className={clsx("panel quick-panel", onboardingComplete && "is-compact")}>
+      <section className="panel quick-panel">
         <h2>{t.overview.quickStart}</h2>
         <div className="quick-steps">
           <QuickStep image={quickStep1Url} title={t.overview.quickConnectTitle} text={t.overview.quickConnectText} />

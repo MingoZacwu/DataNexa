@@ -806,19 +806,13 @@ textarea:focus-visible,
   padding: 14px 15px 10px;
 }
 
-.quick-panel.is-compact .quick-steps {
+.quick-steps {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.quick-panel.is-compact .quick-step,
-.quick-panel.is-compact .quick-step.wide {
+.quick-step,
+.quick-step.wide {
   grid-column: auto;
-  min-height: 76px;
-}
-
-.quick-panel.is-compact .quick-step img {
-  width: 48px;
-  height: 48px;
 }
 
 .quick-steps {
@@ -828,7 +822,7 @@ textarea:focus-visible,
 
 .quick-step {
   grid-template-columns: 58px minmax(0, 1fr) auto;
-  min-height: 88px;
+  min-height: 76px;
   padding: 10px 13px;
   border: 0;
   border-left: 1px solid var(--line);
@@ -841,8 +835,8 @@ textarea:focus-visible,
 }
 
 .quick-step img {
-  width: 52px;
-  height: 52px;
+  width: 48px;
+  height: 48px;
 }
 
 .quick-step-body strong {
@@ -1993,7 +1987,6 @@ textarea:focus {
   .status-command { grid-template-columns: 1fr auto; }
   .command-metrics { grid-column: 1 / -1; grid-row: 2; }
   .command-button { grid-column: 2; grid-row: 1; }
-  .quick-panel.is-compact .quick-steps,
   .quick-steps { grid-template-columns: 1fr; }
   .quick-step,
   .quick-step:first-child { border-left: 0; border-top: 1px solid var(--line); }

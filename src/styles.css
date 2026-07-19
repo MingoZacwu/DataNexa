@@ -884,7 +884,7 @@ p {
 
 .quick-steps {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   margin-top: 12px;
 }
@@ -902,7 +902,7 @@ p {
 }
 
 .quick-step.wide {
-  grid-column: 1 / -1;
+  grid-column: auto;
 }
 
 .quick-step img {
@@ -2250,7 +2250,7 @@ pre {
   }
 
   .quick-steps {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
