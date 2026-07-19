@@ -1,26 +1,26 @@
-# DataNexa v0.3.1
+# DataNexa v0.4.0
 
-[中文发布说明](https://github.com/MingoZacwu/DataNexa/blob/v0.3.1/RELEASE_NOTES.md)
+[中文发布说明](https://github.com/MingoZacwu/DataNexa/blob/v0.4.0/RELEASE_NOTES.md)
 
 ## Highlights
 
-- Audit logs can now be filtered by date range, MCP tool, database connection, and execution status.
-- Improved desktop window startup and relaunch behavior.
+- DataNexa and MCP can now start automatically at login, eliminating the need to start the service manually after each sign-in.
+- Application startup and MCP error reporting are now more reliable and easier to understand when running in the background.
 
 ## Added
 
-- Added an audit log filter panel with combined filters for start date, end date, tool, connection, and status.
-- Added a date picker and date-range validation to prevent the end date from preceding the start date.
-- Added an active filter indicator and a one-click action to clear all filters.
-- Added page number shortcuts to audit log pagination and automatic scrolling to the top when changing pages.
+- Added a setting to start DataNexa and MCP at login on macOS and Windows.
+- When launched as a login item, DataNexa starts MCP in the background and remains accessible from the system tray.
 
 ## Changes and Improvements
 
-- The main application window is now centered on first launch.
-- Relaunching DataNexa now restores and focuses the existing main window instead of creating a duplicate instance.
-- Moved the automatic update check setting into the About Updates section to keep update-related controls together.
+- The main window now appears only after startup initialization completes, preventing a blank window or unintended flash during launch.
+- MCP startup failures, whether automatic or manual, are now surfaced in the app and system tray and recorded in the audit log.
+- The Windows uninstaller now removes DataNexa's login startup entry to prevent stale startup configuration after uninstalling.
 
 ## Installation Notes
+
+- The macOS version requires macOS 15.0 or later.
 
 - The macOS application is Developer ID signed but is not yet notarized. macOS may display a Gatekeeper warning on first launch. You can remove the warning by running the following command in Terminal:
 
