@@ -19,6 +19,7 @@ use crate::db::ConnectionDiagnostics;
 use crate::i18n::{backend_text, BackendText, ConnectionDiagnosticText};
 use crate::mcp::{self, McpToolInfo, ServerStatus};
 use crate::policy::{PolicyCheckResult, PolicyEngine};
+use crate::startup;
 use crate::state::AppState;
 use crate::vault::CredentialVault;
 use crate::{hide_main_window_to_tray, refresh_tray_menu};
@@ -30,6 +31,8 @@ pub struct AppSnapshot {
     pub audit_events: Vec<crate::audit::AuditEvent>,
     pub tools: Vec<McpToolInfo>,
     pub updater_enabled: bool,
+    pub startup_error: Option<String>,
+    pub auto_start_status: startup::AutoStartStatus,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -117,15 +120,45 @@ pub async fn save_settings_config(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
     settings: SettingsConfig,
+    apply_auto_start: bool,
 ) -> Result<AppSnapshot, String> {
+    let previous_auto_start = state.config.read().await.settings.auto_start_mcp;
     let text = commit_config(state.inner(), |config| {
-        let settings = normalize_settings(settings);
+        let mut settings = normalize_settings(settings);
+        if !apply_auto_start {
+            settings.auto_start_mcp = previous_auto_start;
+        }
         let text = backend_text(&settings.language);
         config.settings = settings;
         Ok(text)
     })
     .await
     .map_err(to_client_error)?;
+    if apply_auto_start {
+        let auto_start = state.config.read().await.settings.auto_start_mcp;
+        let startup_started = Instant::now();
+        let startup_result = if auto_start {
+            startup::enable()
+        } else {
+            startup::disable()
+        };
+        if let Err(error) = startup_result {
+            let reason = sanitize_text(&error.to_string());
+            record_startup_event(
+                state.inner(),
+                "system.auto_start_mcp",
+                reason.clone(),
+                startup_started.elapsed(),
+            )
+            .await;
+            let _ = commit_config(state.inner(), |config| {
+                config.settings.auto_start_mcp = previous_auto_start;
+                Ok(())
+            })
+            .await;
+            return Err(reason);
+        }
+    }
     let audit_max_events = state.config.read().await.settings.audit_max_events;
     state
         .audit
@@ -134,7 +167,13 @@ pub async fn save_settings_config(
         .map_err(to_client_error)?;
 
     let mcp_running = mcp::status(state.inner()).await.running;
-    refresh_tray_menu(&app, text, mcp_running).map_err(to_client_error)?;
+    refresh_tray_menu(
+        &app,
+        text,
+        mcp_running,
+        state.mcp.read().await.startup_error.is_some(),
+    )
+    .map_err(to_client_error)?;
 
     snapshot(state.inner()).await.map_err(to_client_error)
 }
@@ -711,11 +750,20 @@ pub async fn start_mcp_server(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<AppSnapshot, String> {
-    mcp::start(state.inner().clone())
-        .await
-        .map_err(to_client_error)?;
+    let started = std::time::Instant::now();
+    if let Err(error) = mcp::start(state.inner().clone()).await {
+        let reason = error.to_string();
+        record_startup_event(
+            state.inner(),
+            "system.start_mcp",
+            reason.clone(),
+            started.elapsed(),
+        )
+        .await;
+        return Err(reason);
+    }
     let text = text_for_state(state.inner()).await;
-    refresh_tray_menu(&app, text, true).map_err(to_client_error)?;
+    refresh_tray_menu(&app, text, true, false).map_err(to_client_error)?;
     snapshot(state.inner()).await.map_err(to_client_error)
 }
 
@@ -726,7 +774,7 @@ pub async fn stop_mcp_server(
 ) -> Result<AppSnapshot, String> {
     mcp::stop(state.inner().clone()).await;
     let text = text_for_state(state.inner()).await;
-    refresh_tray_menu(&app, text, false).map_err(to_client_error)?;
+    refresh_tray_menu(&app, text, false, false).map_err(to_client_error)?;
     snapshot(state.inner()).await.map_err(to_client_error)
 }
 
@@ -792,8 +840,33 @@ async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
         audit_events: state.audit.list().await,
         tools: mcp::tool_infos(&config.tools),
         updater_enabled: cfg!(feature = "updater"),
+        startup_error: state.mcp.read().await.startup_error.clone(),
+        auto_start_status: startup::status(),
         config,
     })
+}
+
+pub(crate) async fn record_startup_event(
+    state: &Arc<AppState>,
+    tool: &str,
+    reason: String,
+    elapsed: std::time::Duration,
+) {
+    let max_events = state.config.read().await.settings.audit_max_events;
+    let _ = state
+        .audit
+        .record_with_limit(
+            None,
+            None,
+            tool,
+            AuditStatus::Error,
+            Some(sanitize_text(&reason)),
+            Some(elapsed.as_millis().try_into().unwrap_or(u64::MAX)),
+            None,
+            None,
+            max_events,
+        )
+        .await;
 }
 
 async fn commit_config<T>(

@@ -24,6 +24,10 @@
   --glow-blue: 0 0 0 1px rgba(36, 107, 254, 0.14), 0 6px 16px rgba(36, 107, 254, 0.09);
 }
 
+:root[data-platform="macos"] {
+  --titlebar-height: 34px;
+}
+
 :root.dark {
   --bg: #080b10;
   --surface: rgba(18, 24, 33, 0.68);
@@ -348,6 +352,17 @@ textarea:focus-visible,
   background: color-mix(in srgb, var(--surface) 82%, transparent);
   box-shadow: inset 0 1px 0 var(--glass-edge);
   backdrop-filter: blur(16px);
+}
+
+/* Keep the audit filter group visually aligned with the adjacent action group. */
+.top-filter-actions {
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  box-shadow: inset 0 1px 0 var(--glass-edge);
+  backdrop-filter: blur(16px);
+}
+
+.top-filter-actions.active {
+  background: var(--surface-strong);
 }
 
 .top-icon-actions .icon-button {
@@ -791,19 +806,13 @@ textarea:focus-visible,
   padding: 14px 15px 10px;
 }
 
-.quick-panel.is-compact .quick-steps {
+.quick-steps {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.quick-panel.is-compact .quick-step,
-.quick-panel.is-compact .quick-step.wide {
+.quick-step,
+.quick-step.wide {
   grid-column: auto;
-  min-height: 76px;
-}
-
-.quick-panel.is-compact .quick-step img {
-  width: 48px;
-  height: 48px;
 }
 
 .quick-steps {
@@ -813,7 +822,7 @@ textarea:focus-visible,
 
 .quick-step {
   grid-template-columns: 58px minmax(0, 1fr) auto;
-  min-height: 88px;
+  min-height: 76px;
   padding: 10px 13px;
   border: 0;
   border-left: 1px solid var(--line);
@@ -826,8 +835,8 @@ textarea:focus-visible,
 }
 
 .quick-step img {
-  width: 52px;
-  height: 52px;
+  width: 48px;
+  height: 48px;
 }
 
 .quick-step-body strong {
@@ -1978,7 +1987,6 @@ textarea:focus {
   .status-command { grid-template-columns: 1fr auto; }
   .command-metrics { grid-column: 1 / -1; grid-row: 2; }
   .command-button { grid-column: 2; grid-row: 1; }
-  .quick-panel.is-compact .quick-steps,
   .quick-steps { grid-template-columns: 1fr; }
   .quick-step,
   .quick-step:first-child { border-left: 0; border-top: 1px solid var(--line); }

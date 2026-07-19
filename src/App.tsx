@@ -228,6 +228,14 @@ function App() {
     void refresh({ quiet: true });
   }, [activeView]);
 
+  const shownStartupError = useRef<string | null>(null);
+  useEffect(() => {
+    const error = snapshot?.startup_error;
+    if (!error || shownStartupError.current === error) return;
+    shownStartupError.current = error;
+    pushToast(error, "error");
+  }, [snapshot?.startup_error]);
+
   useEffect(() => {
     const timer = window.setInterval(() => {
       void refresh({ quiet: true });
@@ -433,14 +441,19 @@ function App() {
     }
   }
 
-  async function saveSettings(settings: SettingsConfig) {
+  async function saveSettings(settings: SettingsConfig, applyAutoStart = false) {
     setBusy(true);
     try {
       const nextLocale = normalizeLocale(settings.language);
       setLocale(nextLocale);
       persistLocale(nextLocale);
-      setSnapshot(await api.saveSettingsConfig({ ...settings, language: nextLocale }));
-      pushToast(messages[nextLocale].toast.settingsSaved, "info");
+      const nextSnapshot = await api.saveSettingsConfig({ ...settings, language: nextLocale }, applyAutoStart);
+      setSnapshot(nextSnapshot);
+      if (applyAutoStart && settings.auto_start_mcp && nextSnapshot.auto_start_status === "requires_approval") {
+        pushToast(messages[nextLocale].toast.autoStartRequiresApproval, "error");
+      } else {
+        pushToast(messages[nextLocale].toast.settingsSaved, "info");
+      }
     } catch (error) {
       showError(error);
     } finally {
@@ -673,6 +686,7 @@ function App() {
                     effectiveTheme={effectiveTheme}
                     server={snapshot.config.server}
                     settings={snapshot.config.settings}
+                    autoStartStatus={snapshot.auto_start_status}
                     busy={busy}
                     tab={settingsTab}
                     policySql={policySql}
@@ -902,8 +916,6 @@ function OverviewView({
   const enabledTools = snapshot.tools.filter((tool) => tool.enabled).length;
   const uptime = snapshot.server_status.started_at ? relativeDuration(t, snapshot.server_status.started_at) : t.overview.notStarted;
 
-  const onboardingComplete = totalConnections > 0;
-
   return (
     <section className="overview-page">
       <section className={clsx("status-command", snapshot.server_status.running && "running")}>
@@ -952,7 +964,7 @@ function OverviewView({
         </section>
       </div>
 
-      <section className={clsx("panel quick-panel", onboardingComplete && "is-compact")}>
+      <section className="panel quick-panel">
         <h2>{t.overview.quickStart}</h2>
         <div className="quick-steps">
           <QuickStep image={quickStep1Url} title={t.overview.quickConnectTitle} text={t.overview.quickConnectText} />
@@ -1286,7 +1298,7 @@ function AuditView({ t, events, tools, connections, filters, onFiltersChange, fi
             pageEvents.map((event) => (
               <button type="button" className="audit-row audit-button" key={event.id} onClick={() => onSelect(event)}>
                 <span>{new Date(event.timestamp).toLocaleString()}</span>
-                <span>{event.tool}</span>
+                <span>{toolDisplayName(t, event.tool)}</span>
                 <span>{event.connection_name ?? event.connection_id ?? "—"}</span>
                 <span>
                   <StatusPill tone={statusTone(event.status)} label={statusLabel(t, event.status)} />
@@ -1326,7 +1338,7 @@ function AuditView({ t, events, tools, connections, filters, onFiltersChange, fi
             <div className="audit-filter-grid">
               <label><span>{t.audit.from}</span><AuditDateField t={t} value={draftFilters.from} maxDate={draftTo} onChange={(from) => setDraftFilters({ ...draftFilters, from })} /></label>
               <label><span>{t.audit.to}</span><AuditDateField t={t} value={draftFilters.to} minDate={draftFrom} onChange={(to) => setDraftFilters({ ...draftFilters, to })} /></label>
-              <label><span>{t.audit.tool}</span><select value={draftFilters.tool} onChange={(event) => setDraftFilters({ ...draftFilters, tool: event.target.value })}><option value="">{t.audit.all}</option>{tools.map((tool) => <option key={tool.name} value={tool.name}>{tool.name}</option>)}</select></label>
+              <label><span>{t.audit.tool}</span><select value={draftFilters.tool} onChange={(event) => setDraftFilters({ ...draftFilters, tool: event.target.value })}><option value="">{t.audit.all}</option>{tools.map((tool) => <option key={tool.name} value={tool.name}>{toolDisplayName(t, tool.name)}</option>)}</select></label>
               <label><span>{t.audit.connection}</span><select value={draftFilters.connection} onChange={(event) => setDraftFilters({ ...draftFilters, connection: event.target.value })}><option value="">{t.audit.all}</option>{connections.map((connection) => <option key={connection.id} value={connection.id}>{connection.name}</option>)}</select></label>
               <label><span>{t.audit.status}</span><select value={draftFilters.status} onChange={(event) => setDraftFilters({ ...draftFilters, status: event.target.value })}><option value="">{t.audit.all}</option>{(["allowed", "denied", "error", "timeout", "truncated"] as AuditEvent["status"][]).map((status) => <option key={status} value={status}>{statusLabel(t, status)}</option>)}</select></label>
             </div>
@@ -1346,6 +1358,7 @@ function SettingsView({
   effectiveTheme,
   server,
   settings,
+  autoStartStatus,
   busy,
   tab,
   policySql,
@@ -1373,6 +1386,7 @@ function SettingsView({
   effectiveTheme: EffectiveTheme;
   server: ServerConfig;
   settings: SettingsConfig;
+  autoStartStatus: AppSnapshot["auto_start_status"];
   busy: boolean;
   tab: SettingsTab;
   policySql: string;
@@ -1389,7 +1403,7 @@ function SettingsView({
   onSqlChange: (sql: string) => void;
   onPolicyCheck: () => void;
   onSaveServer: (server: ServerConfig) => void;
-  onSaveSettings: (settings: SettingsConfig) => void;
+  onSaveSettings: (settings: SettingsConfig, applyAutoStart?: boolean) => void;
   onExportConnections: () => void;
   onImportConnections: () => void;
   onOpenProjectHomepage: () => void;
@@ -1477,6 +1491,17 @@ function SettingsView({
                   onChange={onThemeChange}
                 />
               </div>
+            </div>
+          </section>
+
+          <section className="panel">
+            <h2>{t.settings.startup}</h2>
+            <div className="form-grid settings-grid">
+              <SwitchField label={t.settings.autoStartMcp} checked={autoStartStatus === "enabled"} disabled={busy} onCheckedChange={(checked) => {
+                const next = { ...settingsDraft, auto_start_mcp: checked };
+                setSettingsDraft(next);
+                onSaveSettings(next, true);
+              }} />
             </div>
           </section>
 
@@ -2007,7 +2032,7 @@ function AuditDetailDialog({ t, event, onClose }: { t: I18nMessages; event: Audi
               <dl className="detail-grid">
                 <div>
                   <dt>{t.audit.tool}</dt>
-                  <dd>{event.tool}</dd>
+                  <dd>{toolDisplayName(t, event.tool)}</dd>
                 </div>
                 <div>
                   <dt>{t.audit.connection}</dt>
@@ -2147,7 +2172,7 @@ function EventList({ t, events, onSelect }: { t: I18nMessages; events: AuditEven
         <button type="button" className="event-item" key={event.id} onClick={() => onSelect?.(event)}>
           <span className={clsx("event-dot", statusTone(event.status))} />
           <time>{new Date(event.timestamp).toLocaleTimeString()}</time>
-          <span>{event.reason ?? event.tool}</span>
+          <span>{event.reason ?? toolDisplayName(t, event.tool)}</span>
           <StatusPill tone={statusTone(event.status)} label={statusLabel(t, event.status)} />
         </button>
       ))}
@@ -2303,6 +2328,8 @@ function viewTitle(t: I18nMessages, view: View) {
 
 function toolDisplayName(t: I18nMessages, name: string) {
   const names: Record<string, string> = t.tools.names;
+  if (name === "system.auto_start_mcp") return names.system_auto_start_mcp;
+  if (name === "system.start_mcp") return names.system_start_mcp;
   return names[name] ?? name;
 }
 

@@ -27,6 +27,7 @@ export interface SettingsConfig {
   audit_max_events: number;
   audit_redact_sql_literals: boolean;
   auto_check_updates: boolean;
+  auto_start_mcp: boolean;
   language: string;
 }
 
@@ -71,6 +72,8 @@ export interface AppSnapshot {
   audit_events: AuditEvent[];
   tools: McpToolInfo[];
   updater_enabled: boolean;
+  startup_error?: string | null;
+  auto_start_status: "enabled" | "disabled" | "requires_approval" | "unknown";
 }
 
 export interface McpToolInfo {

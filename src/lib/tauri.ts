@@ -56,6 +56,8 @@ const mockTools: McpToolInfo[] = [
 
 const mockSnapshot: AppSnapshot = {
   updater_enabled: false,
+  startup_error: null,
+  auto_start_status: "disabled",
   config: {
     version: 1,
     server: {
@@ -68,6 +70,7 @@ const mockSnapshot: AppSnapshot = {
       audit_max_events: 300,
       audit_redact_sql_literals: false,
       auto_check_updates: true,
+      auto_start_mcp: false,
       language: "zh-CN"
     },
     tools: mockTools.map(({ name, enabled }) => ({ name, enabled })),
@@ -139,9 +142,12 @@ async function command<T>(name: string, args?: Record<string, unknown>, fallback
   return invoke<T>(name, args);
 }
 
-function withSettings(settings: SettingsConfig): AppSnapshot {
+function withSettings(settings: SettingsConfig, applyAutoStart: boolean): AppSnapshot {
   return {
     ...mockSnapshot,
+    auto_start_status: applyAutoStart
+      ? (settings.auto_start_mcp ? "enabled" : "disabled")
+      : mockSnapshot.auto_start_status,
     config: {
       ...mockSnapshot.config,
       settings
@@ -198,8 +204,8 @@ export const api = {
   snapshot: () => command<AppSnapshot>("get_app_snapshot", undefined, mockSnapshot),
   saveServerConfig: (server: ServerConfig) =>
     command<AppSnapshot>("save_server_config", { server }, mockSnapshot),
-  saveSettingsConfig: (settings: SettingsConfig) =>
-    command<AppSnapshot>("save_settings_config", { settings }, withSettings(settings)),
+  saveSettingsConfig: (settings: SettingsConfig, applyAutoStart = false) =>
+    command<AppSnapshot>("save_settings_config", { settings, applyAutoStart }, withSettings(settings, applyAutoStart)),
   exportConnections: async (locale: Locale) => {
     if (!isTauri) {
       throw new Error(formatMessage(previewText.desktopOnly, { name: "export_connections" }));
