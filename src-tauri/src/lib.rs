@@ -165,6 +165,23 @@ pub fn run() {
                 .try_read()
                 .map(|config| config.settings.auto_start_mcp)
                 .unwrap_or(false);
+            // Reconcile the Run registry value with the persistent preference so
+            // that manual reinstalls (which force uninstall-then-install on
+            // Windows NSIS) do not leave the auto-start entry missing after
+            // upgrade. Windows-only: macOS login items are owned by
+            // launchd/SMAppService and are not affected by NSIS.
+            #[cfg(target_os = "windows")]
+            {
+                if configured {
+                    if let Err(error) = startup::enable() {
+                        eprintln!("failed to restore auto-start registry: {error}");
+                    }
+                } else {
+                    if let Err(error) = startup::disable() {
+                        eprintln!("failed to clear auto-start registry: {error}");
+                    }
+                }
+            }
             if configured && login_launch {
                 let app_handle = app.handle().clone();
                 let state_for_task = state.clone();
