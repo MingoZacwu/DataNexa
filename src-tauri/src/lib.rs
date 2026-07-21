@@ -9,15 +9,18 @@ mod startup;
 mod state;
 mod vault;
 
+#[cfg(feature = "updater")]
+mod updater;
+
 use std::sync::Arc;
 
 use commands::{
-    clear_audit_events, delete_connection, diagnose_connection, disable_all_connections,
-    export_connections, get_app_snapshot, hide_main_window, import_connections,
-    minimize_main_window, open_project_homepage, open_project_releases, policy_check,
-    rotate_server_token, save_server_config, save_settings_config, set_connection_enabled,
-    set_mcp_tool_enabled, start_mcp_server, start_window_drag, stop_mcp_server, test_connection,
-    test_connection_input, upsert_connection,
+    check_updates_if_due, clear_audit_events, delete_connection, diagnose_connection,
+    disable_all_connections, export_connections, get_app_snapshot, hide_main_window,
+    import_connections, minimize_main_window, open_project_homepage, open_project_releases,
+    policy_check, rotate_server_token, save_server_config, save_settings_config,
+    set_connection_enabled, set_mcp_tool_enabled, start_mcp_server, start_window_drag,
+    stop_mcp_server, test_connection, test_connection_input, upsert_connection,
 };
 use i18n::{backend_text, BackendText};
 use state::AppState;
@@ -191,6 +194,10 @@ pub fn run() {
             } else {
                 show_main_window(app.handle());
             }
+
+            #[cfg(feature = "updater")]
+            updater::spawn_updater_task(app.handle().clone());
+
             Ok(())
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -271,7 +278,8 @@ pub fn run() {
             start_window_drag,
             open_project_homepage,
             open_project_releases,
-            policy_check
+            policy_check,
+            check_updates_if_due
         ])
         .build(tauri::generate_context!())
         .expect("failed to build DataNexa")

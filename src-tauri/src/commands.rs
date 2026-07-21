@@ -818,9 +818,28 @@ pub fn start_window_drag(window: WebviewWindow) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn open_project_homepage() -> Result<(), String> {
+pub async fn open_project_homepage() -> Result<(), String> {
     tauri_plugin_opener::open_url("https://github.com/MingoZacwu/DataNexa", None::<&str>)
         .map_err(to_client_error)
+}
+
+/// Triggered by the front-end when the main window becomes visible.
+/// Performs an update check only if the 24h interval has elapsed since
+/// the last attempt. Returns `Some(version)` when an update is available.
+/// When the `updater` feature is disabled, this is a no-op returning `None`.
+#[tauri::command]
+pub async fn check_updates_if_due(app: AppHandle) -> Result<Option<String>, String> {
+    #[cfg(feature = "updater")]
+    {
+        crate::updater::check_if_due(app)
+            .await
+            .map_err(to_client_error)
+    }
+    #[cfg(not(feature = "updater"))]
+    {
+        let _ = app;
+        Ok(None)
+    }
 }
 
 #[tauri::command]
