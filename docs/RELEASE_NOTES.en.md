@@ -1,22 +1,16 @@
-# DataNexa v0.4.0
+# DataNexa v0.4.1
 
-[中文发布说明](https://github.com/MingoZacwu/DataNexa/blob/v0.4.0/RELEASE_NOTES.md)
+[中文发布说明](https://github.com/MingoZacwu/DataNexa/blob/v0.4.1/RELEASE_NOTES.md)
 
 ## Highlights
 
-- DataNexa and MCP can now start automatically at login, eliminating the need to start the service manually after each sign-in.
-- Application startup and MCP error reporting are now more reliable and easier to understand when running in the background.
+- Fixed an issue that could prevent daily automatic update checks from working.
+- On Windows, enabled login startup is restored after reinstalling or upgrading, so the app continues to start as configured.
 
-## Added
+## Fixed
 
-- Added a setting to start DataNexa and MCP at login on macOS and Windows.
-- When launched as a login item, DataNexa starts MCP in the background and remains accessible from the system tray.
-
-## Changes and Improvements
-
-- The main window now appears only after startup initialization completes, preventing a blank window or unintended flash during launch.
-- MCP startup failures, whether automatic or manual, are now surfaced in the app and system tray and recorded in the audit log.
-- The Windows uninstaller now removes DataNexa's login startup entry to prevent stale startup configuration after uninstalling.
+- Fixed automatic update checks potentially failing after the app moved to the background, the frontend reloaded, or the app restarted.
+- On Windows startup, the login startup entry is synchronized with the saved preference, fixing auto-start failures caused by reinstall flows.
 
 ## Installation Notes
 
