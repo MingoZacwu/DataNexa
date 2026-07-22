@@ -1,9 +1,8 @@
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
-
-const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const UPDATE_LAST_CHECK_STORAGE_KEY = "datanexa.updater.last-check";
 
 export type UpdateErrorPhase = "check" | "download" | "relaunch";
 
@@ -17,23 +16,17 @@ export type UpdateState =
   | { kind: "relaunching"; version: string }
   | { kind: "error"; phase: UpdateErrorPhase; version?: string };
 
-function readLastCheckAt() {
-  if (typeof window === "undefined") return null;
-  const value = Number(window.localStorage.getItem(UPDATE_LAST_CHECK_STORAGE_KEY));
-  return Number.isFinite(value) && value > 0 ? value : null;
-}
+type UpdateAvailablePayload = {
+  version: string;
+  current_version: string;
+};
+
+const UPDATE_AVAILABLE_EVENT = "updater://available";
 
 export function useAppUpdater(enabled: boolean | null, autoCheck: boolean) {
   const [state, setState] = useState<UpdateState>({ kind: "idle" });
-  const [lastCheckAt, setLastCheckAt] = useState<number | null>(readLastCheckAt);
   const updateRef = useRef<Update | null>(null);
   const busyRef = useRef(false);
-
-  const recordCheckAttempt = useCallback(() => {
-    const checkedAt = Date.now();
-    window.localStorage.setItem(UPDATE_LAST_CHECK_STORAGE_KEY, String(checkedAt));
-    setLastCheckAt(checkedAt);
-  }, []);
 
   const checkForUpdates = useCallback(async () => {
     if (!enabled) {
@@ -55,10 +48,9 @@ export function useAppUpdater(enabled: boolean | null, autoCheck: boolean) {
     } catch {
       setState({ kind: "error", phase: "check" });
     } finally {
-      recordCheckAttempt();
       busyRef.current = false;
     }
-  }, [enabled, recordCheckAttempt]);
+  }, [enabled]);
 
   const installUpdate = useCallback(async () => {
     const update = updateRef.current;
@@ -109,17 +101,64 @@ export function useAppUpdater(enabled: boolean | null, autoCheck: boolean) {
     setState((current) => current.kind === "disabled" ? { kind: "idle" } : current);
   }, [enabled]);
 
+  // Background updater notification: the Rust task emits this event when it
+  // detects a newer version. Fetch the Update object so installUpdate can use
+  // it directly without an extra round-trip on user click.
   useEffect(() => {
-    if (!enabled || !autoCheck) return;
+    if (enabled !== true) return;
+    let unlisten: UnlistenFn | undefined;
+    let cancelled = false;
 
-    const elapsed = lastCheckAt ? Date.now() - lastCheckAt : UPDATE_CHECK_INTERVAL_MS;
-    const delay = Math.max(0, UPDATE_CHECK_INTERVAL_MS - elapsed);
-    const timer = window.setTimeout(() => {
-      void checkForUpdates();
-    }, delay);
+    void (async () => {
+      try {
+        unlisten = await listen<UpdateAvailablePayload>(UPDATE_AVAILABLE_EVENT, () => {
+          void checkForUpdates();
+        });
+        if (cancelled) {
+          unlisten();
+          unlisten = undefined;
+        }
+      } catch {
+        // Listening is best-effort; the user can still trigger a manual check.
+      }
+    })();
 
-    return () => window.clearTimeout(timer);
-  }, [autoCheck, checkForUpdates, enabled, lastCheckAt]);
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [checkForUpdates, enabled]);
+
+  // Foreground fallback: when the main window becomes visible (or on mount),
+  // ask the backend whether the 24h interval has elapsed. This is not a
+  // background task — it only runs while the window is shown to the user.
+  useEffect(() => {
+    if (enabled !== true || !autoCheck) return;
+    if (typeof document === "undefined") return;
+
+    const performDueCheck = () => {
+      void invoke<string | null>("check_updates_if_due")
+        .then((version) => {
+          if (version) {
+            void checkForUpdates();
+          }
+        })
+        .catch(() => undefined);
+    };
+
+    // Run once on mount to cover the startup case (visibilitychange does not
+    // fire when the window is already visible at load time).
+    performDueCheck();
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        performDueCheck();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [autoCheck, checkForUpdates, enabled]);
 
   return {
     state,
