@@ -146,7 +146,7 @@ async fn start_locked(app: Arc<AppState>) -> anyhow::Result<ServerStatus> {
     let config = ensure_server_token(&app).await?;
     if !is_local_host(&config.host) {
         return Err(anyhow::anyhow!(
-            "DataNexa v1 only allows localhost MCP binding."
+            "The MCP listen address must be 127.0.0.1 or localhost."
         ));
     }
 

@@ -128,6 +128,10 @@ textarea:focus-visible,
   mask-image: linear-gradient(to bottom, black, transparent 88%);
 }
 
+:root[data-platform="macos"] .ambient-grid {
+  inset: 0;
+}
+
 :root.dark .ambient-grid {
   opacity: 0.38;
   background-image:

@@ -152,6 +152,7 @@ const defaultConnection = (name: string): ConnectionConfig => ({
 });
 
 function App() {
+  const isMacos = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent);
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
   const [activeView, setActiveView] = useState<View>("overview");
   const [editing, setEditing] = useState<ConnectionConfig | null>(null);
@@ -468,13 +469,16 @@ function App() {
     }
   }
 
-  async function saveServer(server: ServerConfig) {
+  async function saveServer(server: ServerConfig): Promise<boolean> {
     setBusy(true);
     try {
       setSnapshot(await api.saveServerConfig(server));
       pushToast(t.toast.serverSaved, "info");
+      return true;
     } catch (error) {
       showError(error);
+      await refresh({ quiet: true });
+      return false;
     } finally {
       setBusy(false);
     }
@@ -579,7 +583,7 @@ function App() {
     <Tooltip.Provider delayDuration={180}>
       <div className="app-shell">
         <div className="ambient-grid" aria-hidden="true" />
-        <WindowChrome t={t} />
+        {!isMacos && <WindowChrome t={t} />}
 
         <div className="app-body">
           <aside className="sidebar">
@@ -1528,7 +1532,7 @@ function SettingsView({
   onPolicyKindChange: (kind: DatabaseType) => void;
   onSqlChange: (sql: string) => void;
   onPolicyCheck: () => void;
-  onSaveServer: (server: ServerConfig) => void;
+  onSaveServer: (server: ServerConfig) => Promise<boolean>;
   onSaveSettings: (settings: SettingsConfig, applyAutoStart?: boolean) => void;
   onExportConnections: () => void;
   onImportConnections: () => void;
@@ -1536,12 +1540,40 @@ function SettingsView({
 }) {
   const [serverDraft, setServerDraft] = useState(server);
   const [settingsDraft, setSettingsDraft] = useState(settings);
+  const [serverPortDraft, setServerPortDraft] = useState(String(server.port));
+  const [auditMaxEventsDraft, setAuditMaxEventsDraft] = useState(String(settings.audit_max_events));
+  const serverDraftDirty = useRef(false);
+  const settingsDraftDirty = useRef(false);
   const [policyDialogOpen, setPolicyDialogOpen] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [exportAcknowledged, setExportAcknowledged] = useState(false);
 
-  useEffect(() => setServerDraft(server), [server]);
-  useEffect(() => setSettingsDraft(settings), [settings]);
+  useEffect(() => {
+    setServerDraft((current) => {
+      if (!serverDraftDirty.current) return server;
+      const saved = current.host === server.host
+        && current.port === server.port
+        && current.require_token === server.require_token;
+      if (saved) serverDraftDirty.current = false;
+      if (saved) setServerPortDraft(String(server.port));
+      return saved ? server : current;
+    });
+    if (!serverDraftDirty.current) setServerPortDraft(String(server.port));
+  }, [server]);
+  useEffect(() => {
+    setSettingsDraft((current) => {
+      if (!settingsDraftDirty.current) return settings;
+      const saved = current.audit_max_events === settings.audit_max_events
+        && current.audit_redact_sql_literals === settings.audit_redact_sql_literals
+        && current.auto_check_updates === settings.auto_check_updates
+        && current.auto_start_mcp === settings.auto_start_mcp
+        && current.language === settings.language;
+      if (saved) settingsDraftDirty.current = false;
+      if (saved) setAuditMaxEventsDraft(String(settings.audit_max_events));
+      return saved ? settings : current;
+    });
+    if (!settingsDraftDirty.current) setAuditMaxEventsDraft(String(settings.audit_max_events));
+  }, [settings]);
   useEffect(() => {
     setSettingsDraft((current) => ({ ...current, language: locale }));
   }, [locale]);
@@ -1565,20 +1597,45 @@ function SettingsView({
               <Field label={t.settings.listenHost}>
                 <input
                   value={serverDraft.host}
-                  onChange={(event) => setServerDraft({ ...serverDraft, host: event.target.value })}
-                  onBlur={(event) => onSaveServer({ ...serverDraft, host: event.currentTarget.value })}
+                  onChange={(event) => {
+                    serverDraftDirty.current = true;
+                    setServerDraft({ ...serverDraft, host: event.target.value });
+                  }}
+                  onBlur={async (event) => {
+                    const saved = await onSaveServer({ ...serverDraft, host: event.currentTarget.value });
+                    if (!saved) {
+                      serverDraftDirty.current = false;
+                      setServerDraft(server);
+                      setServerPortDraft(String(server.port));
+                    }
+                  }}
                 />
               </Field>
               <Field label={t.settings.port}>
                 <input
                   type="number"
-                  value={serverDraft.port}
-                  onChange={(event) => setServerDraft({ ...serverDraft, port: Number(event.target.value) })}
-                  onBlur={(event) => onSaveServer({ ...serverDraft, port: Number(event.currentTarget.value) })}
+                  value={serverPortDraft}
+                  onChange={(event) => {
+                    serverDraftDirty.current = true;
+                    setServerPortDraft(event.target.value);
+                    setServerDraft({ ...serverDraft, port: Number(event.target.value) || 0 });
+                  }}
+                  onBlur={async (event) => {
+                    const port = Math.max(1, Math.min(65535, Number(event.currentTarget.value) || server.port));
+                    setServerPortDraft(String(port));
+                    setServerDraft((current) => ({ ...current, port }));
+                    const saved = await onSaveServer({ ...serverDraft, port });
+                    if (!saved) {
+                      serverDraftDirty.current = false;
+                      setServerDraft(server);
+                      setServerPortDraft(String(server.port));
+                    }
+                  }}
                 />
               </Field>
               <SwitchField label={t.settings.requireBearer} checked={serverDraft.require_token} disabled={busy} onCheckedChange={(checked) => {
                 const next = { ...serverDraft, require_token: checked };
+                serverDraftDirty.current = true;
                 setServerDraft(next);
                 onSaveServer(next);
               }} />
@@ -1594,6 +1651,7 @@ function SettingsView({
                   onChange={(event) => {
                     const language = normalizeLocale(event.target.value);
                     const next = { ...settingsDraft, language };
+                    settingsDraftDirty.current = true;
                     setSettingsDraft(next);
                     onSaveSettings(next);
                   }}
@@ -1625,6 +1683,7 @@ function SettingsView({
             <div className="form-grid settings-grid">
               <SwitchField label={t.settings.autoStartMcp} checked={autoStartStatus === "enabled"} disabled={busy} onCheckedChange={(checked) => {
                 const next = { ...settingsDraft, auto_start_mcp: checked };
+                settingsDraftDirty.current = true;
                 setSettingsDraft(next);
                 onSaveSettings(next, true);
               }} />
@@ -1639,13 +1698,23 @@ function SettingsView({
                   type="number"
                   min={1}
                   max={5000}
-                  value={settingsDraft.audit_max_events}
-                  onChange={(event) => setSettingsDraft({ ...settingsDraft, audit_max_events: Number(event.target.value) })}
-                  onBlur={(event) => onSaveSettings({ ...settingsDraft, audit_max_events: Number(event.currentTarget.value) })}
+                  value={auditMaxEventsDraft}
+                  onChange={(event) => {
+                    settingsDraftDirty.current = true;
+                    setAuditMaxEventsDraft(event.target.value);
+                    setSettingsDraft({ ...settingsDraft, audit_max_events: Number(event.target.value) || 0 });
+                  }}
+                  onBlur={(event) => {
+                    const auditMaxEvents = Math.max(1, Math.min(5000, Number(event.currentTarget.value) || settings.audit_max_events));
+                    setAuditMaxEventsDraft(String(auditMaxEvents));
+                    setSettingsDraft((current) => ({ ...current, audit_max_events: auditMaxEvents }));
+                    onSaveSettings({ ...settingsDraft, audit_max_events: auditMaxEvents });
+                  }}
                 />
               </Field>
               <SwitchField label={t.settings.auditRedactSql} checked={settingsDraft.audit_redact_sql_literals} disabled={busy} onCheckedChange={(checked) => {
                 const next = { ...settingsDraft, audit_redact_sql_literals: checked };
+                settingsDraftDirty.current = true;
                 setSettingsDraft(next);
                 onSaveSettings(next);
               }} />
@@ -1813,6 +1882,7 @@ function SettingsView({
               autoCheckUpdates={settingsDraft.auto_check_updates}
               onAutoCheckUpdatesChange={(checked) => {
                 const next = { ...settingsDraft, auto_check_updates: checked };
+                settingsDraftDirty.current = true;
                 setSettingsDraft(next);
                 onSaveSettings(next);
               }}

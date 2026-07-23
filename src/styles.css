@@ -95,6 +95,10 @@ p {
   overflow: hidden;
 }
 
+:root[data-platform="macos"] .app-shell {
+  grid-template-rows: minmax(0, 1fr);
+}
+
 .window-chrome {
   display: flex;
   align-items: center;
@@ -185,6 +189,16 @@ p {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+:root[data-platform="macos"] .sidebar {
+  height: 100vh;
+  padding-top: 40px;
+}
+
+:root[data-platform="macos"] .workspace {
+  height: 100vh;
+  padding-top: 38px;
 }
 
 :root.dark .sidebar {
