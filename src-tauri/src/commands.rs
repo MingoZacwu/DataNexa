@@ -13,7 +13,8 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::audit::AuditStatus;
 use crate::config::{
-    default_port, is_known_tool, AppConfig, ConnectionConfig, DbKind, ServerConfig, SettingsConfig,
+    default_max_result_bytes, default_port, is_known_tool, AppConfig, ConnectionConfig, DbKind,
+    ServerConfig, SettingsConfig,
 };
 use crate::db::ConnectionDiagnostics;
 use crate::i18n::{backend_text, BackendText, ConnectionDiagnosticText};
@@ -33,6 +34,7 @@ pub struct AppSnapshot {
     pub updater_enabled: bool,
     pub startup_error: Option<String>,
     pub auto_start_status: startup::AutoStartStatus,
+    pub audit_migration: crate::audit::AuditMigrationState,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -72,6 +74,8 @@ struct PortableConnection {
     max_rows: u32,
     query_timeout_ms: u64,
     max_connections: u32,
+    #[serde(default = "default_max_result_bytes")]
+    max_result_bytes: usize,
 }
 
 impl Drop for PortableConnection {
@@ -89,7 +93,7 @@ pub struct ImportConnectionsResult {
 }
 
 const CONNECTION_TRANSFER_FORMAT: &str = "datanexa-connections";
-const CONNECTION_TRANSFER_VERSION: u16 = 1;
+const CONNECTION_TRANSFER_VERSION: u16 = 2;
 const MAX_CONNECTION_IMPORT_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_CONNECTION_IMPORT_COUNT: usize = 1000;
 
@@ -172,6 +176,7 @@ pub async fn save_settings_config(
         text,
         mcp_running,
         state.mcp.read().await.startup_error.is_some(),
+        state.audit.is_ready().await,
     )
     .map_err(to_client_error)?;
 
@@ -218,6 +223,7 @@ pub async fn export_connections(
             max_rows: connection.max_rows,
             query_timeout_ms: connection.query_timeout_ms,
             max_connections: connection.max_connections,
+            max_result_bytes: connection.max_result_bytes,
         });
     }
 
@@ -250,9 +256,7 @@ pub async fn import_connections(
     let contents = Zeroizing::new(fs::read(path).map_err(to_client_error)?);
     let mut transfer: ConnectionTransferFile =
         serde_json::from_slice(contents.as_slice()).map_err(to_client_error)?;
-    if transfer.format != CONNECTION_TRANSFER_FORMAT
-        || transfer.version != CONNECTION_TRANSFER_VERSION
-    {
+    if transfer.format != CONNECTION_TRANSFER_FORMAT || !matches!(transfer.version, 1 | 2) {
         return Err("Unsupported DataNexa connection import file.".to_string());
     }
     if transfer.connections.len() > MAX_CONNECTION_IMPORT_COUNT {
@@ -294,6 +298,7 @@ pub async fn import_connections(
             max_rows: portable.max_rows,
             query_timeout_ms: portable.query_timeout_ms,
             max_connections: portable.max_connections,
+            max_result_bytes: portable.max_result_bytes,
         };
         validate_connection(&connection, &text).map_err(to_client_error)?;
         candidate.connections.push(normalize_connection(connection));
@@ -580,10 +585,54 @@ pub async fn clear_audit_events(state: State<'_, Arc<AppState>>) -> Result<AppSn
 }
 
 #[tauri::command]
+pub async fn retry_audit_migration(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<AppSnapshot, String> {
+    if !matches!(
+        state.audit.migration_state().await,
+        crate::audit::AuditMigrationState::Failed { .. }
+    ) {
+        return Err("Audit log migration can only be retried after a failure.".to_string());
+    }
+    let max_events = state.config.read().await.settings.audit_max_events;
+    state
+        .audit
+        .retry(max_events)
+        .await
+        .map_err(to_client_error)?;
+    let language = state.config.read().await.settings.language.clone();
+    refresh_tray_menu(&app, backend_text(&language), false, false, true)
+        .map_err(to_client_error)?;
+    snapshot(state.inner()).await.map_err(to_client_error)
+}
+
+#[tauri::command]
+pub async fn clear_legacy_audit_log(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<AppSnapshot, String> {
+    if !matches!(
+        state.audit.migration_state().await,
+        crate::audit::AuditMigrationState::Failed { .. }
+    ) {
+        return Err("Legacy audit logs can only be cleared after migration fails.".to_string());
+    }
+    state.audit.clear_legacy().await.map_err(to_client_error)?;
+    let language = state.config.read().await.settings.language.clone();
+    refresh_tray_menu(&app, backend_text(&language), false, false, true)
+        .map_err(to_client_error)?;
+    snapshot(state.inner()).await.map_err(to_client_error)
+}
+
+#[tauri::command]
 pub async fn test_connection(
     state: State<'_, Arc<AppState>>,
     id: String,
 ) -> Result<String, String> {
+    if !state.audit.is_ready().await {
+        return Err("audit migration is not ready".to_string());
+    }
     let _config_transaction = state.config_transaction.read().await;
     let text = text_for_state(state.inner()).await;
     let connection = find_connection(state.inner(), &id)
@@ -657,6 +706,9 @@ pub async fn test_connection_input(
     state: State<'_, Arc<AppState>>,
     input: ConnectionInput,
 ) -> Result<String, String> {
+    if !state.audit.is_ready().await {
+        return Err("audit migration is not ready".to_string());
+    }
     let _config_transaction = state.config_transaction.read().await;
     let text = text_for_state(state.inner()).await;
     validate_connection(&input.connection, &text).map_err(to_client_error)?;
@@ -763,7 +815,7 @@ pub async fn start_mcp_server(
         return Err(reason);
     }
     let text = text_for_state(state.inner()).await;
-    refresh_tray_menu(&app, text, true, false).map_err(to_client_error)?;
+    refresh_tray_menu(&app, text, true, false, true).map_err(to_client_error)?;
     snapshot(state.inner()).await.map_err(to_client_error)
 }
 
@@ -774,7 +826,8 @@ pub async fn stop_mcp_server(
 ) -> Result<AppSnapshot, String> {
     mcp::stop(state.inner().clone()).await;
     let text = text_for_state(state.inner()).await;
-    refresh_tray_menu(&app, text, false, false).map_err(to_client_error)?;
+    refresh_tray_menu(&app, text, false, false, state.audit.is_ready().await)
+        .map_err(to_client_error)?;
     snapshot(state.inner()).await.map_err(to_client_error)
 }
 
@@ -853,14 +906,23 @@ pub fn open_project_releases() -> Result<(), String> {
 
 async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
     let config = state.config.read().await.clone();
-    state.audit.trim(config.settings.audit_max_events).await?;
+    let audit_ready = state.audit.is_ready().await;
+    if audit_ready {
+        state.audit.trim(config.settings.audit_max_events).await?;
+    }
+    let audit_events = if audit_ready {
+        state.audit.list().await?
+    } else {
+        Vec::new()
+    };
     Ok(AppSnapshot {
         server_status: mcp::status(state).await,
-        audit_events: state.audit.list().await,
+        audit_events,
         tools: mcp::tool_infos(&config.tools),
         updater_enabled: cfg!(feature = "updater"),
         startup_error: state.mcp.read().await.startup_error.clone(),
         auto_start_status: startup::status(),
+        audit_migration: state.audit.migration_state().await,
         config,
     })
 }
@@ -1028,6 +1090,10 @@ fn normalize_connection(mut connection: ConnectionConfig) -> ConnectionConfig {
     connection.max_rows = connection.max_rows.clamp(1, 5000);
     connection.query_timeout_ms = connection.query_timeout_ms.clamp(500, 60000);
     connection.max_connections = connection.max_connections.clamp(1, 3);
+    connection.max_result_bytes = connection.max_result_bytes.clamp(
+        crate::config::MIN_RESULT_BYTES,
+        crate::config::MAX_RESULT_BYTES,
+    );
 
     if connection.kind == DbKind::Sqlite {
         connection.host = None;
@@ -1210,6 +1276,7 @@ mod tests {
             max_rows: 100,
             query_timeout_ms: 1_000,
             max_connections: 1,
+            max_result_bytes: default_max_result_bytes(),
         });
         config
             .normalize_and_validate()

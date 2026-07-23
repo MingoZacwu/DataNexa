@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{uri::Authority, HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
@@ -10,7 +12,7 @@ use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Mutex, Semaphore};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -51,6 +53,47 @@ pub struct McpToolInfo {
 #[derive(Clone)]
 struct McpHttpState {
     app: Arc<AppState>,
+    tool_concurrency: Arc<Semaphore>,
+    connection_concurrency: ConnectionConcurrency,
+    rate_limit: Arc<Mutex<ToolRateLimit>>,
+}
+
+type ConnectionConcurrency = Arc<Mutex<HashMap<String, (u32, Arc<Semaphore>)>>>;
+
+const TOOL_CONCURRENCY_LIMIT: usize = 8;
+const TOOL_CONCURRENCY_WAIT: Duration = Duration::from_secs(2);
+const TOOL_RATE_PER_SECOND: f64 = 2.0;
+const TOOL_RATE_BURST: f64 = 20.0;
+const MAX_MCP_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_MCP_RESULT_BYTES: usize = MAX_MCP_RESPONSE_BYTES - 64 * 1024;
+const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
+const SUPPORTED_PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", LATEST_PROTOCOL_VERSION];
+
+struct ToolRateLimit {
+    tokens: f64,
+    updated_at: Instant,
+}
+
+impl ToolRateLimit {
+    fn new() -> Self {
+        Self {
+            tokens: TOOL_RATE_BURST,
+            updated_at: Instant::now(),
+        }
+    }
+
+    fn try_acquire(&mut self) -> bool {
+        let now = Instant::now();
+        self.tokens = (self.tokens
+            + now.duration_since(self.updated_at).as_secs_f64() * TOOL_RATE_PER_SECOND)
+            .min(TOOL_RATE_BURST);
+        self.updated_at = now;
+        if self.tokens < 1.0 {
+            return false;
+        }
+        self.tokens -= 1.0;
+        true
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,6 +129,11 @@ pub async fn status(app: &Arc<AppState>) -> ServerStatus {
 }
 
 pub async fn start(app: Arc<AppState>) -> anyhow::Result<ServerStatus> {
+    if !app.audit.is_ready().await {
+        return Err(anyhow::anyhow!(
+            "Audit log migration must finish before the MCP server can start."
+        ));
+    }
     let _lifecycle = app.mcp_lifecycle.lock().await;
     let result = start_locked(app.clone()).await;
     if result.is_ok() {
@@ -153,9 +201,15 @@ async fn activate_listener(
 }
 
 fn mcp_router(app: Arc<AppState>) -> Router {
+    let state = McpHttpState {
+        app,
+        tool_concurrency: Arc::new(Semaphore::new(TOOL_CONCURRENCY_LIMIT)),
+        connection_concurrency: Arc::new(Mutex::new(HashMap::new())),
+        rate_limit: Arc::new(Mutex::new(ToolRateLimit::new())),
+    };
     Router::new()
         .route("/mcp", get(handle_mcp_get).post(handle_mcp_post))
-        .with_state(McpHttpState { app })
+        .with_state(state)
 }
 
 pub async fn stop(app: Arc<AppState>) -> ServerStatus {
@@ -317,7 +371,7 @@ async fn ensure_server_token(app: &Arc<AppState>) -> anyhow::Result<ServerConfig
 }
 
 async fn handle_mcp_get(State(state): State<McpHttpState>, headers: HeaderMap) -> Response {
-    match validate_request(state.app.clone(), headers).await {
+    match validate_request(state.app.clone(), &headers).await {
         Ok(()) => (
             StatusCode::METHOD_NOT_ALLOWED,
             "MCP GET streaming is not enabled",
@@ -330,11 +384,26 @@ async fn handle_mcp_get(State(state): State<McpHttpState>, headers: HeaderMap) -
 async fn handle_mcp_post(
     State(state): State<McpHttpState>,
     headers: HeaderMap,
-    Json(request): Json<JsonRpcRequest>,
+    body: Bytes,
 ) -> Response {
-    if let Err(response) = validate_request(state.app.clone(), headers).await {
+    if let Err(response) = validate_request(state.app.clone(), &headers).await {
         return response;
     }
+    if let Err(response) = validate_transport_headers(&headers) {
+        return response;
+    }
+
+    let value = match serde_json::from_slice::<Value>(&body) {
+        Ok(value) => value,
+        Err(_) => return rpc_error(Value::Null, -32700, "Parse error"),
+    };
+    if !value.is_object() {
+        return rpc_error(Value::Null, -32600, "Invalid Request");
+    }
+    let request = match serde_json::from_value::<JsonRpcRequest>(value) {
+        Ok(request) => request,
+        Err(_) => return rpc_error(Value::Null, -32600, "Invalid Request"),
+    };
 
     let (notification, id) = match request.id {
         RpcId::Missing => (true, Value::Null),
@@ -343,41 +412,31 @@ async fn handle_mcp_post(
     if request.jsonrpc != "2.0" {
         return rpc_error(id, -32600, "jsonrpc must be exactly 2.0");
     }
+    if request.method != "initialize" {
+        if let Err(response) = validate_protocol_header(&headers) {
+            return response;
+        }
+    }
 
-    let (result, error_code) = match request.method.as_str() {
-        "initialize" => (
-            Ok(json!({
-                "protocolVersion": negotiated_protocol_version(request.params.as_ref()),
-                "serverInfo": {
-                    "name": "datanexa",
-                    "version": env!("CARGO_PKG_VERSION")
-                },
-                "capabilities": {
-                    "tools": {}
-                }
-            })),
-            -32000,
-        ),
-        "notifications/initialized" => (Ok(Value::Null), -32000),
+    let result: Result<Value, (i32, String)> = match request.method.as_str() {
+        "initialize" => Ok(json!({
+            "protocolVersion": negotiated_protocol_version(request.params.as_ref()),
+            "serverInfo": {
+                "name": "datanexa",
+                "version": env!("CARGO_PKG_VERSION")
+            },
+            "capabilities": {
+                "tools": {}
+            }
+        })),
+        "notifications/initialized" => Ok(Value::Null),
+        "ping" => Ok(json!({})),
         "tools/list" => {
             let config = state.app.config.read().await;
-            (Ok(json!({ "tools": tools(&config.tools) })), -32000)
+            Ok(json!({ "tools": tools(&config.tools) }))
         }
-        "tools/call" => (
-            call_tool_audited(
-                state.app.clone(),
-                request.params.unwrap_or_else(|| json!({})),
-            )
-            .await,
-            -32000,
-        ),
-        _ => (
-            Err(anyhow::anyhow!(
-                "unsupported MCP method: {}",
-                request.method
-            )),
-            -32601,
-        ),
+        "tools/call" => handle_tool_call(&state, request.params).await,
+        _ => Err((-32601, "Method not found".to_string())),
     };
 
     if notification {
@@ -391,12 +450,12 @@ async fn handle_mcp_post(
             "result": value
         }))
         .into_response(),
-        Err(error) => Json(json!({
+        Err((code, message)) => Json(json!({
             "jsonrpc": "2.0",
             "id": id,
             "error": {
-                "code": error_code,
-                "message": sanitize_error(&error)
+                "code": code,
+                "message": message
             }
         }))
         .into_response(),
@@ -413,20 +472,66 @@ fn rpc_error(id: Value, code: i32, message: &str) -> Response {
 }
 
 fn negotiated_protocol_version(params: Option<&Value>) -> &'static str {
-    const LATEST: &str = "2025-11-25";
-    const SUPPORTED: [&str; 4] = ["2024-11-05", "2025-03-26", "2025-06-18", LATEST];
     params
         .and_then(|params| params.get("protocolVersion"))
         .and_then(Value::as_str)
         .and_then(|version| {
-            SUPPORTED
+            SUPPORTED_PROTOCOL_VERSIONS
                 .into_iter()
                 .find(|supported| *supported == version)
         })
-        .unwrap_or(LATEST)
+        .unwrap_or(LATEST_PROTOCOL_VERSION)
 }
 
-async fn validate_request(app: Arc<AppState>, headers: HeaderMap) -> Result<(), Response> {
+#[allow(clippy::result_large_err)]
+fn validate_transport_headers(headers: &HeaderMap) -> Result<(), Response> {
+    let content_type = headers
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if !content_type
+        .split(';')
+        .next()
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/json"))
+    {
+        return Err((
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "Content-Type must be application/json",
+        )
+            .into_response());
+    }
+    let accept = headers
+        .get("accept")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !(accept.contains("application/json") && accept.contains("text/event-stream")) {
+        return Err((
+            StatusCode::NOT_ACCEPTABLE,
+            "Accept must include application/json and text/event-stream",
+        )
+            .into_response());
+    }
+    Ok(())
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_protocol_header(headers: &HeaderMap) -> Result<(), Response> {
+    let version = headers
+        .get("mcp-protocol-version")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if !SUPPORTED_PROTOCOL_VERSIONS.contains(&version) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Missing or unsupported MCP-Protocol-Version",
+        )
+            .into_response());
+    }
+    Ok(())
+}
+
+async fn validate_request(app: Arc<AppState>, headers: &HeaderMap) -> Result<(), Response> {
     let config = {
         let config = app.config.read().await;
         config.server.clone()
@@ -466,6 +571,120 @@ async fn validate_request(app: Arc<AppState>, headers: HeaderMap) -> Result<(), 
     }
 
     Ok(())
+}
+
+async fn handle_tool_call(
+    state: &McpHttpState,
+    params: Option<Value>,
+) -> Result<Value, (i32, String)> {
+    let params = params.unwrap_or_else(|| json!({}));
+    let Some(params_object) = params.as_object() else {
+        return Err((-32602, "tools/call params must be an object".to_string()));
+    };
+    if params_object.get("name").and_then(Value::as_str).is_none() {
+        return Err((-32602, "tools/call requires a tool name".to_string()));
+    }
+    if params_object
+        .get("arguments")
+        .is_some_and(|arguments| !arguments.is_object())
+    {
+        return Err((-32602, "tools/call arguments must be an object".to_string()));
+    }
+
+    if !state.rate_limit.lock().await.try_acquire() {
+        return Err((-32000, "tools/call rate limit exceeded".to_string()));
+    }
+
+    let global_permit = tokio::time::timeout(
+        TOOL_CONCURRENCY_WAIT,
+        state.tool_concurrency.clone().acquire_owned(),
+    )
+    .await
+    .map_err(|_| (-32000, "tools/call concurrency limit exceeded".to_string()))?
+    .map_err(|_| {
+        (
+            -32603,
+            "MCP concurrency controller is unavailable".to_string(),
+        )
+    })?;
+
+    let connection_id = params_object
+        .get("arguments")
+        .and_then(|arguments| arguments.get("connection_id"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let connection_limit = if let Some(connection_id) = connection_id {
+        state
+            .app
+            .config
+            .read()
+            .await
+            .connections
+            .iter()
+            .find(|connection| connection.id == connection_id)
+            .map(|connection| (connection_id, connection.max_connections.clamp(1, 3)))
+    } else {
+        None
+    };
+    let connection_permit = if let Some((connection_id, max_connections)) = connection_limit {
+        let semaphore = {
+            let mut limits = state.connection_concurrency.lock().await;
+            let entry = limits.entry(connection_id).or_insert_with(|| {
+                (
+                    max_connections,
+                    Arc::new(Semaphore::new(max_connections as usize)),
+                )
+            });
+            if entry.0 != max_connections {
+                *entry = (
+                    max_connections,
+                    Arc::new(Semaphore::new(max_connections as usize)),
+                );
+            }
+            entry.1.clone()
+        };
+        Some(
+            tokio::time::timeout(TOOL_CONCURRENCY_WAIT, semaphore.acquire_owned())
+                .await
+                .map_err(|_| (-32000, "connection concurrency limit exceeded".to_string()))?
+                .map_err(|_| {
+                    (
+                        -32603,
+                        "connection concurrency controller is unavailable".to_string(),
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
+
+    let call_result = call_tool_audited(state.app.clone(), params).await;
+    drop(connection_permit);
+    drop(global_permit);
+
+    let result = match call_result {
+        Ok(value) => value,
+        Err(error) if sanitize_error(&error).starts_with("audit storage unavailable:") => {
+            return Err((-32603, sanitize_error(&error)));
+        }
+        Err(error) => tool_error_result(&sanitize_error(&error)),
+    };
+    if serde_json::to_vec(&result)
+        .map(|encoded| encoded.len() > MAX_MCP_RESULT_BYTES)
+        .unwrap_or(true)
+    {
+        return Ok(tool_error_result(
+            "tool response exceeds the 16 MiB MCP safety limit",
+        ));
+    }
+    Ok(result)
+}
+
+fn tool_error_result(message: &str) -> Value {
+    json!({
+        "content": [{ "type": "text", "text": message }],
+        "isError": true
+    })
 }
 
 pub fn tool_infos(tool_configs: &[ToolConfig]) -> Vec<McpToolInfo> {
@@ -1016,7 +1235,8 @@ fn public_connection(connection: &ConnectionConfig) -> Value {
         "type": db_kind(&connection.kind),
         "enabled": connection.enabled,
         "max_rows": connection.max_rows,
-        "query_timeout_ms": connection.query_timeout_ms
+        "query_timeout_ms": connection.query_timeout_ms,
+        "max_result_bytes": connection.max_result_bytes
     })
 }
 
@@ -1140,6 +1360,8 @@ mod tests {
             .header("host", "127.0.0.1:17321")
             .header("authorization", "Bearer TEST_TOKEN")
             .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("mcp-protocol-version", LATEST_PROTOCOL_VERSION)
             .body(Body::from(body.to_string()))
             .expect("request builds")
     }
@@ -1417,11 +1639,15 @@ mod tests {
             })))
             .await
             .expect("disabled tool response");
-        assert!(response_json(disabled).await.get("error").is_some());
+        assert_eq!(
+            response_json(disabled).await.pointer("/result/isError"),
+            Some(&Value::Bool(true))
+        );
         assert!(state
             .audit
             .list()
             .await
+            .expect("audit events load")
             .iter()
             .any(|event| matches!(event.status, AuditStatus::Denied)));
     }

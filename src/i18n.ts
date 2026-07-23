@@ -45,6 +45,21 @@ const zhCN = {
     lightMode: "浅色模式",
     toggleTheme: "切换深浅色"
   },
+  auditMigration: {
+    migratingTitle: "正在迁移审计日志",
+    preparing: "正在准备新的审计存储",
+    progress: "已迁移 {processed} / {total} 条",
+    finishing: "正在完成迁移",
+    failedTitle: "审计日志迁移失败",
+    failedCompact: "点击查看并恢复",
+    dialogDescription: "DataNexa 需要将旧版审计日志迁移到新的 SQLite 存储。为确保数据库操作全程可审计，迁移完成前 MCP 服务将暂不可用。",
+    errorReason: "错误原因",
+    retry: "重试",
+    clear: "清空原有日志",
+    clearConfirmTitle: "隔离旧日志并继续？",
+    clearConfirmDescription: "旧版 JSON 日志会被隔离且不再导入，审计数据库会被清空并重新启用。",
+    confirmClear: "隔离旧日志并继续"
+  },
   toast: {
     connectionSaved: "连接已保存。密码只会写入本机凭证库，不会进入 TOML 配置。",
     connectionDeleted: "连接已删除。",
@@ -286,6 +301,7 @@ const zhCN = {
     maxRows: "最大返回行数",
     queryTimeoutMs: "查询超时毫秒",
     maxConnections: "最大连接数",
+    maxResultBytes: "最大结果大小（KiB）",
     currentCredential: "当前凭证：{credential}。DataNexa 不会把明文密码写入配置文件。",
     credentialNotSaved: "尚未保存",
     save: "保存连接"
@@ -364,6 +380,21 @@ const en: I18nMessages = {
     darkMode: "Dark mode",
     lightMode: "Light mode",
     toggleTheme: "Toggle theme"
+  },
+  auditMigration: {
+    migratingTitle: "Migrating audit log",
+    preparing: "Preparing the new audit storage",
+    progress: "Migrated {processed} / {total} entries",
+    finishing: "Finishing migration",
+    failedTitle: "Audit log migration failed",
+    failedCompact: "Click to review and recover",
+    dialogDescription: "DataNexa needs to migrate the legacy audit log to new SQLite storage. To keep database operations auditable, the MCP server will remain unavailable until migration completes.",
+    errorReason: "Error reason",
+    retry: "Retry",
+    clear: "Clear old logs",
+    clearConfirmTitle: "Quarantine old logs and continue?",
+    clearConfirmDescription: "The legacy JSON log will be quarantined and skipped, then the audit database will be cleared and re-enabled.",
+    confirmClear: "Quarantine logs and continue"
   },
   toast: {
     connectionSaved: "Connection saved. Passwords are stored only in the local credential vault, not in TOML config.",
@@ -606,6 +637,7 @@ const en: I18nMessages = {
     maxRows: "Maximum returned rows",
     queryTimeoutMs: "Query timeout in milliseconds",
     maxConnections: "Maximum connections",
+    maxResultBytes: "Maximum result size (KiB)",
     currentCredential: "Current credential: {credential}. DataNexa never writes plaintext passwords to config files.",
     credentialNotSaved: "Not saved yet",
     save: "Save connection"

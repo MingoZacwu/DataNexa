@@ -347,7 +347,7 @@ p {
   transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
 }
 
-.sidebar-service-button:hover {
+.sidebar-service-button:hover:not(:disabled) {
   color: #fff;
   border-color: rgba(22, 160, 100, 0.55);
   background: var(--green);
@@ -359,7 +359,7 @@ p {
   background: rgba(229, 72, 77, 0.09);
 }
 
-.sidebar-service-button.running:hover {
+.sidebar-service-button.running:hover:not(:disabled) {
   color: #fff;
   border-color: rgba(229, 72, 77, 0.55);
   background: var(--red);
@@ -2415,6 +2415,232 @@ pre {
   border-radius: 8px;
   background: rgba(231, 239, 255, 0.72);
   box-shadow: var(--soft-shadow);
+}
+
+.sidebar-migration-reminder {
+  position: relative;
+  min-height: 56px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(217, 119, 6, 0.3);
+  border-radius: 8px;
+  color: var(--ink);
+  background: rgba(255, 247, 237, 0.78);
+  box-shadow: var(--soft-shadow);
+  font: inherit;
+  text-align: left;
+}
+
+.sidebar-migration-reminder.failed {
+  border-color: rgba(220, 38, 38, 0.28);
+  background: rgba(254, 242, 242, 0.82);
+  cursor: pointer;
+}
+
+.sidebar-migration-reminder.failed:hover {
+  border-color: rgba(220, 38, 38, 0.44);
+  background: rgba(254, 226, 226, 0.86);
+}
+
+.sidebar-migration-icon {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 7px;
+  color: #fff;
+  background: #d97706;
+}
+
+.sidebar-migration-reminder.failed .sidebar-migration-icon {
+  background: #dc2626;
+}
+
+.sidebar-migration-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.sidebar-migration-copy strong,
+.sidebar-migration-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-migration-copy strong {
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.sidebar-migration-copy span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.migration-progress {
+  grid-column: 1 / -1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: rgba(120, 113, 108, 0.18);
+}
+
+.migration-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #d97706;
+  transition: width 0.2s ease;
+}
+
+.migration-dialog {
+  width: min(560px, calc(100vw - 40px));
+  padding: 18px;
+  overflow: auto;
+}
+
+.migration-dialog .dialog-titlebar {
+  align-items: flex-start;
+  margin-bottom: 0;
+}
+
+.migration-dialog .dialog-titlebar > .icon-button {
+  flex: 0 0 32px;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+}
+
+.migration-dialog-copy {
+  min-width: 0;
+}
+
+.migration-dialog-copy [data-radix-dialog-title] {
+  display: block;
+  font-size: 17px;
+  font-weight: 740;
+  line-height: 1.35;
+}
+
+.migration-dialog-copy [data-radix-dialog-description] {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.migration-error {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid rgba(220, 38, 38, 0.16);
+  border-radius: 7px;
+  color: var(--ink);
+  background: rgba(220, 38, 38, 0.07);
+}
+
+.migration-error-icon {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 7px;
+  color: #b91c1c;
+  background: rgba(220, 38, 38, 0.1);
+}
+
+.migration-error strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 740;
+  line-height: 1.4;
+}
+
+.migration-error p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.migration-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.migration-dialog-actions > .button {
+  height: var(--control-height);
+  min-height: var(--control-height);
+  padding-block: 0;
+}
+
+.migration-dialog.confirming .migration-dialog-actions {
+  margin-top: 16px;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.migration-dialog .button.danger {
+  color: #b91c1c;
+  border-color: rgba(220, 38, 38, 0.3);
+  background: rgba(254, 226, 226, 0.72);
+}
+
+.migration-dialog .button.danger:hover:not(:disabled) {
+  color: #991b1b;
+  border-color: rgba(220, 38, 38, 0.48);
+  background: rgba(254, 202, 202, 0.82);
+}
+
+:root.dark .sidebar-migration-reminder {
+  border-color: rgba(245, 158, 11, 0.3);
+  background: rgba(146, 64, 14, 0.18);
+}
+
+:root.dark .sidebar-migration-reminder.failed {
+  border-color: rgba(248, 113, 113, 0.3);
+  background: rgba(127, 29, 29, 0.2);
+}
+
+:root.dark .sidebar-migration-reminder.failed:hover {
+  border-color: rgba(248, 113, 113, 0.46);
+  background: rgba(127, 29, 29, 0.28);
+}
+
+:root.dark .migration-error {
+  border-color: rgba(248, 113, 113, 0.2);
+  background: rgba(127, 29, 29, 0.18);
+}
+
+:root.dark .migration-error-icon {
+  color: #fca5a5;
+  background: rgba(248, 113, 113, 0.12);
+}
+
+:root.dark .migration-dialog .button.danger {
+  color: #fca5a5;
+  border-color: rgba(248, 113, 113, 0.34);
+  background: rgba(127, 29, 29, 0.24);
+}
+
+:root.dark .migration-dialog .button.danger:hover:not(:disabled) {
+  color: #fecaca;
+  border-color: rgba(248, 113, 113, 0.52);
+  background: rgba(127, 29, 29, 0.36);
 }
 
 :root.dark .sidebar-update-reminder {

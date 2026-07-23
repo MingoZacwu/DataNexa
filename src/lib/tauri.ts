@@ -58,6 +58,7 @@ const mockSnapshot: AppSnapshot = {
   updater_enabled: false,
   startup_error: null,
   auto_start_status: "disabled",
+  audit_migration: { status: "ready" },
   config: {
     version: 1,
     server: {
@@ -88,7 +89,8 @@ const mockSnapshot: AppSnapshot = {
         ssl_mode: "prefer",
         max_rows: 500,
         query_timeout_ms: 8000,
-        max_connections: 1
+        max_connections: 1,
+        max_result_bytes: 1048576
       },
       {
         id: "prod_readonly_pg",
@@ -103,7 +105,8 @@ const mockSnapshot: AppSnapshot = {
         ssl_mode: "require",
         max_rows: 200,
         query_timeout_ms: 5000,
-        max_connections: 2
+        max_connections: 2,
+        max_result_bytes: 1048576
       }
     ]
   },
@@ -244,6 +247,8 @@ export const api = {
     command<AppSnapshot>("disable_all_connections", undefined, withAllConnectionsDisabled()),
   clearAuditEvents: () =>
     command<AppSnapshot>("clear_audit_events", undefined, withAuditCleared()),
+  retryAuditMigration: () => command<AppSnapshot>("retry_audit_migration", undefined, mockSnapshot),
+  clearLegacyAuditLog: () => command<AppSnapshot>("clear_legacy_audit_log", undefined, mockSnapshot),
   testConnection: (id: string) => command<string>("test_connection", { id }, previewText.previewTestConnection),
   testConnectionInput: (input: ConnectionInput) =>
     command<string>("test_connection_input", { input }, previewText.previewTestConnection),

@@ -15,12 +15,13 @@ mod updater;
 use std::sync::Arc;
 
 use commands::{
-    check_updates_if_due, clear_audit_events, delete_connection, diagnose_connection,
-    disable_all_connections, export_connections, get_app_snapshot, hide_main_window,
-    import_connections, minimize_main_window, open_project_homepage, open_project_releases,
-    policy_check, rotate_server_token, save_server_config, save_settings_config,
-    set_connection_enabled, set_mcp_tool_enabled, start_mcp_server, start_window_drag,
-    stop_mcp_server, test_connection, test_connection_input, upsert_connection,
+    check_updates_if_due, clear_audit_events, clear_legacy_audit_log, delete_connection,
+    diagnose_connection, disable_all_connections, export_connections, get_app_snapshot,
+    hide_main_window, import_connections, minimize_main_window, open_project_homepage,
+    open_project_releases, policy_check, retry_audit_migration, rotate_server_token,
+    save_server_config, save_settings_config, set_connection_enabled, set_mcp_tool_enabled,
+    start_mcp_server, start_window_drag, stop_mcp_server, test_connection, test_connection_input,
+    upsert_connection,
 };
 use i18n::{backend_text, BackendText};
 use state::AppState;
@@ -33,13 +34,14 @@ fn create_tray_menu(
     text: BackendText,
     mcp_running: bool,
     startup_error: bool,
+    audit_ready: bool,
 ) -> tauri::Result<Menu<tauri::Wry>> {
     let show_item = MenuItem::with_id(app, "show", text.tray_show(), true, None::<&str>)?;
     let mcp_item = CheckMenuItem::with_id(
         app,
         "toggle_mcp",
         text.tray_mcp_server(),
-        true,
+        audit_ready,
         mcp_running,
         None::<&str>,
     )?;
@@ -67,6 +69,7 @@ pub(crate) fn refresh_tray_menu(
     text: BackendText,
     mcp_running: bool,
     startup_error: bool,
+    audit_ready: bool,
 ) -> tauri::Result<()> {
     if let Some(tray) = app.tray_by_id("main") {
         tray.set_menu(Some(create_tray_menu(
@@ -74,6 +77,7 @@ pub(crate) fn refresh_tray_menu(
             text,
             mcp_running,
             startup_error,
+            audit_ready,
         )?))?;
     }
     Ok(())
@@ -125,7 +129,8 @@ pub fn run() {
 
     builder
         .setup(|app| {
-            let mut state = AppState::new(app.handle().clone())?;
+            let mut state =
+                tauri::async_runtime::block_on(async { AppState::new(app.handle().clone()) })?;
             let tray_text = backend_text(&state.config.get_mut().settings.language);
             let state = Arc::new(state);
             app.manage(state);
@@ -139,7 +144,7 @@ pub fn run() {
             let tray_icon =
                 tauri::image::Image::new(include_bytes!("../../resources/trayicon.rgba"), 32, 32);
 
-            let tray_menu = create_tray_menu(app.handle(), tray_text, false, false)?;
+            let tray_menu = create_tray_menu(app.handle(), tray_text, false, false, false)?;
             TrayIconBuilder::with_id("main")
                 .icon(tray_icon)
                 .tooltip("DataNexa")
@@ -182,10 +187,12 @@ pub fn run() {
                     }
                 }
             }
-            if configured && login_launch {
-                let app_handle = app.handle().clone();
-                let state_for_task = state.clone();
-                tauri::async_runtime::spawn(async move {
+            let app_handle = app.handle().clone();
+            let state_for_task = state.clone();
+            tauri::async_runtime::spawn(async move {
+                let max_events = state_for_task.config.read().await.settings.audit_max_events;
+                let migration_result = state_for_task.audit.initialize(max_events).await;
+                if migration_result.is_ok() && configured && login_launch {
                     let started = std::time::Instant::now();
                     if let Err(error) = mcp::start(state_for_task.clone()).await {
                         let reason = error.to_string();
@@ -198,12 +205,14 @@ pub fn run() {
                         )
                         .await;
                     }
-                    let running = mcp::status(&state_for_task).await.running;
-                    let error = state_for_task.mcp.read().await.startup_error.is_some();
-                    let language = state_for_task.config.read().await.settings.language.clone();
-                    let _ = refresh_tray_menu(&app_handle, backend_text(&language), running, error);
-                });
-            }
+                }
+                let running = mcp::status(&state_for_task).await.running;
+                let error = state_for_task.mcp.read().await.startup_error.is_some();
+                let language = state_for_task.config.read().await.settings.language.clone();
+                let ready = state_for_task.audit.is_ready().await;
+                let _ =
+                    refresh_tray_menu(&app_handle, backend_text(&language), running, error, ready);
+            });
             if login_launch {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = hide_main_window_to_tray(&window);
@@ -254,9 +263,13 @@ pub fn run() {
                     let running = mcp::status(&state).await.running;
                     let language = state.config.read().await.settings.language.clone();
                     let startup_error = state.mcp.read().await.startup_error.is_some();
-                    if let Err(error) =
-                        refresh_tray_menu(&app, backend_text(&language), running, startup_error)
-                    {
+                    if let Err(error) = refresh_tray_menu(
+                        &app,
+                        backend_text(&language),
+                        running,
+                        startup_error,
+                        state.audit.is_ready().await,
+                    ) {
                         eprintln!("failed to refresh tray menu: {error}");
                     }
                 });
@@ -284,6 +297,8 @@ pub fn run() {
             set_connection_enabled,
             disable_all_connections,
             clear_audit_events,
+            retry_audit_migration,
+            clear_legacy_audit_log,
             test_connection,
             test_connection_input,
             diagnose_connection,

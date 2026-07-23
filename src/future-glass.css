@@ -1028,6 +1028,10 @@ textarea:focus-visible,
   border-bottom: 1px solid var(--line);
 }
 
+.inspector-grid .inspector-grid-wide {
+  grid-column: 1 / -1;
+}
+
 .inspector-grid dt {
   margin-bottom: 5px;
   color: var(--muted);

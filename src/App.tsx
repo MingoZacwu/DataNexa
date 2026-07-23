@@ -69,6 +69,7 @@ import { useAppUpdater, type UpdateState } from "./lib/updater";
 import type {
   AppSnapshot,
   AuditEvent,
+  AuditMigrationState,
   ConnectionConfig,
   ConnectionDiagnostics,
   DatabaseType,
@@ -146,7 +147,8 @@ const defaultConnection = (name: string): ConnectionConfig => ({
   ssl_mode: "prefer",
   max_rows: 500,
   query_timeout_ms: 8000,
-  max_connections: 1
+  max_connections: 1,
+  max_result_bytes: 1048576
 });
 
 function App() {
@@ -169,6 +171,9 @@ function App() {
   const [theme, setTheme] = useState<ThemeMode>(detectThemeMode);
   const [systemThemeMode, setSystemThemeMode] = useState<EffectiveTheme>(systemTheme);
   const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string | null>(null);
+  const [migrationDialogOpen, setMigrationDialogOpen] = useState(false);
+  const [migrationRecoveryBusy, setMigrationRecoveryBusy] = useState(false);
+  const [confirmClearLegacy, setConfirmClearLegacy] = useState(false);
   const effectiveTheme = resolveTheme(theme, systemThemeMode);
   const t = messages[locale];
   const hasAuditFilters = Object.values(auditFilters).some(Boolean);
@@ -235,6 +240,13 @@ function App() {
     shownStartupError.current = error;
     pushToast(error, "error");
   }, [snapshot?.startup_error]);
+
+  useEffect(() => {
+    if (snapshot?.audit_migration.status === "ready") {
+      setMigrationDialogOpen(false);
+      setConfirmClearLegacy(false);
+    }
+  }, [snapshot?.audit_migration.status]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -363,6 +375,7 @@ function App() {
   }
 
   async function testConnection(id: string) {
+    if (!snapshot || snapshot.audit_migration.status !== "ready") return;
     setBusy(true);
     try {
       pushToast(formatConnectionTest(t, await api.testConnection(id)), "info");
@@ -375,7 +388,7 @@ function App() {
   }
 
   async function testEditingConnection() {
-    if (!editing) return;
+    if (!editing || !snapshot || snapshot.audit_migration.status !== "ready") return;
     setBusy(true);
     try {
       pushToast(
@@ -407,6 +420,7 @@ function App() {
   }
 
   async function toggleServer() {
+    if (!snapshot?.server_status.running && snapshot?.audit_migration.status !== "ready") return;
     setBusy(true);
     try {
       setSnapshot(snapshot?.server_status.running ? await api.stopServer() : await api.startServer());
@@ -414,6 +428,31 @@ function App() {
       showError(error);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function retryAuditMigration() {
+    setMigrationRecoveryBusy(true);
+    try {
+      setSnapshot(await api.retryAuditMigration());
+    } catch (error) {
+      showError(error);
+      await refresh({ quiet: true });
+    } finally {
+      setMigrationRecoveryBusy(false);
+    }
+  }
+
+  async function clearLegacyAuditLog() {
+    setMigrationRecoveryBusy(true);
+    try {
+      setSnapshot(await api.clearLegacyAuditLog());
+    } catch (error) {
+      showError(error);
+      await refresh({ quiet: true });
+    } finally {
+      setMigrationRecoveryBusy(false);
+      setConfirmClearLegacy(false);
     }
   }
 
@@ -534,6 +573,7 @@ function App() {
   const recentEvents = snapshot?.audit_events.slice(0, 8) ?? [];
   const availableUpdateVersion = updater.state.kind === "available" ? updater.state.version : null;
   const showUpdateReminder = availableUpdateVersion !== null && dismissedUpdateVersion !== availableUpdateVersion;
+  const migrationReady = snapshot?.audit_migration.status === "ready";
 
   return (
     <Tooltip.Provider delayDuration={180}>
@@ -561,7 +601,9 @@ function App() {
             </nav>
 
             <div className="sidebar-bottom">
-              {showUpdateReminder && availableUpdateVersion && (
+              {snapshot && snapshot.audit_migration.status !== "ready" ? (
+                <AuditMigrationReminder t={t} state={snapshot.audit_migration} onOpen={() => setMigrationDialogOpen(true)} />
+              ) : showUpdateReminder && availableUpdateVersion ? (
                 <SidebarUpdateReminder
                   t={t}
                   version={availableUpdateVersion}
@@ -571,13 +613,13 @@ function App() {
                   }}
                   onDismiss={() => setDismissedUpdateVersion(availableUpdateVersion)}
                 />
-              )}
+              ) : null}
               <SidebarFooter
                 t={t}
                 running={Boolean(snapshot?.server_status.running)}
                 port={snapshot?.config.server.port ?? 17321}
                 busy={busy}
-                disabled={!snapshot}
+                disabled={!snapshot || (!snapshot.server_status.running && !migrationReady)}
                 onToggle={toggleServer}
               />
             </div>
@@ -651,6 +693,7 @@ function App() {
                     onSelectAudit={setSelectedAudit}
                     onCopyAgentPrompt={() => copyAgentPrompt(serverEndpoint, requireToken, serverToken)}
                     onToggleServer={toggleServer}
+                    startDisabled={!snapshot.server_status.running && !migrationReady}
                   />
                 )}
                 {activeView === "connections" && (
@@ -663,6 +706,7 @@ function App() {
                     onTest={testConnection}
                     onDiagnose={diagnoseConnection}
                     onToggleEnabled={setConnectionEnabled}
+                    migrationReady={migrationReady}
                   />
                 )}
                 {activeView === "server" && (
@@ -673,6 +717,7 @@ function App() {
                     endpoint={serverEndpoint}
                     onCopyAgentPrompt={() => copyAgentPrompt(serverEndpoint, snapshot.config.server.require_token, snapshot.server_status.token)}
                     onToggle={toggleServer}
+                    startDisabled={!snapshot.server_status.running && !migrationReady}
                     onRotate={rotateToken}
                   />
                 )}
@@ -729,10 +774,25 @@ function App() {
           }}
           onEditingChange={setEditing}
           onTest={testEditingConnection}
+          migrationReady={migrationReady}
           onSubmit={saveConnection}
           onClose={() => setEditing(null)}
         />
         <AuditDetailDialog t={t} event={selectedAudit} onClose={() => setSelectedAudit(null)} />
+        {snapshot && snapshot.audit_migration.status === "failed" && (
+          <AuditMigrationDialog
+            t={t}
+            state={snapshot.audit_migration}
+            open={migrationDialogOpen}
+            busy={migrationRecoveryBusy}
+            confirmClear={confirmClearLegacy}
+            onOpenChange={setMigrationDialogOpen}
+            onRetry={() => void retryAuditMigration()}
+            onRequestClear={() => setConfirmClearLegacy(true)}
+            onCancelClear={() => setConfirmClearLegacy(false)}
+            onConfirmClear={() => void clearLegacyAuditLog()}
+          />
+        )}
       </div>
     </Tooltip.Provider>
   );
@@ -763,6 +823,64 @@ function WindowChrome({ t }: { t: I18nMessages }) {
         </div>
       )}
     </div>
+  );
+}
+
+function AuditMigrationReminder({ t, state, onOpen }: { t: I18nMessages; state: Exclude<AuditMigrationState, { status: "ready" }>; onOpen: () => void }) {
+  if (state.status === "failed") {
+    return (
+      <button type="button" className="sidebar-migration-reminder failed" onClick={onOpen}>
+        <span className="sidebar-migration-icon"><AlertTriangle size={16} /></span>
+        <span className="sidebar-migration-copy"><strong>{t.auditMigration.failedTitle}</strong><span>{t.auditMigration.failedCompact}</span></span>
+      </button>
+    );
+  }
+  const finishing = state.phase === "committing" || state.phase === "finalizing";
+  const percent = state.total > 0 ? Math.min(100, Math.round((state.processed / state.total) * 100)) : 0;
+  return (
+    <div className="sidebar-migration-reminder migrating">
+      <span className="sidebar-migration-icon"><RefreshCw className="is-spinning" size={16} /></span>
+      <span className="sidebar-migration-copy"><strong>{t.auditMigration.migratingTitle}</strong><span>{finishing ? t.auditMigration.finishing : state.total > 0 ? formatMessage(t.auditMigration.progress, { processed: state.processed, total: state.total }) : t.auditMigration.preparing}</span></span>
+      <span className="migration-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><span style={{ width: `${percent}%` }} /></span>
+    </div>
+  );
+}
+
+function AuditMigrationDialog({ t, state, open, busy, confirmClear, onOpenChange, onRetry, onRequestClear, onCancelClear, onConfirmClear }: { t: I18nMessages; state: Extract<AuditMigrationState, { status: "failed" }>; open: boolean; busy: boolean; confirmClear: boolean; onOpenChange: (open: boolean) => void; onRetry: () => void; onRequestClear: () => void; onCancelClear: () => void; onConfirmClear: () => void }) {
+  return (
+    <Dialog.Root open={open} onOpenChange={(next) => { if (!busy) { if (!next) onCancelClear(); onOpenChange(next); } }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="dialog-overlay" />
+        <Dialog.Content className={clsx("policy-dialog migration-dialog", confirmClear && "confirming")}>
+          <div className="dialog-titlebar">
+            <div className="migration-dialog-copy">
+              <Dialog.Title>{confirmClear ? t.auditMigration.clearConfirmTitle : t.auditMigration.failedTitle}</Dialog.Title>
+              <Dialog.Description>{confirmClear ? t.auditMigration.clearConfirmDescription : t.auditMigration.dialogDescription}</Dialog.Description>
+            </div>
+            <Dialog.Close asChild><button type="button" className="icon-button" disabled={busy} aria-label={t.common.close}><X size={17} /></button></Dialog.Close>
+          </div>
+          {!confirmClear && (
+            <div className="migration-error" role="alert">
+              <span className="migration-error-icon"><AlertTriangle size={16} /></span>
+              <div><strong>{t.auditMigration.errorReason}</strong><p>{state.reason}</p></div>
+            </div>
+          )}
+          <div className="migration-dialog-actions">
+            {confirmClear ? (
+              <>
+                <button type="button" className="button ghost" disabled={busy} onClick={onCancelClear}>{t.common.cancel}</button>
+                <button type="button" className="button danger" disabled={busy} onClick={onConfirmClear}><Trash2 size={15} />{t.auditMigration.confirmClear}</button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="button" disabled={busy} onClick={onRequestClear}>{t.auditMigration.clear}</button>
+                <button type="button" className="button primary" autoFocus disabled={busy} onClick={onRetry}><RefreshCw size={15} className={clsx(busy && "is-spinning")} />{t.auditMigration.retry}</button>
+              </>
+            )}
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
@@ -899,7 +1017,8 @@ function OverviewView({
   onOpenAudit,
   onSelectAudit,
   onCopyAgentPrompt,
-  onToggleServer
+  onToggleServer,
+  startDisabled
 }: {
   t: I18nMessages;
   snapshot: AppSnapshot;
@@ -911,6 +1030,7 @@ function OverviewView({
   onSelectAudit: (event: AuditEvent) => void;
   onCopyAgentPrompt: () => void;
   onToggleServer: () => void;
+  startDisabled: boolean;
 }) {
   const totalConnections = snapshot.config.connections.length;
   const enabledTools = snapshot.tools.filter((tool) => tool.enabled).length;
@@ -931,7 +1051,7 @@ function OverviewView({
           <div><span>{t.overview.metricTools}</span><strong>{enabledTools}<small> / {snapshot.tools.length}</small></strong></div>
           <div><span>{t.overview.metricUptime}</span><strong>{uptime}</strong></div>
         </div>
-        <button type="button" className={clsx("button command-button", snapshot.server_status.running ? "stop" : "primary")} onClick={onToggleServer}>
+        <button type="button" className={clsx("button command-button", snapshot.server_status.running ? "stop" : "primary")} onClick={onToggleServer} disabled={startDisabled}>
           {snapshot.server_status.running ? <Square size={15} /> : <Play size={16} />}
           {snapshot.server_status.running ? t.server.stop : t.server.start}
         </button>
@@ -984,7 +1104,8 @@ function ConnectionsView({
   onDelete,
   onTest,
   onDiagnose,
-  onToggleEnabled
+  onToggleEnabled,
+  migrationReady
 }: {
   t: I18nMessages;
   connections: ConnectionConfig[];
@@ -994,6 +1115,7 @@ function ConnectionsView({
   onTest: (id: string) => void;
   onDiagnose: (id: string) => void;
   onToggleEnabled: (id: string, enabled: boolean) => void;
+  migrationReady: boolean;
 }) {
   const [selectedId, setSelectedId] = useState(connections[0]?.id ?? "");
   const selected = connections.find((connection) => connection.id === selectedId) ?? connections[0];
@@ -1020,6 +1142,7 @@ function ConnectionsView({
               onTest={onTest}
               onDiagnose={onDiagnose}
               onToggleEnabled={onToggleEnabled}
+              migrationReady={migrationReady}
               selected={selected?.id === connection.id}
               onSelect={() => setSelectedId(connection.id)}
             />
@@ -1043,9 +1166,10 @@ function ConnectionsView({
               <div><dt>{t.connectionDialog.maxRows}</dt><dd>{selected.max_rows}</dd></div>
               <div><dt>{t.connectionDialog.queryTimeoutMs}</dt><dd>{selected.query_timeout_ms} ms</dd></div>
               <div><dt>{t.connectionDialog.maxConnections}</dt><dd>{selected.max_connections}</dd></div>
+              <div className="inspector-grid-wide"><dt>{t.connectionDialog.maxResultBytes}</dt><dd>{Math.round(selected.max_result_bytes / 1024)} KiB</dd></div>
             </dl>
             <div className="inspector-actions">
-              <button type="button" className="button soft" disabled={busy || !selected.enabled} onClick={() => onTest(selected.id)}><Cable size={15} />{t.connections.test}</button>
+              <button type="button" className="button soft" disabled={busy || !selected.enabled || !migrationReady} onClick={() => onTest(selected.id)}><Cable size={15} />{t.connections.test}</button>
               <button type="button" className="button ghost" disabled={busy || !selected.enabled} onClick={() => onDiagnose(selected.id)}><SearchCheck size={15} />{t.connections.diagnose}</button>
             </div>
           </>
@@ -1116,7 +1240,8 @@ function ServerView({
   endpoint,
   onCopyAgentPrompt,
   onToggle,
-  onRotate
+  onRotate,
+  startDisabled
 }: {
   t: I18nMessages;
   snapshot: AppSnapshot;
@@ -1125,6 +1250,7 @@ function ServerView({
   onCopyAgentPrompt: () => void;
   onToggle: () => void;
   onRotate: () => void;
+  startDisabled: boolean;
 }) {
   const requireToken = snapshot.config.server.require_token;
 
@@ -1135,7 +1261,7 @@ function ServerView({
           <span className="server-emblem"><Server size={25} /></span>
           <div><span className="panel-kicker">{t.overview.metricServer}</span><h2>{snapshot.server_status.running ? t.overview.running : t.overview.stopped}</h2></div>
         </div>
-        <button type="button" className={clsx("button", snapshot.server_status.running ? "stop" : "primary")} onClick={onToggle} disabled={busy}>
+        <button type="button" className={clsx("button", snapshot.server_status.running ? "stop" : "primary")} onClick={onToggle} disabled={busy || startDisabled}>
           {snapshot.server_status.running ? <Square size={16} /> : <Play size={17} />}
           {snapshot.server_status.running ? t.server.stop : t.server.start}
         </button>
@@ -1871,6 +1997,7 @@ function ConnectionDialog({
   onClearPasswordChange,
   onEditingChange,
   onTest,
+  migrationReady,
   onSubmit,
   onClose
 }: {
@@ -1883,6 +2010,7 @@ function ConnectionDialog({
   onClearPasswordChange: (checked: boolean) => void;
   onEditingChange: (connection: ConnectionConfig) => void;
   onTest: () => void;
+  migrationReady: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onClose: () => void;
 }) {
@@ -1986,6 +2114,9 @@ function ConnectionDialog({
               <Field label={t.connectionDialog.maxConnections}>
                 <input type="number" min={1} max={3} value={editing.max_connections} onChange={(event) => onEditingChange({ ...editing, max_connections: Number(event.target.value) })} />
               </Field>
+              <Field label={t.connectionDialog.maxResultBytes}>
+                <input type="number" min={64} max={8192} step={64} value={Math.round(editing.max_result_bytes / 1024)} onChange={(event) => onEditingChange({ ...editing, max_result_bytes: Number(event.target.value) * 1024 })} />
+              </Field>
               <p className="field-note span-all">
                 {formatMessage(t.connectionDialog.currentCredential, { credential: editing.credential_ref ?? t.connectionDialog.credentialNotSaved })}
               </p>
@@ -1993,7 +2124,7 @@ function ConnectionDialog({
             </div>
 
             <footer>
-              <button type="button" className="button soft" disabled={busy} onClick={onTest}>
+              <button type="button" className="button soft" disabled={busy || !migrationReady} onClick={onTest}>
                 <Cable size={16} />
                 {t.connections.test}
               </button>
@@ -2084,6 +2215,7 @@ function ConnectionRow({
   onTest,
   onDiagnose,
   onToggleEnabled,
+  migrationReady,
   selected,
   onSelect
 }: {
@@ -2095,6 +2227,7 @@ function ConnectionRow({
   onTest: (id: string) => void;
   onDiagnose: (id: string) => void;
   onToggleEnabled: (id: string, enabled: boolean) => void;
+  migrationReady: boolean;
   selected?: boolean;
   onSelect?: () => void;
 }) {
@@ -2116,7 +2249,7 @@ function ConnectionRow({
           </button>
         </IconTooltip>
         <IconTooltip label={t.connections.test}>
-          <button type="button" className="icon-button" onClick={() => onTest(connection.id)} disabled={busy || !connection.enabled}>
+          <button type="button" className="icon-button" onClick={() => onTest(connection.id)} disabled={busy || !connection.enabled || !migrationReady}>
             <Cable size={17} />
           </button>
         </IconTooltip>
