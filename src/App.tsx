@@ -583,7 +583,7 @@ function App() {
     <Tooltip.Provider delayDuration={180}>
       <div className="app-shell">
         <div className="ambient-grid" aria-hidden="true" />
-        {!isMacos && <WindowChrome t={t} />}
+        {!isMacos && <WindowControls t={t} />}
 
         <div className="app-body">
           <aside className="sidebar">
@@ -802,9 +802,7 @@ function App() {
   );
 }
 
-function WindowChrome({ t }: { t: I18nMessages }) {
-  const isMacos = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent);
-
+function WindowControls({ t }: { t: I18nMessages }) {
   function handleDragStart(event: ReactMouseEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
     if ((event.target as HTMLElement).closest("button")) return;
@@ -812,20 +810,13 @@ function WindowChrome({ t }: { t: I18nMessages }) {
   }
 
   return (
-    <div className="window-chrome" onMouseDown={handleDragStart} data-tauri-drag-region>
-      <div className="window-title" data-tauri-drag-region>
-        DataNexa
-      </div>
-      {!isMacos && (
-        <div className="window-controls">
-          <button type="button" className="window-control minimize" onClick={() => void api.minimizeWindow().catch(() => undefined)} aria-label={t.common.minimize}>
-            <Minus size={13} />
-          </button>
-          <button type="button" className="window-control close" onClick={() => void api.hideWindow().catch(() => undefined)} aria-label={t.common.close}>
-            <X size={13} />
-          </button>
-        </div>
-      )}
+    <div className="window-controls" onMouseDown={handleDragStart} data-tauri-drag-region>
+      <button type="button" className="window-control minimize" onClick={() => void api.minimizeWindow().catch(() => undefined)} aria-label={t.common.minimize}>
+        <Minus size={13} />
+      </button>
+      <button type="button" className="window-control close" onClick={() => void api.hideWindow().catch(() => undefined)} aria-label={t.common.close}>
+        <X size={13} />
+      </button>
     </div>
   );
 }

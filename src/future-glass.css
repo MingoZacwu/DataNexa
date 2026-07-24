@@ -139,26 +139,6 @@ textarea:focus-visible,
     linear-gradient(90deg, rgba(130, 164, 211, 0.055) 1px, transparent 1px);
 }
 
-.window-chrome {
-  position: relative;
-  z-index: 4;
-  height: var(--titlebar-height);
-  border-bottom: 1px solid var(--line);
-  background: rgba(243, 247, 252, 0.68);
-  backdrop-filter: blur(24px) saturate(145%);
-  -webkit-backdrop-filter: blur(24px) saturate(145%);
-}
-
-:root.dark .window-chrome {
-  background: rgba(8, 12, 18, 0.74);
-}
-
-.window-title {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 650;
-}
-
 .app-body {
   grid-template-columns: clamp(210px, 17vw, 242px) minmax(0, 1fr);
 }
@@ -166,7 +146,7 @@ textarea:focus-visible,
 .sidebar {
   z-index: 3;
   gap: 18px;
-  padding: 20px 16px 16px;
+  padding: 40px 16px 16px;
   border-right: 1px solid var(--line);
   background: rgba(246, 249, 253, 0.58);
   backdrop-filter: blur(28px) saturate(150%);
@@ -318,7 +298,7 @@ textarea:focus-visible,
 }
 
 .workspace {
-  padding: 18px 24px 24px;
+  padding: 56px 24px 24px;
   background: rgba(246, 249, 253, 0.26);
   scroll-padding-bottom: 24px;
   overflow: hidden;
@@ -1949,14 +1929,14 @@ textarea:focus {
 
 @media (max-width: 1240px) {
   .app-body { grid-template-columns: 220px minmax(0, 1fr); }
-  .workspace { padding: 18px 20px 22px; }
+  .workspace { padding: 56px 20px 22px; }
   .status-command { grid-template-columns: minmax(160px, 0.8fr) minmax(300px, 1.35fr) auto; gap: 12px; }
   .connections-workbench { grid-template-columns: minmax(470px, 1.25fr) minmax(285px, 0.75fr); }
 }
 
 @media (max-width: 1080px) {
   .app-body { grid-template-columns: 200px minmax(0, 1fr); }
-  .sidebar { padding: 16px 12px; }
+  .sidebar { padding: 40px 12px 16px; }
   .status-command { grid-template-columns: 1fr auto; }
   .command-metrics { grid-column: 1 / -1; grid-row: 2; }
   .command-button { grid-column: 2; grid-row: 1; }
@@ -1981,7 +1961,7 @@ textarea:focus {
 @media (max-width: 920px) {
   body { min-width: 640px; }
   .app-body { grid-template-columns: 70px minmax(0, 1fr); }
-  .sidebar { padding: 14px 9px; }
+  .sidebar { padding: 40px 9px 14px; }
   .brand { justify-content: center; padding: 0; }
   .brand-mark { width: 42px; height: 42px; }
   .brand > div:last-child,
@@ -1990,7 +1970,7 @@ textarea:focus {
   .footer-divider { display: none; }
   .nav-button { justify-content: center; padding: 0; }
   .nav-button:hover { transform: none; }
-  .workspace { padding: 14px; }
+  .workspace { padding: 56px 14px 14px; }
   .topbar { flex-direction: row; align-items: center; gap: 10px; }
   .status-command { grid-template-columns: 1fr auto; }
   .command-metrics { grid-column: 1 / -1; grid-row: 2; }

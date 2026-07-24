@@ -90,49 +90,24 @@ p {
   height: 100vh;
   min-height: 0;
   display: grid;
-  grid-template-rows: var(--titlebar-height) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   padding: 0;
   overflow: hidden;
 }
 
-:root[data-platform="macos"] .app-shell {
-  grid-template-rows: minmax(0, 1fr);
-}
-
-.window-chrome {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  height: var(--titlebar-height);
-  padding: 0 10px;
-  border-bottom: 1px solid var(--line);
-  background: rgba(248, 251, 255, 0.86);
-  user-select: none;
-}
-
-:root.dark .window-chrome {
-  background: rgba(17, 24, 39, 0.92);
-}
-
-.window-title {
-  flex: 1;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 650;
-  text-align: center;
-}
-
-:root:not([data-platform="macos"]) .window-title {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-}
-
 .window-controls {
+  position: fixed;
+  z-index: 5;
+  top: 9px;
+  right: 10px;
   display: flex;
   align-items: center;
   gap: 6px;
+  user-select: none;
+}
+
+:root[data-platform="macos"] .app-shell {
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .window-control {
@@ -156,16 +131,6 @@ p {
   background: var(--red);
 }
 
-:root[data-platform="macos"] .window-chrome {
-  justify-content: flex-start;
-  padding-right: 14px;
-  padding-left: 76px;
-}
-
-:root[data-platform="macos"] .window-title {
-  text-align: left;
-}
-
 .app-body {
   min-height: 0;
   display: grid;
@@ -176,7 +141,7 @@ p {
 .sidebar {
   position: sticky;
   top: 0;
-  height: calc(100vh - var(--titlebar-height));
+  height: 100vh;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -189,16 +154,6 @@ p {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-}
-
-:root[data-platform="macos"] .sidebar {
-  height: 100vh;
-  padding-top: 40px;
-}
-
-:root[data-platform="macos"] .workspace {
-  height: 100vh;
-  padding-top: 38px;
 }
 
 :root.dark .sidebar {
@@ -412,7 +367,7 @@ p {
 
 .workspace {
   min-width: 0;
-  height: calc(100vh - var(--titlebar-height));
+  height: 100vh;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -422,6 +377,16 @@ p {
   background: rgba(255, 255, 255, 0.56);
   overflow: auto;
   overscroll-behavior: contain;
+}
+
+:root[data-platform="macos"] .sidebar {
+  height: 100vh;
+  padding-top: 40px;
+}
+
+:root[data-platform="macos"] .workspace {
+  height: 100vh;
+  padding-top: 38px;
 }
 
 .sidebar::-webkit-scrollbar,
