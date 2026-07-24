@@ -19,6 +19,7 @@
         "minWidth": 1180,
         "minHeight": 760,
         "resizable": true,
+        "maximizable": false,
         "visible": false,
         "decorations": false,
         "shadow": true

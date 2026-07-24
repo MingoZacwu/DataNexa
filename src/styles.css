@@ -94,6 +94,14 @@ p {
   overflow: hidden;
 }
 
+.window-drag-region {
+  position: fixed;
+  z-index: 4;
+  inset: 0 0 auto;
+  height: 40px;
+  user-select: none;
+}
+
 .window-controls {
   position: fixed;
   z-index: 5;

@@ -104,7 +104,9 @@ const DATABASE_LOGOS: Record<DatabaseType, string> = {
 
 function updateScrollFade(event: ReactUIEvent<HTMLDivElement>) {
   const element = event.currentTarget;
+  const pastStart = element.scrollTop > 1;
   const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
+  element.classList.toggle("scroll-past-start", pastStart);
   element.classList.toggle("scroll-at-end", atBottom);
 }
 
@@ -589,6 +591,7 @@ function App() {
     <Tooltip.Provider delayDuration={180}>
       <div className="app-shell">
         <div className="ambient-grid" aria-hidden="true" />
+        {!isMacos && <WindowDragRegion />}
         {!isMacos && <WindowControls t={t} />}
 
         <div className="app-body">
@@ -808,15 +811,24 @@ function App() {
   );
 }
 
-function WindowControls({ t }: { t: I18nMessages }) {
+function WindowDragRegion() {
   function handleDragStart(event: ReactMouseEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
-    if ((event.target as HTMLElement).closest("button")) return;
+    if (event.detail > 1) {
+      event.preventDefault();
+      return;
+    }
     void api.startWindowDrag().catch(() => undefined);
   }
 
   return (
-    <div className="window-controls" onMouseDown={handleDragStart} data-tauri-drag-region>
+    <div className="window-drag-region" onMouseDown={handleDragStart} aria-hidden="true" />
+  );
+}
+
+function WindowControls({ t }: { t: I18nMessages }) {
+  return (
+    <div className="window-controls">
       <button type="button" className="window-control minimize" onClick={() => void api.minimizeWindow().catch(() => undefined)} aria-label={t.common.minimize}>
         <Minus size={13} />
       </button>

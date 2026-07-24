@@ -137,7 +137,7 @@ textarea:focus-visible,
 .sidebar {
   z-index: 3;
   gap: 18px;
-  padding: 40px 16px 16px;
+  padding: 52px 16px 16px;
   border-right: 1px solid var(--line);
   background: rgba(246, 249, 253, 0.58);
   backdrop-filter: blur(28px) saturate(150%);
@@ -382,8 +382,20 @@ textarea:focus-visible,
   mask-size: calc(100% - 5px) 100%, 5px 100%;
 }
 
-.view-stage.view-tools.scroll-at-end,
-.settings-stack.scroll-at-end {
+.view-stage.view-tools.scroll-past-start:not(.scroll-at-end),
+.settings-stack.scroll-past-start:not(.scroll-at-end) {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%), linear-gradient(#000, #000);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%), linear-gradient(#000, #000);
+}
+
+.view-stage.view-tools.scroll-past-start.scroll-at-end,
+.settings-stack.scroll-past-start.scroll-at-end {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 100%), linear-gradient(#000, #000);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 100%), linear-gradient(#000, #000);
+}
+
+.view-stage.view-tools.scroll-at-end:not(.scroll-past-start),
+.settings-stack.scroll-at-end:not(.scroll-past-start) {
   -webkit-mask-image: none;
   mask-image: none;
 }
@@ -1953,7 +1965,7 @@ textarea:focus {
 
 @media (max-width: 1080px) {
   .app-body { grid-template-columns: 200px minmax(0, 1fr); }
-  .sidebar { padding: 40px 12px 16px; }
+  .sidebar { padding: 52px 12px 16px; }
   .status-command { grid-template-columns: 1fr auto; }
   .command-metrics { grid-column: 1 / -1; grid-row: 2; }
   .command-button { grid-column: 2; grid-row: 1; }
@@ -1978,7 +1990,7 @@ textarea:focus {
 @media (max-width: 920px) {
   body { min-width: 640px; }
   .app-body { grid-template-columns: 70px minmax(0, 1fr); }
-  .sidebar { padding: 40px 9px 14px; }
+  .sidebar { padding: 52px 9px 14px; }
   .brand { justify-content: center; padding: 0; }
   .brand-mark { width: 42px; height: 42px; }
   .brand > div:last-child,
