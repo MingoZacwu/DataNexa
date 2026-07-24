@@ -591,7 +591,7 @@ function App() {
     <Tooltip.Provider delayDuration={180}>
       <div className="app-shell">
         <div className="ambient-grid" aria-hidden="true" />
-        {!isMacos && <WindowDragRegion />}
+        <WindowDragRegion />
         {!isMacos && <WindowControls t={t} />}
 
         <div className="app-body">
@@ -765,6 +765,7 @@ function App() {
                     onExportConnections={() => void exportConnections()}
                     onImportConnections={() => void importConnections()}
                     onOpenProjectHomepage={() => void api.openProjectHomepage().catch(showError)}
+                    onOpenProjectSite={() => void api.openProjectSite().catch(showError)}
                   />
                 )}
               </div>
@@ -1517,7 +1518,8 @@ function SettingsView({
   onSaveSettings,
   onExportConnections,
   onImportConnections,
-  onOpenProjectHomepage
+  onOpenProjectHomepage,
+  onOpenProjectSite
 }: {
   t: I18nMessages;
   locale: Locale;
@@ -1546,6 +1548,7 @@ function SettingsView({
   onExportConnections: () => void;
   onImportConnections: () => void;
   onOpenProjectHomepage: () => void;
+  onOpenProjectSite: () => void;
 }) {
   const [serverDraft, setServerDraft] = useState(server);
   const [settingsDraft, setSettingsDraft] = useState(settings);
@@ -1900,17 +1903,30 @@ function SettingsView({
               onOpenProjectReleases={onOpenProjectReleases}
             />
             <footer className="about-footer">
-              <a
-                className="github-link"
-                href="https://github.com/MingoZacwu/DataNexa"
-                onClick={(event) => {
-                  event.preventDefault();
-                  onOpenProjectHomepage();
-                }}
-              >
-                <Github size={16} />
-                GitHub
-              </a>
+              <div className="about-footer-links">
+                <a
+                  className="github-link"
+                  href="https://mingozacwu.github.io/datanexa-site/"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    onOpenProjectSite();
+                  }}
+                >
+                  <Home size={16} />
+                  {t.settings.officialHomepage}
+                </a>
+                <a
+                  className="github-link"
+                  href="https://github.com/MingoZacwu/DataNexa"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    onOpenProjectHomepage();
+                  }}
+                >
+                  <Github size={16} />
+                  GitHub
+                </a>
+              </div>
               <p>(C) 2026 Zachary Wu All Rights Reserved.</p>
             </footer>
           </section>

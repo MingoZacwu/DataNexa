@@ -876,6 +876,12 @@ pub async fn open_project_homepage() -> Result<(), String> {
         .map_err(to_client_error)
 }
 
+#[tauri::command]
+pub async fn open_project_site() -> Result<(), String> {
+    tauri_plugin_opener::open_url("https://mingozacwu.github.io/datanexa-site/", None::<&str>)
+        .map_err(to_client_error)
+}
+
 /// Triggered by the front-end when the main window becomes visible.
 /// Performs an update check only if the 24h interval has elapsed since
 /// the last attempt. Returns `Some(version)` when an update is available.

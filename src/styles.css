@@ -2139,6 +2139,12 @@ pre {
   color: var(--muted);
 }
 
+.about-footer-links {
+  display: inline-flex;
+  align-items: center;
+  gap: 18px;
+}
+
 .github-link {
   width: fit-content;
   display: inline-flex;

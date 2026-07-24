@@ -18,7 +18,8 @@ use commands::{
     check_updates_if_due, clear_audit_events, clear_legacy_audit_log, delete_connection,
     diagnose_connection, disable_all_connections, export_connections, get_app_snapshot,
     hide_main_window, import_connections, minimize_main_window, open_project_homepage,
-    open_project_releases, policy_check, retry_audit_migration, rotate_server_token,
+    open_project_releases, open_project_site, policy_check, retry_audit_migration,
+    rotate_server_token,
     save_server_config, save_settings_config, set_connection_enabled, set_mcp_tool_enabled,
     start_mcp_server, start_window_drag, stop_mcp_server, test_connection, test_connection_input,
     upsert_connection,
@@ -310,6 +311,7 @@ pub fn run() {
             start_window_drag,
             open_project_homepage,
             open_project_releases,
+            open_project_site,
             policy_check,
             check_updates_if_due
         ])

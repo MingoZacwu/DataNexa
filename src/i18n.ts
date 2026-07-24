@@ -238,7 +238,8 @@ const zhCN = {
     securityAudit: "审计日志不记录查询结果",
     securityReadonly: "默认只读会话，并应用行数、超时和连接数限额",
     securityWarning: "只读策略不能完全保证所有风险都被拦截，仍需约束 Agent，避免要求或允许其执行危险行为。",
-    aboutText: "本地只读数据库 MCP 网关，让 Agent 通过统一、安全、可审计的入口访问你的数据源。"
+    aboutText: "本地只读数据库 MCP 网关，让 Agent 通过统一、安全、可审计的入口访问你的数据源。",
+    officialHomepage: "官方主页"
   },
   updates: {
     readyTitle: "应用更新",
@@ -574,7 +575,8 @@ const en: I18nMessages = {
     securityAudit: "Audit logs do not store query results",
     securityReadonly: "Read-only sessions apply row, timeout, and connection limits by default",
     securityWarning: "Read-only policy cannot guarantee every risk is blocked. Constrain agents and avoid asking or allowing them to perform dangerous actions.",
-    aboutText: "A local read-only database MCP gateway that gives agents one unified, safe, and auditable way to access your data sources."
+    aboutText: "A local read-only database MCP gateway that gives agents one unified, safe, and auditable way to access your data sources.",
+    officialHomepage: "Official homepage"
   },
   updates: {
     readyTitle: "Application updates",

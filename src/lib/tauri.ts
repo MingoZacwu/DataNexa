@@ -303,5 +303,12 @@ export const api = {
       return Promise.resolve();
     }
     return command<void>("open_project_releases", undefined, undefined);
+  },
+  openProjectSite: () => {
+    if (!isTauri) {
+      window.open("https://mingozacwu.github.io/datanexa-site/", "_blank", "noopener,noreferrer");
+      return Promise.resolve();
+    }
+    return command<void>("open_project_site", undefined, undefined);
   }
 };
