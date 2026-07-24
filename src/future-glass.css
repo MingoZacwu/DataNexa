@@ -16,16 +16,11 @@
   --red: #df4752;
   --violet: #6f63e9;
   --card-radius: 8px;
-  --titlebar-height: 38px;
   --control-height: 34px;
   --content-shadow-gutter: 8px;
   --shadow: 0 24px 70px rgba(29, 45, 70, 0.16);
   --soft-shadow: 0 5px 14px rgba(33, 55, 86, 0.075);
   --glow-blue: 0 0 0 1px rgba(36, 107, 254, 0.14), 0 6px 16px rgba(36, 107, 254, 0.09);
-}
-
-:root[data-platform="macos"] {
-  --titlebar-height: 34px;
 }
 
 :root.dark {
@@ -118,7 +113,7 @@ textarea:focus-visible,
 .ambient-grid {
   position: fixed;
   z-index: -1;
-  inset: var(--titlebar-height) 0 0 0;
+  inset: 0;
   pointer-events: none;
   opacity: 0.55;
   background-image:
@@ -126,10 +121,6 @@ textarea:focus-visible,
     linear-gradient(90deg, rgba(70, 91, 122, 0.055) 1px, transparent 1px);
   background-size: 38px 38px;
   mask-image: linear-gradient(to bottom, black, transparent 88%);
-}
-
-:root[data-platform="macos"] .ambient-grid {
-  inset: 0;
 }
 
 :root.dark .ambient-grid {
@@ -377,6 +368,24 @@ textarea:focus-visible,
 .view-stage.view-audit {
   display: flex;
   flex-direction: column;
+}
+
+.view-stage.view-tools,
+.settings-stack {
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 24px), transparent 100%), linear-gradient(#000, #000);
+  -webkit-mask-position: left top, right top;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: calc(100% - 5px) 100%, 5px 100%;
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 24px), transparent 100%), linear-gradient(#000, #000);
+  mask-position: left top, right top;
+  mask-repeat: no-repeat;
+  mask-size: calc(100% - 5px) 100%, 5px 100%;
+}
+
+.view-stage.view-tools.scroll-at-end,
+.settings-stack.scroll-at-end {
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
 @keyframes stage-in {
@@ -715,9 +724,7 @@ textarea:focus-visible,
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-right: 7px;
-  scrollbar-color: color-mix(in srgb, var(--muted) 42%, transparent) transparent;
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
 }
 
 .connections-panel .compact-list,
@@ -735,6 +742,18 @@ textarea:focus-visible,
 .view-stage::-webkit-scrollbar,
 .settings-stack::-webkit-scrollbar {
   width: 5px;
+}
+
+.connections-panel .compact-list::-webkit-scrollbar-button,
+.logs-panel .event-list::-webkit-scrollbar-button,
+.connections-panel .compact-list::-webkit-scrollbar-button:vertical:start:decrement,
+.connections-panel .compact-list::-webkit-scrollbar-button:vertical:end:increment,
+.logs-panel .event-list::-webkit-scrollbar-button:vertical:start:decrement,
+.logs-panel .event-list::-webkit-scrollbar-button:vertical:end:increment {
+  display: none;
+  width: 0;
+  height: 0;
+  background: transparent;
 }
 
 .connections-panel .compact-list::-webkit-scrollbar-thumb,
@@ -1188,7 +1207,6 @@ textarea:focus-visible,
 .tools-page {
   width: 100%;
   gap: 12px;
-  padding-bottom: 24px;
 }
 
 .tools-summary {
@@ -1439,7 +1457,6 @@ textarea:focus-visible,
   overflow-y: auto;
   margin-inline: calc(-1 * var(--content-shadow-gutter));
   padding-inline: var(--content-shadow-gutter);
-  padding-bottom: 24px;
   scrollbar-gutter: stable;
 }
 

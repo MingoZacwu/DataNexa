@@ -45,7 +45,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { FormEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
+import type { FormEvent, MouseEvent as ReactMouseEvent, ReactNode, UIEvent as ReactUIEvent } from "react";
 import appConfig from "../app.config.json";
 import appIconUrl from "../resources/icon.png";
 import brandLogoUrl from "../resources/datanexa.png";
@@ -101,6 +101,12 @@ const DATABASE_LOGOS: Record<DatabaseType, string> = {
   postgres: postgresLogoUrl,
   sqlite: sqliteLogoUrl
 };
+
+function updateScrollFade(event: ReactUIEvent<HTMLDivElement>) {
+  const element = event.currentTarget;
+  const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
+  element.classList.toggle("scroll-at-end", atBottom);
+}
 
 function isThemeMode(value: string | null): value is ThemeMode {
   return value === "system" || value === "light" || value === "dark";
@@ -684,7 +690,7 @@ function App() {
             {!snapshot ? (
               <div className="loading-panel">{t.overview.loading}</div>
             ) : (
-              <div className={clsx("view-stage", `view-${activeView}`)} key={activeView}>
+              <div className={clsx("view-stage", `view-${activeView}`)} key={activeView} onScroll={updateScrollFade}>
                 {activeView === "overview" && (
                   <OverviewView
                     t={t}
@@ -1581,7 +1587,7 @@ function SettingsView({
       </div>
 
       {tab === "general" ? (
-        <div className="settings-stack">
+        <div className="settings-stack" onScroll={updateScrollFade}>
           <section className="panel">
             <h2>{t.settings.servicePolicy}</h2>
             <div className="form-grid settings-grid">
@@ -1857,7 +1863,7 @@ function SettingsView({
           </Dialog.Root>
         </div>
       ) : (
-        <div className="settings-stack">
+        <div className="settings-stack" onScroll={updateScrollFade}>
           <section className="panel about-panel">
             <div className="about-hero">
               <img src={appIconUrl} alt="DataNexa" />
