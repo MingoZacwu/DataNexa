@@ -19,16 +19,141 @@ use commands::{
     diagnose_connection, disable_all_connections, export_connections, get_app_snapshot,
     hide_main_window, import_connections, minimize_main_window, open_project_homepage,
     open_project_releases, open_project_site, policy_check, retry_audit_migration,
-    rotate_server_token,
-    save_server_config, save_settings_config, set_connection_enabled, set_mcp_tool_enabled,
-    start_mcp_server, start_window_drag, stop_mcp_server, test_connection, test_connection_input,
-    upsert_connection,
+    rotate_server_token, save_server_config, save_settings_config, set_connection_enabled,
+    set_mcp_tool_enabled, start_mcp_server, start_window_drag, stop_mcp_server, test_connection,
+    test_connection_input, upsert_connection,
 };
 use i18n::{backend_text, BackendText};
 use state::AppState;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, WebviewWindow, WindowEvent};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrayMcpStatus {
+    Running,
+    Stopped,
+    Error,
+}
+
+fn tray_mcp_status(running: bool, startup_error: bool) -> TrayMcpStatus {
+    if startup_error {
+        TrayMcpStatus::Error
+    } else if running {
+        TrayMcpStatus::Running
+    } else {
+        TrayMcpStatus::Stopped
+    }
+}
+
+fn tray_status_text(text: BackendText, status: TrayMcpStatus) -> &'static str {
+    match status {
+        TrayMcpStatus::Running => text.tray_mcp_status_running(),
+        TrayMcpStatus::Stopped => text.tray_mcp_status_stopped(),
+        TrayMcpStatus::Error => text.tray_mcp_status_error(),
+    }
+}
+
+fn status_tray_icon(status: TrayMcpStatus) -> tauri::image::Image<'static> {
+    #[cfg(target_os = "windows")]
+    {
+        let rgba = match status {
+            TrayMcpStatus::Running => {
+                include_bytes!("../../resources/tray/windows-running.rgba").to_vec()
+            }
+            TrayMcpStatus::Stopped => {
+                include_bytes!("../../resources/tray/windows-stopped.rgba").to_vec()
+            }
+            TrayMcpStatus::Error => {
+                include_bytes!("../../resources/tray/windows-error.rgba").to_vec()
+            }
+        };
+        return tauri::image::Image::new_owned(rgba, 32, 32);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut rgba = include_bytes!("../../resources/trayicon.rgba").to_vec();
+        if status == TrayMcpStatus::Running {
+            // Explicit mirrored rows keep the triangular border pixel-perfect.
+            let outer_right = [
+                17, 19, 21, 23, 25, 27, 29, 30, 30, 29, 27, 25, 23, 21, 19, 17,
+            ];
+            for (row, right) in outer_right.into_iter().enumerate() {
+                let y = 15 + row;
+                for x in 16..=right {
+                    let index = ((y * 32 + x) * 4) as usize;
+                    rgba[index..index + 4].copy_from_slice(&[255, 255, 255, 0]);
+                }
+            }
+            let inner_right = [20, 22, 24, 26, 28, 28, 26, 24, 22, 20];
+            for (row, right) in inner_right.into_iter().enumerate() {
+                let y = 18 + row;
+                for x in 19..=right {
+                    let index = ((y * 32 + x) * 4) as usize;
+                    rgba[index..index + 4].copy_from_slice(&[255, 255, 255, 255]);
+                }
+            }
+        } else if status == TrayMcpStatus::Error {
+            // Isolate a large warning triangle from the main template artwork.
+            let outer_left = [
+                22, 22, 21, 21, 20, 19, 19, 18, 17, 17, 16, 15, 15, 14, 14, 14,
+            ];
+            let outer_right = [
+                23, 23, 24, 24, 25, 26, 26, 27, 28, 28, 29, 30, 30, 31, 31, 31,
+            ];
+            for (row, (left, right)) in outer_left.into_iter().zip(outer_right).enumerate() {
+                let y = 15 + row;
+                for x in left..=right {
+                    let index = ((y * 32 + x) * 4) as usize;
+                    rgba[index..index + 4].copy_from_slice(&[255, 255, 255, 0]);
+                }
+            }
+            let inner_left = [22, 22, 21, 21, 20, 20, 19, 18, 18, 17, 16, 16];
+            let inner_right = [23, 23, 24, 24, 25, 25, 26, 27, 27, 28, 29, 29];
+            for (row, (left, right)) in inner_left.into_iter().zip(inner_right).enumerate() {
+                let y = 17 + row;
+                for x in left..=right {
+                    let index = ((y * 32 + x) * 4) as usize;
+                    rgba[index..index + 4].copy_from_slice(&[255, 255, 255, 255]);
+                }
+            }
+            // Transparent cutouts create the exclamation mark in template mode.
+            for y in 19..24 {
+                for x in 22..24 {
+                    let index = ((y * 32 + x) * 4) as usize;
+                    rgba[index..index + 4].copy_from_slice(&[255, 255, 255, 0]);
+                }
+            }
+            for y in 26..28 {
+                for x in 22..24 {
+                    let index = ((y * 32 + x) * 4) as usize;
+                    rgba[index..index + 4].copy_from_slice(&[255, 255, 255, 0]);
+                }
+            }
+        }
+        return tauri::image::Image::new_owned(rgba, 32, 32);
+    }
+}
+
+fn refresh_tray_icon(
+    app: &AppHandle,
+    text: BackendText,
+    running: bool,
+    startup_error: bool,
+) -> tauri::Result<()> {
+    let status = tray_mcp_status(running, startup_error);
+    if let Some(tray) = app.tray_by_id("main") {
+        let icon = status_tray_icon(status);
+
+        tray.set_icon_with_as_template(Some(icon), cfg!(target_os = "macos"))?;
+        tray.set_tooltip(Some(format!(
+            "DataNexa - {}",
+            tray_status_text(text, status)
+        )))?;
+    }
+    Ok(())
+}
 
 fn create_tray_menu(
     app: &AppHandle,
@@ -72,6 +197,7 @@ pub(crate) fn refresh_tray_menu(
     startup_error: bool,
     audit_ready: bool,
 ) -> tauri::Result<()> {
+    refresh_tray_icon(app, text, mcp_running, startup_error)?;
     if let Some(tray) = app.tray_by_id("main") {
         tray.set_menu(Some(create_tray_menu(
             app,
@@ -136,18 +262,12 @@ pub fn run() {
             let state = Arc::new(state);
             app.manage(state);
 
-            #[cfg(target_os = "windows")]
-            let tray_icon = app.default_window_icon().cloned().unwrap_or_else(|| {
-                tauri::image::Image::new(include_bytes!("../../resources/trayicon.rgba"), 32, 32)
-            });
-
-            #[cfg(not(target_os = "windows"))]
-            let tray_icon =
-                tauri::image::Image::new(include_bytes!("../../resources/trayicon.rgba"), 32, 32);
+            let tray_icon = status_tray_icon(TrayMcpStatus::Stopped);
 
             let tray_menu = create_tray_menu(app.handle(), tray_text, false, false, false)?;
             TrayIconBuilder::with_id("main")
                 .icon(tray_icon)
+                .icon_as_template(cfg!(target_os = "macos"))
                 .tooltip("DataNexa")
                 .menu(&tray_menu)
                 .show_menu_on_left_click(false)
@@ -332,4 +452,20 @@ pub fn run() {
             #[cfg(not(target_os = "macos"))]
             let _ = (app, event);
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{tray_mcp_status, TrayMcpStatus};
+
+    #[test]
+    fn startup_error_has_priority_over_running() {
+        assert_eq!(tray_mcp_status(true, true), TrayMcpStatus::Error);
+    }
+
+    #[test]
+    fn running_and_stopped_states_are_distinct() {
+        assert_eq!(tray_mcp_status(true, false), TrayMcpStatus::Running);
+        assert_eq!(tray_mcp_status(false, false), TrayMcpStatus::Stopped);
+    }
 }

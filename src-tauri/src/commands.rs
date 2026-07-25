@@ -812,6 +812,8 @@ pub async fn start_mcp_server(
             started.elapsed(),
         )
         .await;
+        let text = text_for_state(state.inner()).await;
+        let _ = refresh_tray_menu(&app, text, false, true, state.audit.is_ready().await);
         return Err(reason);
     }
     let text = text_for_state(state.inner()).await;
