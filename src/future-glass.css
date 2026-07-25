@@ -56,9 +56,9 @@ body {
   background-image:
     linear-gradient(132deg, rgba(36, 107, 254, 0.055), transparent 34%),
     linear-gradient(310deg, rgba(0, 169, 194, 0.045), transparent 42%);
-  font-family: "Avenir Next", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+  font-family: "Segoe UI Variable", "Microsoft YaHei UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans CJK SC", sans-serif;
   font-size: 13px;
-  font-weight: 450;
+  font-weight: 400;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -189,7 +189,7 @@ textarea:focus-visible,
 .brand strong {
   color: var(--ink);
   font-size: 17px;
-  font-weight: 720;
+  font-weight: 700;
 }
 
 :root.dark .brand strong {
@@ -201,6 +201,7 @@ textarea:focus-visible,
   font-family: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
   font-size: 8px;
   line-height: 1;
+  margin-left: 1px;
 }
 
 .nav-list {
@@ -215,7 +216,7 @@ textarea:focus-visible,
   overflow: hidden;
   border-radius: 7px;
   color: #526177;
-  font-weight: 560;
+  font-weight: 600;
   transition: color 180ms ease, background 180ms ease, border-color 180ms ease, transform 180ms ease;
 }
 
@@ -274,7 +275,7 @@ textarea:focus-visible,
 
 .sidebar-status-line {
   font-size: 11px;
-  font-weight: 560;
+  font-weight: 600;
 }
 
 .status-orb {
@@ -312,7 +313,7 @@ textarea:focus-visible,
 
 .topbar h1 {
   font-size: 21px;
-  font-weight: 680;
+  font-weight: 700;
 }
 
 .top-actions {
@@ -428,7 +429,7 @@ textarea:focus-visible,
 .panel-header h2,
 .panel h2 {
   font-size: 16px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .quick-panel > h2 {
@@ -472,7 +473,7 @@ textarea:focus-visible,
   padding: 0 13px;
   border-radius: 7px;
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .button.primary {
@@ -592,12 +593,12 @@ textarea:focus-visible,
 .status-command-core span:not(.status-beacon) {
   color: var(--muted);
   font-size: 10px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .status-command-core strong {
   font-size: 19px;
-  font-weight: 680;
+  font-weight: 700;
 }
 
 .status-beacon,
@@ -691,7 +692,7 @@ textarea:focus-visible,
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 16px;
-  font-weight: 680;
+  font-weight: 700;
 }
 
 .command-metrics small {
@@ -892,7 +893,7 @@ textarea:focus-visible,
   border-bottom: 1px solid var(--line);
   color: var(--muted);
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .data-list-header span:last-child {
@@ -978,7 +979,7 @@ textarea:focus-visible,
 
 .connection-info strong {
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .connection-info p {
@@ -1119,7 +1120,7 @@ textarea:focus-visible,
 
 .server-identity h2 {
   font-size: 22px;
-  font-weight: 680;
+  font-weight: 700;
 }
 
 .server-emblem {
@@ -1164,7 +1165,7 @@ textarea:focus-visible,
 
 .server-console-section .panel-header h2 {
   font-size: 16px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .server-console-section .console-value {
@@ -1267,7 +1268,7 @@ textarea:focus-visible,
   border-bottom: 1px solid var(--line);
   color: var(--muted);
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .tool-group > header small {
@@ -1385,7 +1386,7 @@ textarea:focus-visible,
   color: var(--muted);
   background: color-mix(in srgb, var(--surface-strong) 78%, transparent);
   font-size: 10px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .audit-button:hover {
@@ -1404,7 +1405,7 @@ textarea:focus-visible,
   border: 1px solid transparent;
   border-radius: 5px;
   font-size: 11px;
-  font-weight: 680;
+  font-weight: 700;
 }
 
 .status-pill.green { color: var(--green); border-color: color-mix(in srgb, var(--green) 18%, transparent); background: color-mix(in srgb, var(--green) 9%, transparent); }
@@ -1731,7 +1732,7 @@ textarea:focus-visible,
 :root.dark .switch-row > span {
   color: var(--muted);
   font-size: 11px;
-  font-weight: 620;
+  font-weight: 600;
 }
 
 input,
@@ -1797,7 +1798,7 @@ textarea:focus {
   border-radius: 0;
   background: transparent;
   font-size: 11px;
-  font-weight: 560;
+  font-weight: 600;
 }
 
 .security-list li:nth-child(-n + 2) {

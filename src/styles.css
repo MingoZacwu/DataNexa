@@ -58,7 +58,7 @@ body {
   overflow: hidden;
   color: var(--ink);
   background: var(--bg);
-  font-family: "Segoe UI Variable", "Microsoft YaHei UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  font-family: "Segoe UI Variable", "Microsoft YaHei UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans CJK SC", sans-serif;
   font-size: 13px;
   letter-spacing: 0;
 }
@@ -189,7 +189,7 @@ p {
   font-size: 17px;
   color: #1f4ed8;
   line-height: 1.05;
-  font-weight: 720;
+  font-weight: 700;
 }
 
 :root.dark .brand strong {
@@ -214,7 +214,7 @@ p {
   border-radius: 8px;
   color: #46566f;
   background: transparent;
-  font-weight: 620;
+  font-weight: 600;
   text-align: left;
   transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease;
 }
@@ -281,7 +281,7 @@ p {
   flex: 1;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 620;
+  font-weight: 600;
 }
 
 .sidebar-status-line span:last-child {
@@ -436,7 +436,7 @@ p {
 .topbar h1 {
   font-size: 20px;
   letter-spacing: 0;
-  font-weight: 680;
+  font-weight: 700;
 }
 
 .top-actions {
@@ -685,7 +685,7 @@ p {
   white-space: nowrap;
   font-size: 17px;
   line-height: 1.1;
-  font-weight: 680;
+  font-weight: 700;
 }
 
 .metric-value {
@@ -700,7 +700,7 @@ p {
   flex: 0 0 auto;
   font-size: 20px;
   line-height: 0.95;
-  font-weight: 720;
+  font-weight: 700;
 }
 
 .metric-value small {
@@ -710,7 +710,7 @@ p {
   white-space: nowrap;
   font-size: 11px;
   line-height: 1;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .metric-icon {
@@ -799,7 +799,7 @@ p {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13px;
-  font-weight: 680;
+  font-weight: 700;
 }
 
 .connection-info p {
@@ -906,7 +906,7 @@ p {
 
 .quick-step-body strong {
   font-size: 14px;
-  font-weight: 720;
+  font-weight: 700;
 }
 
 .quick-step-body span {
@@ -1055,7 +1055,7 @@ p {
   border-radius: 6px;
   color: var(--muted);
   background: transparent;
-  font-weight: 850;
+  font-weight: 800;
 }
 
 .settings-tabs button.active {
@@ -1144,7 +1144,7 @@ p {
   margin: 8px 0 12px;
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 16px;
-  font-weight: 650;
+  font-weight: 600;
   overflow-wrap: anywhere;
 }
 
@@ -1174,7 +1174,7 @@ p {
 .panel-kicker {
   color: var(--blue);
   font-size: 13px;
-  font-weight: 750;
+  font-weight: 700;
 }
 
 .button,
@@ -1290,7 +1290,7 @@ p {
   padding: 0 8px;
   border-radius: 999px;
   font-size: 11px;
-  font-weight: 750;
+  font-weight: 700;
 }
 
 .status-pill.green { color: #0a9d5f; background: rgba(31, 191, 117, 0.13); }
@@ -1561,7 +1561,7 @@ pre {
 .form-section h3 {
   margin-bottom: 9px;
   font-size: 15px;
-  font-weight: 720;
+  font-weight: 700;
 }
 
 .connection-form footer {
@@ -1654,7 +1654,7 @@ pre {
 .audit-filter-dialog .dialog-titlebar [data-radix-dialog-title] {
   margin: 0;
   font-size: 17px;
-  font-weight: 680;
+  font-weight: 700;
   line-height: 1.3;
 }
 
@@ -1778,7 +1778,7 @@ pre {
 .audit-calendar-weekdays {
   color: var(--muted);
   font-size: 11px;
-  font-weight: 750;
+  font-weight: 700;
   text-align: center;
 }
 
@@ -1818,7 +1818,7 @@ pre {
   margin: 12px 0 -8px;
   color: var(--red);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .audit-filter-grid input:focus,
@@ -1904,7 +1904,7 @@ pre {
   border-top: 1px solid var(--line);
   color: var(--muted);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
   background: var(--surface-strong);
 }
 
@@ -2094,7 +2094,7 @@ pre {
   flex-wrap: wrap;
   gap: 8px;
   font-size: 24px;
-  font-weight: 720;
+  font-weight: 700;
 }
 
 .version-badge {
@@ -2107,7 +2107,7 @@ pre {
   color: var(--blue);
   background: rgba(37, 99, 235, 0.08);
   font-size: 13px;
-  font-weight: 720;
+  font-weight: 700;
 }
 
 .about-hero p {
@@ -2178,7 +2178,7 @@ pre {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-strong);
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .security-list li.security-warning {
@@ -2466,7 +2466,7 @@ pre {
 
 .sidebar-migration-copy strong {
   font-size: 12px;
-  font-weight: 760;
+  font-weight: 800;
 }
 
 .sidebar-migration-copy span {
@@ -2515,7 +2515,7 @@ pre {
 .migration-dialog-copy [data-radix-dialog-title] {
   display: block;
   font-size: 17px;
-  font-weight: 740;
+  font-weight: 700;
   line-height: 1.35;
 }
 
@@ -2552,7 +2552,7 @@ pre {
 .migration-error strong {
   display: block;
   font-size: 12px;
-  font-weight: 740;
+  font-weight: 700;
   line-height: 1.4;
 }
 
@@ -2682,7 +2682,7 @@ pre {
 
 .sidebar-update-copy strong {
   font-size: 12px;
-  font-weight: 760;
+  font-weight: 800;
 }
 
 .sidebar-update-copy span {
