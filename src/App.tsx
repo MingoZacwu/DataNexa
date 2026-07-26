@@ -45,7 +45,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { FormEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
+import type { FormEvent, MouseEvent as ReactMouseEvent, ReactNode, UIEvent as ReactUIEvent } from "react";
 import appConfig from "../app.config.json";
 import appIconUrl from "../resources/icon.png";
 import brandLogoUrl from "../resources/datanexa.png";
@@ -69,6 +69,7 @@ import { useAppUpdater, type UpdateState } from "./lib/updater";
 import type {
   AppSnapshot,
   AuditEvent,
+  AuditMigrationState,
   ConnectionConfig,
   ConnectionDiagnostics,
   DatabaseType,
@@ -100,6 +101,14 @@ const DATABASE_LOGOS: Record<DatabaseType, string> = {
   postgres: postgresLogoUrl,
   sqlite: sqliteLogoUrl
 };
+
+function updateScrollFade(event: ReactUIEvent<HTMLDivElement>) {
+  const element = event.currentTarget;
+  const pastStart = element.scrollTop > 1;
+  const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
+  element.classList.toggle("scroll-past-start", pastStart);
+  element.classList.toggle("scroll-at-end", atBottom);
+}
 
 function isThemeMode(value: string | null): value is ThemeMode {
   return value === "system" || value === "light" || value === "dark";
@@ -146,10 +155,12 @@ const defaultConnection = (name: string): ConnectionConfig => ({
   ssl_mode: "prefer",
   max_rows: 500,
   query_timeout_ms: 8000,
-  max_connections: 1
+  max_connections: 1,
+  max_result_bytes: 1048576
 });
 
 function App() {
+  const isMacos = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent);
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
   const [activeView, setActiveView] = useState<View>("overview");
   const [editing, setEditing] = useState<ConnectionConfig | null>(null);
@@ -169,6 +180,9 @@ function App() {
   const [theme, setTheme] = useState<ThemeMode>(detectThemeMode);
   const [systemThemeMode, setSystemThemeMode] = useState<EffectiveTheme>(systemTheme);
   const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string | null>(null);
+  const [migrationDialogOpen, setMigrationDialogOpen] = useState(false);
+  const [migrationRecoveryBusy, setMigrationRecoveryBusy] = useState(false);
+  const [confirmClearLegacy, setConfirmClearLegacy] = useState(false);
   const effectiveTheme = resolveTheme(theme, systemThemeMode);
   const t = messages[locale];
   const hasAuditFilters = Object.values(auditFilters).some(Boolean);
@@ -235,6 +249,13 @@ function App() {
     shownStartupError.current = error;
     pushToast(error, "error");
   }, [snapshot?.startup_error]);
+
+  useEffect(() => {
+    if (snapshot?.audit_migration.status === "ready") {
+      setMigrationDialogOpen(false);
+      setConfirmClearLegacy(false);
+    }
+  }, [snapshot?.audit_migration.status]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -363,6 +384,7 @@ function App() {
   }
 
   async function testConnection(id: string) {
+    if (!snapshot || snapshot.audit_migration.status !== "ready") return;
     setBusy(true);
     try {
       pushToast(formatConnectionTest(t, await api.testConnection(id)), "info");
@@ -375,7 +397,7 @@ function App() {
   }
 
   async function testEditingConnection() {
-    if (!editing) return;
+    if (!editing || !snapshot || snapshot.audit_migration.status !== "ready") return;
     setBusy(true);
     try {
       pushToast(
@@ -407,13 +429,40 @@ function App() {
   }
 
   async function toggleServer() {
+    if (!snapshot?.server_status.running && snapshot?.audit_migration.status !== "ready") return;
     setBusy(true);
     try {
       setSnapshot(snapshot?.server_status.running ? await api.stopServer() : await api.startServer());
     } catch (error) {
       showError(error);
+      await refresh({ quiet: true });
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function retryAuditMigration() {
+    setMigrationRecoveryBusy(true);
+    try {
+      setSnapshot(await api.retryAuditMigration());
+    } catch (error) {
+      showError(error);
+      await refresh({ quiet: true });
+    } finally {
+      setMigrationRecoveryBusy(false);
+    }
+  }
+
+  async function clearLegacyAuditLog() {
+    setMigrationRecoveryBusy(true);
+    try {
+      setSnapshot(await api.clearLegacyAuditLog());
+    } catch (error) {
+      showError(error);
+      await refresh({ quiet: true });
+    } finally {
+      setMigrationRecoveryBusy(false);
+      setConfirmClearLegacy(false);
     }
   }
 
@@ -429,13 +478,16 @@ function App() {
     }
   }
 
-  async function saveServer(server: ServerConfig) {
+  async function saveServer(server: ServerConfig): Promise<boolean> {
     setBusy(true);
     try {
       setSnapshot(await api.saveServerConfig(server));
       pushToast(t.toast.serverSaved, "info");
+      return true;
     } catch (error) {
       showError(error);
+      await refresh({ quiet: true });
+      return false;
     } finally {
       setBusy(false);
     }
@@ -534,12 +586,14 @@ function App() {
   const recentEvents = snapshot?.audit_events.slice(0, 8) ?? [];
   const availableUpdateVersion = updater.state.kind === "available" ? updater.state.version : null;
   const showUpdateReminder = availableUpdateVersion !== null && dismissedUpdateVersion !== availableUpdateVersion;
+  const migrationReady = snapshot?.audit_migration.status === "ready";
 
   return (
     <Tooltip.Provider delayDuration={180}>
       <div className="app-shell">
         <div className="ambient-grid" aria-hidden="true" />
-        <WindowChrome t={t} />
+        <WindowDragRegion />
+        {!isMacos && <WindowControls t={t} />}
 
         <div className="app-body">
           <aside className="sidebar">
@@ -561,7 +615,9 @@ function App() {
             </nav>
 
             <div className="sidebar-bottom">
-              {showUpdateReminder && availableUpdateVersion && (
+              {snapshot && snapshot.audit_migration.status !== "ready" ? (
+                <AuditMigrationReminder t={t} state={snapshot.audit_migration} onOpen={() => setMigrationDialogOpen(true)} />
+              ) : showUpdateReminder && availableUpdateVersion ? (
                 <SidebarUpdateReminder
                   t={t}
                   version={availableUpdateVersion}
@@ -571,13 +627,14 @@ function App() {
                   }}
                   onDismiss={() => setDismissedUpdateVersion(availableUpdateVersion)}
                 />
-              )}
+              ) : null}
               <SidebarFooter
                 t={t}
                 running={Boolean(snapshot?.server_status.running)}
+                startupFailed={Boolean(snapshot?.startup_error)}
                 port={snapshot?.config.server.port ?? 17321}
                 busy={busy}
-                disabled={!snapshot}
+                disabled={!snapshot || (!snapshot.server_status.running && !migrationReady)}
                 onToggle={toggleServer}
               />
             </div>
@@ -638,7 +695,7 @@ function App() {
             {!snapshot ? (
               <div className="loading-panel">{t.overview.loading}</div>
             ) : (
-              <div className={clsx("view-stage", `view-${activeView}`)} key={activeView}>
+              <div className={clsx("view-stage", `view-${activeView}`)} key={activeView} onScroll={updateScrollFade}>
                 {activeView === "overview" && (
                   <OverviewView
                     t={t}
@@ -651,6 +708,7 @@ function App() {
                     onSelectAudit={setSelectedAudit}
                     onCopyAgentPrompt={() => copyAgentPrompt(serverEndpoint, requireToken, serverToken)}
                     onToggleServer={toggleServer}
+                    startDisabled={!snapshot.server_status.running && !migrationReady}
                   />
                 )}
                 {activeView === "connections" && (
@@ -663,6 +721,7 @@ function App() {
                     onTest={testConnection}
                     onDiagnose={diagnoseConnection}
                     onToggleEnabled={setConnectionEnabled}
+                    migrationReady={migrationReady}
                   />
                 )}
                 {activeView === "server" && (
@@ -673,6 +732,7 @@ function App() {
                     endpoint={serverEndpoint}
                     onCopyAgentPrompt={() => copyAgentPrompt(serverEndpoint, snapshot.config.server.require_token, snapshot.server_status.token)}
                     onToggle={toggleServer}
+                    startDisabled={!snapshot.server_status.running && !migrationReady}
                     onRotate={rotateToken}
                   />
                 )}
@@ -707,6 +767,7 @@ function App() {
                     onExportConnections={() => void exportConnections()}
                     onImportConnections={() => void importConnections()}
                     onOpenProjectHomepage={() => void api.openProjectHomepage().catch(showError)}
+                    onOpenProjectSite={() => void api.openProjectSite().catch(showError)}
                   />
                 )}
               </div>
@@ -729,40 +790,113 @@ function App() {
           }}
           onEditingChange={setEditing}
           onTest={testEditingConnection}
+          migrationReady={migrationReady}
           onSubmit={saveConnection}
           onClose={() => setEditing(null)}
         />
         <AuditDetailDialog t={t} event={selectedAudit} onClose={() => setSelectedAudit(null)} />
+        {snapshot && snapshot.audit_migration.status === "failed" && (
+          <AuditMigrationDialog
+            t={t}
+            state={snapshot.audit_migration}
+            open={migrationDialogOpen}
+            busy={migrationRecoveryBusy}
+            confirmClear={confirmClearLegacy}
+            onOpenChange={setMigrationDialogOpen}
+            onRetry={() => void retryAuditMigration()}
+            onRequestClear={() => setConfirmClearLegacy(true)}
+            onCancelClear={() => setConfirmClearLegacy(false)}
+            onConfirmClear={() => void clearLegacyAuditLog()}
+          />
+        )}
       </div>
     </Tooltip.Provider>
   );
 }
 
-function WindowChrome({ t }: { t: I18nMessages }) {
-  const isMacos = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent);
-
+function WindowDragRegion() {
   function handleDragStart(event: ReactMouseEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
-    if ((event.target as HTMLElement).closest("button")) return;
+    if (event.detail > 1) {
+      event.preventDefault();
+      return;
+    }
     void api.startWindowDrag().catch(() => undefined);
   }
 
   return (
-    <div className="window-chrome" onMouseDown={handleDragStart} data-tauri-drag-region>
-      <div className="window-title" data-tauri-drag-region>
-        DataNexa
-      </div>
-      {!isMacos && (
-        <div className="window-controls">
-          <button type="button" className="window-control minimize" onClick={() => void api.minimizeWindow().catch(() => undefined)} aria-label={t.common.minimize}>
-            <Minus size={13} />
-          </button>
-          <button type="button" className="window-control close" onClick={() => void api.hideWindow().catch(() => undefined)} aria-label={t.common.close}>
-            <X size={13} />
-          </button>
-        </div>
-      )}
+    <div className="window-drag-region" onMouseDown={handleDragStart} aria-hidden="true" />
+  );
+}
+
+function WindowControls({ t }: { t: I18nMessages }) {
+  return (
+    <div className="window-controls">
+      <button type="button" className="window-control minimize" onClick={() => void api.minimizeWindow().catch(() => undefined)} aria-label={t.common.minimize}>
+        <Minus size={13} />
+      </button>
+      <button type="button" className="window-control close" onClick={() => void api.hideWindow().catch(() => undefined)} aria-label={t.common.close}>
+        <X size={13} />
+      </button>
     </div>
+  );
+}
+
+function AuditMigrationReminder({ t, state, onOpen }: { t: I18nMessages; state: Exclude<AuditMigrationState, { status: "ready" }>; onOpen: () => void }) {
+  if (state.status === "failed") {
+    return (
+      <button type="button" className="sidebar-migration-reminder failed" onClick={onOpen}>
+        <span className="sidebar-migration-icon"><AlertTriangle size={16} /></span>
+        <span className="sidebar-migration-copy"><strong>{t.auditMigration.failedTitle}</strong><span>{t.auditMigration.failedCompact}</span></span>
+      </button>
+    );
+  }
+  const finishing = state.phase === "committing" || state.phase === "finalizing";
+  const percent = state.total > 0 ? Math.min(100, Math.round((state.processed / state.total) * 100)) : 0;
+  return (
+    <div className="sidebar-migration-reminder migrating">
+      <span className="sidebar-migration-icon"><RefreshCw className="is-spinning" size={16} /></span>
+      <span className="sidebar-migration-copy"><strong>{t.auditMigration.migratingTitle}</strong><span>{finishing ? t.auditMigration.finishing : state.total > 0 ? formatMessage(t.auditMigration.progress, { processed: state.processed, total: state.total }) : t.auditMigration.preparing}</span></span>
+      <span className="migration-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><span style={{ width: `${percent}%` }} /></span>
+    </div>
+  );
+}
+
+function AuditMigrationDialog({ t, state, open, busy, confirmClear, onOpenChange, onRetry, onRequestClear, onCancelClear, onConfirmClear }: { t: I18nMessages; state: Extract<AuditMigrationState, { status: "failed" }>; open: boolean; busy: boolean; confirmClear: boolean; onOpenChange: (open: boolean) => void; onRetry: () => void; onRequestClear: () => void; onCancelClear: () => void; onConfirmClear: () => void }) {
+  return (
+    <Dialog.Root open={open} onOpenChange={(next) => { if (!busy) { if (!next) onCancelClear(); onOpenChange(next); } }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="dialog-overlay" />
+        <Dialog.Content className={clsx("policy-dialog migration-dialog", confirmClear && "confirming")}>
+          <div className="dialog-titlebar">
+            <div className="migration-dialog-copy">
+              <Dialog.Title>{confirmClear ? t.auditMigration.clearConfirmTitle : t.auditMigration.failedTitle}</Dialog.Title>
+              <Dialog.Description>{confirmClear ? t.auditMigration.clearConfirmDescription : t.auditMigration.dialogDescription}</Dialog.Description>
+            </div>
+            <Dialog.Close asChild><button type="button" className="icon-button" disabled={busy} aria-label={t.common.close}><X size={17} /></button></Dialog.Close>
+          </div>
+          {!confirmClear && (
+            <div className="migration-error" role="alert">
+              <span className="migration-error-icon"><AlertTriangle size={16} /></span>
+              <div><strong>{t.auditMigration.errorReason}</strong><p>{state.reason}</p></div>
+            </div>
+          )}
+          <div className="migration-dialog-actions">
+            {confirmClear ? (
+              <>
+                <button type="button" className="button ghost" disabled={busy} onClick={onCancelClear}>{t.common.cancel}</button>
+                <button type="button" className="button danger" disabled={busy} onClick={onConfirmClear}><Trash2 size={15} />{t.auditMigration.confirmClear}</button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="button" disabled={busy} onClick={onRequestClear}>{t.auditMigration.clear}</button>
+                <button type="button" className="button primary" autoFocus disabled={busy} onClick={onRetry}><RefreshCw size={15} className={clsx(busy && "is-spinning")} />{t.auditMigration.retry}</button>
+              </>
+            )}
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
@@ -798,6 +932,7 @@ function SidebarUpdateReminder({
 function SidebarFooter({
   t,
   running,
+  startupFailed,
   port,
   busy,
   disabled,
@@ -805,6 +940,7 @@ function SidebarFooter({
 }: {
   t: I18nMessages;
   running: boolean;
+  startupFailed: boolean;
   port: number;
   busy: boolean;
   disabled: boolean;
@@ -813,9 +949,9 @@ function SidebarFooter({
   const toggleLabel = running ? t.server.stop : t.server.start;
   return (
     <div className="sidebar-footer">
-      <div className={clsx("sidebar-status-line", running && "running")}>
+      <div className={clsx("sidebar-status-line", startupFailed ? "error" : running && "running")}>
         <span className="status-orb" />
-        <span>{running ? formatMessage(t.sidebar.serverRunning, { port }) : t.sidebar.serverStopped}</span>
+        <span>{startupFailed ? t.sidebar.serverFailed : running ? formatMessage(t.sidebar.serverRunning, { port }) : t.sidebar.serverStopped}</span>
       </div>
       <span className="footer-divider" aria-hidden="true" />
       <IconTooltip label={toggleLabel}>
@@ -899,7 +1035,8 @@ function OverviewView({
   onOpenAudit,
   onSelectAudit,
   onCopyAgentPrompt,
-  onToggleServer
+  onToggleServer,
+  startDisabled
 }: {
   t: I18nMessages;
   snapshot: AppSnapshot;
@@ -911,19 +1048,22 @@ function OverviewView({
   onSelectAudit: (event: AuditEvent) => void;
   onCopyAgentPrompt: () => void;
   onToggleServer: () => void;
+  startDisabled: boolean;
 }) {
   const totalConnections = snapshot.config.connections.length;
   const enabledTools = snapshot.tools.filter((tool) => tool.enabled).length;
   const uptime = snapshot.server_status.started_at ? relativeDuration(t, snapshot.server_status.started_at) : t.overview.notStarted;
+  const startupFailed = Boolean(snapshot.startup_error);
+  const statusLabel = startupFailed ? t.overview.failed : snapshot.server_status.running ? t.overview.running : t.overview.stopped;
 
   return (
     <section className="overview-page">
-      <section className={clsx("status-command", snapshot.server_status.running && "running")}>
+      <section className={clsx("status-command", startupFailed ? "error" : snapshot.server_status.running && "running")} title={snapshot.startup_error ?? undefined}>
         <div className="status-command-core">
-          <span className="status-beacon"><Activity size={19} /></span>
+          <span className="status-beacon">{startupFailed ? <AlertTriangle size={19} /> : <Activity size={19} />}</span>
           <div>
             <span>{t.overview.metricServer}</span>
-            <strong>{snapshot.server_status.running ? t.overview.running : t.overview.stopped}</strong>
+            <strong>{statusLabel}</strong>
           </div>
         </div>
         <div className="command-metrics">
@@ -931,7 +1071,7 @@ function OverviewView({
           <div><span>{t.overview.metricTools}</span><strong>{enabledTools}<small> / {snapshot.tools.length}</small></strong></div>
           <div><span>{t.overview.metricUptime}</span><strong>{uptime}</strong></div>
         </div>
-        <button type="button" className={clsx("button command-button", snapshot.server_status.running ? "stop" : "primary")} onClick={onToggleServer}>
+        <button type="button" className={clsx("button command-button", snapshot.server_status.running ? "stop" : "primary")} onClick={onToggleServer} disabled={startDisabled}>
           {snapshot.server_status.running ? <Square size={15} /> : <Play size={16} />}
           {snapshot.server_status.running ? t.server.stop : t.server.start}
         </button>
@@ -984,7 +1124,8 @@ function ConnectionsView({
   onDelete,
   onTest,
   onDiagnose,
-  onToggleEnabled
+  onToggleEnabled,
+  migrationReady
 }: {
   t: I18nMessages;
   connections: ConnectionConfig[];
@@ -994,6 +1135,7 @@ function ConnectionsView({
   onTest: (id: string) => void;
   onDiagnose: (id: string) => void;
   onToggleEnabled: (id: string, enabled: boolean) => void;
+  migrationReady: boolean;
 }) {
   const [selectedId, setSelectedId] = useState(connections[0]?.id ?? "");
   const selected = connections.find((connection) => connection.id === selectedId) ?? connections[0];
@@ -1020,6 +1162,7 @@ function ConnectionsView({
               onTest={onTest}
               onDiagnose={onDiagnose}
               onToggleEnabled={onToggleEnabled}
+              migrationReady={migrationReady}
               selected={selected?.id === connection.id}
               onSelect={() => setSelectedId(connection.id)}
             />
@@ -1043,9 +1186,10 @@ function ConnectionsView({
               <div><dt>{t.connectionDialog.maxRows}</dt><dd>{selected.max_rows}</dd></div>
               <div><dt>{t.connectionDialog.queryTimeoutMs}</dt><dd>{selected.query_timeout_ms} ms</dd></div>
               <div><dt>{t.connectionDialog.maxConnections}</dt><dd>{selected.max_connections}</dd></div>
+              <div className="inspector-grid-wide"><dt>{t.connectionDialog.maxResultBytes}</dt><dd>{Math.round(selected.max_result_bytes / 1024)} KiB</dd></div>
             </dl>
             <div className="inspector-actions">
-              <button type="button" className="button soft" disabled={busy || !selected.enabled} onClick={() => onTest(selected.id)}><Cable size={15} />{t.connections.test}</button>
+              <button type="button" className="button soft" disabled={busy || !selected.enabled || !migrationReady} onClick={() => onTest(selected.id)}><Cable size={15} />{t.connections.test}</button>
               <button type="button" className="button ghost" disabled={busy || !selected.enabled} onClick={() => onDiagnose(selected.id)}><SearchCheck size={15} />{t.connections.diagnose}</button>
             </div>
           </>
@@ -1116,7 +1260,8 @@ function ServerView({
   endpoint,
   onCopyAgentPrompt,
   onToggle,
-  onRotate
+  onRotate,
+  startDisabled
 }: {
   t: I18nMessages;
   snapshot: AppSnapshot;
@@ -1125,17 +1270,20 @@ function ServerView({
   onCopyAgentPrompt: () => void;
   onToggle: () => void;
   onRotate: () => void;
+  startDisabled: boolean;
 }) {
   const requireToken = snapshot.config.server.require_token;
+  const startupFailed = Boolean(snapshot.startup_error);
+  const statusLabel = startupFailed ? t.overview.failed : snapshot.server_status.running ? t.overview.running : t.overview.stopped;
 
   return (
-    <section className={clsx("server-console", snapshot.server_status.running && "running")}>
+    <section className={clsx("server-console", startupFailed ? "error" : snapshot.server_status.running && "running")} title={snapshot.startup_error ?? undefined}>
       <div className="server-hero">
         <div className="server-identity">
-          <span className="server-emblem"><Server size={25} /></span>
-          <div><span className="panel-kicker">{t.overview.metricServer}</span><h2>{snapshot.server_status.running ? t.overview.running : t.overview.stopped}</h2></div>
+          <span className="server-emblem">{startupFailed ? <AlertTriangle size={25} /> : <Server size={25} />}</span>
+          <div><span className="panel-kicker">{t.overview.metricServer}</span><h2>{statusLabel}</h2></div>
         </div>
-        <button type="button" className={clsx("button", snapshot.server_status.running ? "stop" : "primary")} onClick={onToggle} disabled={busy}>
+        <button type="button" className={clsx("button", snapshot.server_status.running ? "stop" : "primary")} onClick={onToggle} disabled={busy || startDisabled}>
           {snapshot.server_status.running ? <Square size={16} /> : <Play size={17} />}
           {snapshot.server_status.running ? t.server.stop : t.server.start}
         </button>
@@ -1143,12 +1291,14 @@ function ServerView({
 
       <div className="server-console-grid">
         <div className="server-console-section endpoint-section">
-          <PanelHeader title={t.server.endpoint} />
+          <PanelHeader
+            title={t.server.endpoint}
+            action={<StatusPill tone={startupFailed ? "red" : snapshot.server_status.running ? "green" : "slate"} label={statusLabel} />}
+          />
           <div className="console-value">
             <code>{endpoint}</code>
             <button type="button" className="icon-button" onClick={() => navigator.clipboard.writeText(endpoint)} aria-label={t.server.copyEndpoint}><Clipboard size={16} /></button>
           </div>
-          <StatusPill tone={snapshot.server_status.running ? "green" : "slate"} label={snapshot.server_status.running ? t.overview.running : t.overview.stopped} />
         </div>
 
       {requireToken ? (
@@ -1378,7 +1528,8 @@ function SettingsView({
   onSaveSettings,
   onExportConnections,
   onImportConnections,
-  onOpenProjectHomepage
+  onOpenProjectHomepage,
+  onOpenProjectSite
 }: {
   t: I18nMessages;
   locale: Locale;
@@ -1402,20 +1553,49 @@ function SettingsView({
   onPolicyKindChange: (kind: DatabaseType) => void;
   onSqlChange: (sql: string) => void;
   onPolicyCheck: () => void;
-  onSaveServer: (server: ServerConfig) => void;
+  onSaveServer: (server: ServerConfig) => Promise<boolean>;
   onSaveSettings: (settings: SettingsConfig, applyAutoStart?: boolean) => void;
   onExportConnections: () => void;
   onImportConnections: () => void;
   onOpenProjectHomepage: () => void;
+  onOpenProjectSite: () => void;
 }) {
   const [serverDraft, setServerDraft] = useState(server);
   const [settingsDraft, setSettingsDraft] = useState(settings);
+  const [serverPortDraft, setServerPortDraft] = useState(String(server.port));
+  const [auditMaxEventsDraft, setAuditMaxEventsDraft] = useState(String(settings.audit_max_events));
+  const serverDraftDirty = useRef(false);
+  const settingsDraftDirty = useRef(false);
   const [policyDialogOpen, setPolicyDialogOpen] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [exportAcknowledged, setExportAcknowledged] = useState(false);
 
-  useEffect(() => setServerDraft(server), [server]);
-  useEffect(() => setSettingsDraft(settings), [settings]);
+  useEffect(() => {
+    setServerDraft((current) => {
+      if (!serverDraftDirty.current) return server;
+      const saved = current.host === server.host
+        && current.port === server.port
+        && current.require_token === server.require_token;
+      if (saved) serverDraftDirty.current = false;
+      if (saved) setServerPortDraft(String(server.port));
+      return saved ? server : current;
+    });
+    if (!serverDraftDirty.current) setServerPortDraft(String(server.port));
+  }, [server]);
+  useEffect(() => {
+    setSettingsDraft((current) => {
+      if (!settingsDraftDirty.current) return settings;
+      const saved = current.audit_max_events === settings.audit_max_events
+        && current.audit_redact_sql_literals === settings.audit_redact_sql_literals
+        && current.auto_check_updates === settings.auto_check_updates
+        && current.auto_start_mcp === settings.auto_start_mcp
+        && current.language === settings.language;
+      if (saved) settingsDraftDirty.current = false;
+      if (saved) setAuditMaxEventsDraft(String(settings.audit_max_events));
+      return saved ? settings : current;
+    });
+    if (!settingsDraftDirty.current) setAuditMaxEventsDraft(String(settings.audit_max_events));
+  }, [settings]);
   useEffect(() => {
     setSettingsDraft((current) => ({ ...current, language: locale }));
   }, [locale]);
@@ -1432,27 +1612,52 @@ function SettingsView({
       </div>
 
       {tab === "general" ? (
-        <div className="settings-stack">
+        <div className="settings-stack" onScroll={updateScrollFade}>
           <section className="panel">
             <h2>{t.settings.servicePolicy}</h2>
             <div className="form-grid settings-grid">
               <Field label={t.settings.listenHost}>
                 <input
                   value={serverDraft.host}
-                  onChange={(event) => setServerDraft({ ...serverDraft, host: event.target.value })}
-                  onBlur={(event) => onSaveServer({ ...serverDraft, host: event.currentTarget.value })}
+                  onChange={(event) => {
+                    serverDraftDirty.current = true;
+                    setServerDraft({ ...serverDraft, host: event.target.value });
+                  }}
+                  onBlur={async (event) => {
+                    const saved = await onSaveServer({ ...serverDraft, host: event.currentTarget.value });
+                    if (!saved) {
+                      serverDraftDirty.current = false;
+                      setServerDraft(server);
+                      setServerPortDraft(String(server.port));
+                    }
+                  }}
                 />
               </Field>
               <Field label={t.settings.port}>
                 <input
                   type="number"
-                  value={serverDraft.port}
-                  onChange={(event) => setServerDraft({ ...serverDraft, port: Number(event.target.value) })}
-                  onBlur={(event) => onSaveServer({ ...serverDraft, port: Number(event.currentTarget.value) })}
+                  value={serverPortDraft}
+                  onChange={(event) => {
+                    serverDraftDirty.current = true;
+                    setServerPortDraft(event.target.value);
+                    setServerDraft({ ...serverDraft, port: Number(event.target.value) || 0 });
+                  }}
+                  onBlur={async (event) => {
+                    const port = Math.max(1, Math.min(65535, Number(event.currentTarget.value) || server.port));
+                    setServerPortDraft(String(port));
+                    setServerDraft((current) => ({ ...current, port }));
+                    const saved = await onSaveServer({ ...serverDraft, port });
+                    if (!saved) {
+                      serverDraftDirty.current = false;
+                      setServerDraft(server);
+                      setServerPortDraft(String(server.port));
+                    }
+                  }}
                 />
               </Field>
               <SwitchField label={t.settings.requireBearer} checked={serverDraft.require_token} disabled={busy} onCheckedChange={(checked) => {
                 const next = { ...serverDraft, require_token: checked };
+                serverDraftDirty.current = true;
                 setServerDraft(next);
                 onSaveServer(next);
               }} />
@@ -1468,6 +1673,7 @@ function SettingsView({
                   onChange={(event) => {
                     const language = normalizeLocale(event.target.value);
                     const next = { ...settingsDraft, language };
+                    settingsDraftDirty.current = true;
                     setSettingsDraft(next);
                     onSaveSettings(next);
                   }}
@@ -1499,6 +1705,7 @@ function SettingsView({
             <div className="form-grid settings-grid">
               <SwitchField label={t.settings.autoStartMcp} checked={autoStartStatus === "enabled"} disabled={busy} onCheckedChange={(checked) => {
                 const next = { ...settingsDraft, auto_start_mcp: checked };
+                settingsDraftDirty.current = true;
                 setSettingsDraft(next);
                 onSaveSettings(next, true);
               }} />
@@ -1513,13 +1720,23 @@ function SettingsView({
                   type="number"
                   min={1}
                   max={5000}
-                  value={settingsDraft.audit_max_events}
-                  onChange={(event) => setSettingsDraft({ ...settingsDraft, audit_max_events: Number(event.target.value) })}
-                  onBlur={(event) => onSaveSettings({ ...settingsDraft, audit_max_events: Number(event.currentTarget.value) })}
+                  value={auditMaxEventsDraft}
+                  onChange={(event) => {
+                    settingsDraftDirty.current = true;
+                    setAuditMaxEventsDraft(event.target.value);
+                    setSettingsDraft({ ...settingsDraft, audit_max_events: Number(event.target.value) || 0 });
+                  }}
+                  onBlur={(event) => {
+                    const auditMaxEvents = Math.max(1, Math.min(5000, Number(event.currentTarget.value) || settings.audit_max_events));
+                    setAuditMaxEventsDraft(String(auditMaxEvents));
+                    setSettingsDraft((current) => ({ ...current, audit_max_events: auditMaxEvents }));
+                    onSaveSettings({ ...settingsDraft, audit_max_events: auditMaxEvents });
+                  }}
                 />
               </Field>
               <SwitchField label={t.settings.auditRedactSql} checked={settingsDraft.audit_redact_sql_literals} disabled={busy} onCheckedChange={(checked) => {
                 const next = { ...settingsDraft, audit_redact_sql_literals: checked };
+                settingsDraftDirty.current = true;
                 setSettingsDraft(next);
                 onSaveSettings(next);
               }} />
@@ -1671,7 +1888,7 @@ function SettingsView({
           </Dialog.Root>
         </div>
       ) : (
-        <div className="settings-stack">
+        <div className="settings-stack" onScroll={updateScrollFade}>
           <section className="panel about-panel">
             <div className="about-hero">
               <img src={appIconUrl} alt="DataNexa" />
@@ -1687,6 +1904,7 @@ function SettingsView({
               autoCheckUpdates={settingsDraft.auto_check_updates}
               onAutoCheckUpdatesChange={(checked) => {
                 const next = { ...settingsDraft, auto_check_updates: checked };
+                settingsDraftDirty.current = true;
                 setSettingsDraft(next);
                 onSaveSettings(next);
               }}
@@ -1695,17 +1913,30 @@ function SettingsView({
               onOpenProjectReleases={onOpenProjectReleases}
             />
             <footer className="about-footer">
-              <a
-                className="github-link"
-                href="https://github.com/MingoZacwu/DataNexa"
-                onClick={(event) => {
-                  event.preventDefault();
-                  onOpenProjectHomepage();
-                }}
-              >
-                <Github size={16} />
-                GitHub
-              </a>
+              <div className="about-footer-links">
+                <a
+                  className="github-link"
+                  href="https://mingozacwu.github.io/datanexa-site/"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    onOpenProjectSite();
+                  }}
+                >
+                  <Home size={16} />
+                  {t.settings.officialHomepage}
+                </a>
+                <a
+                  className="github-link"
+                  href="https://github.com/MingoZacwu/DataNexa"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    onOpenProjectHomepage();
+                  }}
+                >
+                  <Github size={16} />
+                  GitHub
+                </a>
+              </div>
               <p>(C) 2026 Zachary Wu All Rights Reserved.</p>
             </footer>
           </section>
@@ -1871,6 +2102,7 @@ function ConnectionDialog({
   onClearPasswordChange,
   onEditingChange,
   onTest,
+  migrationReady,
   onSubmit,
   onClose
 }: {
@@ -1883,6 +2115,7 @@ function ConnectionDialog({
   onClearPasswordChange: (checked: boolean) => void;
   onEditingChange: (connection: ConnectionConfig) => void;
   onTest: () => void;
+  migrationReady: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onClose: () => void;
 }) {
@@ -1986,6 +2219,9 @@ function ConnectionDialog({
               <Field label={t.connectionDialog.maxConnections}>
                 <input type="number" min={1} max={3} value={editing.max_connections} onChange={(event) => onEditingChange({ ...editing, max_connections: Number(event.target.value) })} />
               </Field>
+              <Field label={t.connectionDialog.maxResultBytes}>
+                <input type="number" min={64} max={8192} step={64} value={Math.round(editing.max_result_bytes / 1024)} onChange={(event) => onEditingChange({ ...editing, max_result_bytes: Number(event.target.value) * 1024 })} />
+              </Field>
               <p className="field-note span-all">
                 {formatMessage(t.connectionDialog.currentCredential, { credential: editing.credential_ref ?? t.connectionDialog.credentialNotSaved })}
               </p>
@@ -1993,7 +2229,7 @@ function ConnectionDialog({
             </div>
 
             <footer>
-              <button type="button" className="button soft" disabled={busy} onClick={onTest}>
+              <button type="button" className="button soft" disabled={busy || !migrationReady} onClick={onTest}>
                 <Cable size={16} />
                 {t.connections.test}
               </button>
@@ -2084,6 +2320,7 @@ function ConnectionRow({
   onTest,
   onDiagnose,
   onToggleEnabled,
+  migrationReady,
   selected,
   onSelect
 }: {
@@ -2095,6 +2332,7 @@ function ConnectionRow({
   onTest: (id: string) => void;
   onDiagnose: (id: string) => void;
   onToggleEnabled: (id: string, enabled: boolean) => void;
+  migrationReady: boolean;
   selected?: boolean;
   onSelect?: () => void;
 }) {
@@ -2116,7 +2354,7 @@ function ConnectionRow({
           </button>
         </IconTooltip>
         <IconTooltip label={t.connections.test}>
-          <button type="button" className="icon-button" onClick={() => onTest(connection.id)} disabled={busy || !connection.enabled}>
+          <button type="button" className="icon-button" onClick={() => onTest(connection.id)} disabled={busy || !connection.enabled || !migrationReady}>
             <Cable size={17} />
           </button>
         </IconTooltip>

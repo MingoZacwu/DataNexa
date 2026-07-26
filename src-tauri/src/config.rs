@@ -82,6 +82,8 @@ pub struct ConnectionConfig {
     pub query_timeout_ms: u64,
     #[serde(default = "default_max_connections")]
     pub max_connections: u32,
+    #[serde(default = "default_max_result_bytes")]
+    pub max_result_bytes: usize,
 }
 
 pub struct ConfigStore {
@@ -219,6 +221,13 @@ fn default_max_connections() -> u32 {
     1
 }
 
+pub const MIN_RESULT_BYTES: usize = 64 * 1024;
+pub const MAX_RESULT_BYTES: usize = 8 * 1024 * 1024;
+
+pub fn default_max_result_bytes() -> usize {
+    1024 * 1024
+}
+
 fn default_audit_max_events() -> usize {
     300
 }
@@ -307,6 +316,9 @@ fn normalize_connection(connection: &mut ConnectionConfig) -> anyhow::Result<()>
     connection.max_rows = connection.max_rows.clamp(1, 5000);
     connection.query_timeout_ms = connection.query_timeout_ms.clamp(500, 60_000);
     connection.max_connections = connection.max_connections.clamp(1, 3);
+    connection.max_result_bytes = connection
+        .max_result_bytes
+        .clamp(MIN_RESULT_BYTES, MAX_RESULT_BYTES);
 
     if connection.id.is_empty()
         || !connection.id.chars().enumerate().all(|(index, value)| {
@@ -470,6 +482,7 @@ require_token = true
             max_rows: 100,
             query_timeout_ms: 1_000,
             max_connections: 1,
+            max_result_bytes: default_max_result_bytes(),
         });
         assert!(config.normalize_and_validate().is_err());
 

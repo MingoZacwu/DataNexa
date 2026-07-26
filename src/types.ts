@@ -21,6 +21,7 @@ export interface ConnectionConfig {
   max_rows: number;
   query_timeout_ms: number;
   max_connections: number;
+  max_result_bytes: number;
 }
 
 export interface SettingsConfig {
@@ -74,7 +75,14 @@ export interface AppSnapshot {
   updater_enabled: boolean;
   startup_error?: string | null;
   auto_start_status: "enabled" | "disabled" | "requires_approval" | "unknown";
+  audit_migration: AuditMigrationState;
 }
+
+export type AuditMigrationPhase = "reading_legacy_file" | "preparing_database" | "importing_events" | "committing" | "finalizing";
+export type AuditMigrationState =
+  | { status: "ready" }
+  | { status: "migrating"; phase: AuditMigrationPhase; processed: number; total: number }
+  | { status: "failed"; reason: string };
 
 export interface McpToolInfo {
   name: string;

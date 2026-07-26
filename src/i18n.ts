@@ -40,10 +40,26 @@ const zhCN = {
   sidebar: {
     serverRunning: "服务运行中 · {port}",
     serverStopped: "服务已停止",
+    serverFailed: "服务启动失败",
     systemTheme: "跟随系统",
     darkMode: "深色模式",
     lightMode: "浅色模式",
     toggleTheme: "切换深浅色"
+  },
+  auditMigration: {
+    migratingTitle: "正在迁移审计日志",
+    preparing: "正在准备新的审计存储",
+    progress: "已迁移 {processed} / {total} 条",
+    finishing: "正在完成迁移",
+    failedTitle: "审计日志迁移失败",
+    failedCompact: "点击查看并恢复",
+    dialogDescription: "DataNexa 需要将旧版审计日志迁移到新的 SQLite 存储。为确保数据库操作全程可审计，迁移完成前 MCP 服务将暂不可用。",
+    errorReason: "错误原因",
+    retry: "重试",
+    clear: "清空原有日志",
+    clearConfirmTitle: "隔离旧日志并继续？",
+    clearConfirmDescription: "旧版 JSON 日志会被隔离且不再导入，审计数据库会被清空并重新启用。",
+    confirmClear: "隔离旧日志并继续"
   },
   toast: {
     connectionSaved: "连接已保存。密码只会写入本机凭证库，不会进入 TOML 配置。",
@@ -71,6 +87,7 @@ const zhCN = {
     metricUptime: "运行时间",
     running: "运行中",
     stopped: "已停止",
+    failed: "启动失败",
     notStarted: "未启动",
     newConnection: "新建连接",
     viewAllConnections: "查看全部连接",
@@ -223,7 +240,8 @@ const zhCN = {
     securityAudit: "审计日志不记录查询结果",
     securityReadonly: "默认只读会话，并应用行数、超时和连接数限额",
     securityWarning: "只读策略不能完全保证所有风险都被拦截，仍需约束 Agent，避免要求或允许其执行危险行为。",
-    aboutText: "本地只读数据库 MCP 网关，让 Agent 通过统一、安全、可审计的入口访问你的数据源。"
+    aboutText: "本地只读数据库 MCP 网关，让 Agent 通过统一、安全、可审计的入口访问你的数据源。",
+    officialHomepage: "官方主页"
   },
   updates: {
     readyTitle: "应用更新",
@@ -286,6 +304,7 @@ const zhCN = {
     maxRows: "最大返回行数",
     queryTimeoutMs: "查询超时毫秒",
     maxConnections: "最大连接数",
+    maxResultBytes: "最大结果大小（KiB）",
     currentCredential: "当前凭证：{credential}。DataNexa 不会把明文密码写入配置文件。",
     credentialNotSaved: "尚未保存",
     save: "保存连接"
@@ -360,10 +379,26 @@ const en: I18nMessages = {
   sidebar: {
     serverRunning: "Server running · {port}",
     serverStopped: "Server stopped",
+    serverFailed: "Server failed to start",
     systemTheme: "Use system theme",
     darkMode: "Dark mode",
     lightMode: "Light mode",
     toggleTheme: "Toggle theme"
+  },
+  auditMigration: {
+    migratingTitle: "Migrating audit log",
+    preparing: "Preparing the new audit storage",
+    progress: "Migrated {processed} / {total} entries",
+    finishing: "Finishing migration",
+    failedTitle: "Audit log migration failed",
+    failedCompact: "Click to review and recover",
+    dialogDescription: "DataNexa needs to migrate the legacy audit log to new SQLite storage. To keep database operations auditable, the MCP server will remain unavailable until migration completes.",
+    errorReason: "Error reason",
+    retry: "Retry",
+    clear: "Clear old logs",
+    clearConfirmTitle: "Quarantine old logs and continue?",
+    clearConfirmDescription: "The legacy JSON log will be quarantined and skipped, then the audit database will be cleared and re-enabled.",
+    confirmClear: "Quarantine logs and continue"
   },
   toast: {
     connectionSaved: "Connection saved. Passwords are stored only in the local credential vault, not in TOML config.",
@@ -391,6 +426,7 @@ const en: I18nMessages = {
     metricUptime: "Uptime",
     running: "Running",
     stopped: "Stopped",
+    failed: "Failed to start",
     notStarted: "Not started",
     newConnection: "New connection",
     viewAllConnections: "View all connections",
@@ -543,7 +579,8 @@ const en: I18nMessages = {
     securityAudit: "Audit logs do not store query results",
     securityReadonly: "Read-only sessions apply row, timeout, and connection limits by default",
     securityWarning: "Read-only policy cannot guarantee every risk is blocked. Constrain agents and avoid asking or allowing them to perform dangerous actions.",
-    aboutText: "A local read-only database MCP gateway that gives agents one unified, safe, and auditable way to access your data sources."
+    aboutText: "A local read-only database MCP gateway that gives agents one unified, safe, and auditable way to access your data sources.",
+    officialHomepage: "Official homepage"
   },
   updates: {
     readyTitle: "Application updates",
@@ -606,6 +643,7 @@ const en: I18nMessages = {
     maxRows: "Maximum returned rows",
     queryTimeoutMs: "Query timeout in milliseconds",
     maxConnections: "Maximum connections",
+    maxResultBytes: "Maximum result size (KiB)",
     currentCredential: "Current credential: {credential}. DataNexa never writes plaintext passwords to config files.",
     credentialNotSaved: "Not saved yet",
     save: "Save connection"

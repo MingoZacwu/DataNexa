@@ -45,6 +45,8 @@ pub struct QueryResult {
     pub rows: Vec<Map<String, Value>>,
     pub row_count: usize,
     pub truncated: bool,
+    pub truncation_reason: Option<String>,
+    pub returned_bytes: usize,
     pub elapsed_ms: u64,
     pub rewritten_sql: String,
 }
@@ -470,36 +472,65 @@ impl DatabaseManager {
             ManagedPool::Sqlite(pool) => {
                 let rows = timeout(
                     query_timeout(config),
-                    collect_query_rows(sqlx::query(sql).fetch(&pool), max_rows),
+                    collect_query_rows(
+                        sqlx::query(sql).fetch(&pool),
+                        max_rows,
+                        config.max_result_bytes,
+                        |row| unique_column_names(row.columns().iter().map(|column| column.name())),
+                        sqlite_raw_row_bytes,
+                        |row, columns| {
+                            columns
+                                .iter()
+                                .enumerate()
+                                .map(|(index, column)| (column.clone(), sqlite_cell(row, index)))
+                                .collect()
+                        },
+                    ),
                 )
                 .await??;
-                Ok(sqlite_result(
-                    rows,
-                    max_rows,
-                    started.elapsed(),
-                    rewritten_sql,
-                ))
+                Ok(result(rows, started.elapsed(), rewritten_sql))
             }
             ManagedPool::Mysql(pool) => {
                 let rows = timeout(
                     query_timeout(config),
-                    collect_query_rows(sqlx::query(sql).fetch(&pool), max_rows),
+                    collect_query_rows(
+                        sqlx::query(sql).fetch(&pool),
+                        max_rows,
+                        config.max_result_bytes,
+                        |row| unique_column_names(row.columns().iter().map(|column| column.name())),
+                        mysql_raw_row_bytes,
+                        |row, columns| {
+                            columns
+                                .iter()
+                                .enumerate()
+                                .map(|(index, column)| (column.clone(), mysql_cell(row, index)))
+                                .collect()
+                        },
+                    ),
                 )
                 .await??;
-                Ok(mysql_result(
-                    rows,
-                    max_rows,
-                    started.elapsed(),
-                    rewritten_sql,
-                ))
+                Ok(result(rows, started.elapsed(), rewritten_sql))
             }
             ManagedPool::Postgres(pool) => {
                 let rows = timeout(
                     query_timeout(config),
-                    collect_query_rows(sqlx::query(sql).fetch(&pool), max_rows),
+                    collect_query_rows(
+                        sqlx::query(sql).fetch(&pool),
+                        max_rows,
+                        config.max_result_bytes,
+                        |row| unique_column_names(row.columns().iter().map(|column| column.name())),
+                        pg_raw_row_bytes,
+                        |row, columns| {
+                            columns
+                                .iter()
+                                .enumerate()
+                                .map(|(index, column)| (column.clone(), pg_cell(row, index)))
+                                .collect()
+                        },
+                    ),
                 )
                 .await??;
-                Ok(pg_result(rows, max_rows, started.elapsed(), rewritten_sql))
+                Ok(result(rows, started.elapsed(), rewritten_sql))
             }
         }
     }
@@ -914,23 +945,94 @@ where
     Ok(rows)
 }
 
-async fn collect_query_rows<S, T>(stream: S, max_rows: u32) -> anyhow::Result<Vec<T>>
+struct CollectedRows {
+    columns: Vec<String>,
+    rows: Vec<Map<String, Value>>,
+    truncated: bool,
+    truncation_reason: Option<String>,
+    returned_bytes: usize,
+}
+
+async fn collect_query_rows<S, T, C, R, F>(
+    stream: S,
+    max_rows: u32,
+    max_bytes: usize,
+    columns_for: C,
+    raw_bytes_for: R,
+    map_row: F,
+) -> anyhow::Result<CollectedRows>
 where
     S: Stream<Item = Result<T, sqlx::Error>>,
+    C: Fn(&T) -> Vec<String>,
+    R: Fn(&T) -> usize,
+    F: Fn(&T, &[String]) -> Map<String, Value>,
 {
     let mut stream = Box::pin(stream);
     let max_rows = usize::try_from(max_rows.max(1))?;
-    let fetch_limit = max_rows
-        .checked_add(1)
-        .ok_or_else(|| anyhow::anyhow!("max_rows is too large"))?;
-    let mut rows = Vec::with_capacity(fetch_limit.min(1_024));
-    while rows.len() < fetch_limit {
-        match stream.next().await.transpose()? {
-            Some(row) => rows.push(row),
-            None => break,
+    let mut columns = Vec::new();
+    let mut rows = Vec::with_capacity(max_rows.min(1_024));
+    let mut returned_bytes = 2usize;
+    let mut truncation_reason = None;
+
+    while let Some(row) = stream.next().await.transpose()? {
+        if rows.len() >= max_rows {
+            truncation_reason = Some("rows".to_string());
+            break;
         }
+        if columns.is_empty() {
+            columns = columns_for(&row);
+        }
+        if returned_bytes.saturating_add(raw_bytes_for(&row)) > max_bytes.max(1) {
+            truncation_reason = Some("bytes".to_string());
+            break;
+        }
+        let candidate = map_row(&row, &columns);
+        let candidate_bytes = serde_json::to_vec(&candidate)?.len();
+        let separator_bytes = usize::from(!rows.is_empty());
+        if returned_bytes
+            .saturating_add(separator_bytes)
+            .saturating_add(candidate_bytes)
+            > max_bytes.max(1)
+        {
+            truncation_reason = Some("bytes".to_string());
+            break;
+        }
+        returned_bytes = returned_bytes
+            .saturating_add(separator_bytes)
+            .saturating_add(candidate_bytes);
+        rows.push(candidate);
     }
-    Ok(rows)
+
+    Ok(CollectedRows {
+        columns,
+        rows,
+        truncated: truncation_reason.is_some(),
+        truncation_reason,
+        returned_bytes,
+    })
+}
+
+fn sqlite_raw_row_bytes(row: &SqliteRow) -> usize {
+    borrowed_row_bytes(row)
+}
+
+fn mysql_raw_row_bytes(row: &MySqlRow) -> usize {
+    borrowed_row_bytes(row)
+}
+
+fn pg_raw_row_bytes(row: &PgRow) -> usize {
+    borrowed_row_bytes(row)
+}
+
+fn borrowed_row_bytes<R>(row: &R) -> usize
+where
+    R: Row,
+    usize: sqlx::ColumnIndex<R>,
+    for<'value> &'value [u8]: sqlx::Decode<'value, R::Database> + sqlx::Type<R::Database>,
+{
+    (0..row.len()).fold(0usize, |total, index| {
+        total.saturating_add(row.try_get::<&[u8], _>(index).map_or(0, <[u8]>::len))
+    })
 }
 
 fn unique_column_names<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<String> {
@@ -955,94 +1057,15 @@ fn unique_column_names<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<Stri
         .collect()
 }
 
-fn sqlite_result(
-    mut rows: Vec<SqliteRow>,
-    max_rows: u32,
-    elapsed: Duration,
-    rewritten_sql: String,
-) -> QueryResult {
-    let columns: Vec<String> = rows
-        .first()
-        .map(|row| unique_column_names(row.columns().iter().map(|column| column.name())))
-        .unwrap_or_default();
-    let truncated = rows.len() > max_rows as usize;
-    rows.truncate(max_rows as usize);
-    let row_maps = rows
-        .iter()
-        .map(|row| {
-            columns
-                .iter()
-                .enumerate()
-                .map(|(index, column)| (column.clone(), sqlite_cell(row, index)))
-                .collect()
-        })
-        .collect::<Vec<Map<String, Value>>>();
-    result(columns, row_maps, truncated, elapsed, rewritten_sql)
-}
-
-fn mysql_result(
-    mut rows: Vec<MySqlRow>,
-    max_rows: u32,
-    elapsed: Duration,
-    rewritten_sql: String,
-) -> QueryResult {
-    let columns: Vec<String> = rows
-        .first()
-        .map(|row| unique_column_names(row.columns().iter().map(|column| column.name())))
-        .unwrap_or_default();
-    let truncated = rows.len() > max_rows as usize;
-    rows.truncate(max_rows as usize);
-    let row_maps = rows
-        .iter()
-        .map(|row| {
-            columns
-                .iter()
-                .enumerate()
-                .map(|(index, column)| (column.clone(), mysql_cell(row, index)))
-                .collect()
-        })
-        .collect::<Vec<Map<String, Value>>>();
-    result(columns, row_maps, truncated, elapsed, rewritten_sql)
-}
-
-fn pg_result(
-    mut rows: Vec<PgRow>,
-    max_rows: u32,
-    elapsed: Duration,
-    rewritten_sql: String,
-) -> QueryResult {
-    let columns: Vec<String> = rows
-        .first()
-        .map(|row| unique_column_names(row.columns().iter().map(|column| column.name())))
-        .unwrap_or_default();
-    let truncated = rows.len() > max_rows as usize;
-    rows.truncate(max_rows as usize);
-    let row_maps = rows
-        .iter()
-        .map(|row| {
-            columns
-                .iter()
-                .enumerate()
-                .map(|(index, column)| (column.clone(), pg_cell(row, index)))
-                .collect()
-        })
-        .collect::<Vec<Map<String, Value>>>();
-    result(columns, row_maps, truncated, elapsed, rewritten_sql)
-}
-
-fn result(
-    columns: Vec<String>,
-    rows: Vec<Map<String, Value>>,
-    truncated: bool,
-    elapsed: Duration,
-    rewritten_sql: String,
-) -> QueryResult {
-    let row_count = rows.len();
+fn result(collected: CollectedRows, elapsed: Duration, rewritten_sql: String) -> QueryResult {
+    let row_count = collected.rows.len();
     QueryResult {
-        columns,
-        rows,
+        columns: collected.columns,
+        rows: collected.rows,
         row_count,
-        truncated,
+        truncated: collected.truncated,
+        truncation_reason: collected.truncation_reason,
+        returned_bytes: collected.returned_bytes,
         elapsed_ms: elapsed.as_millis().try_into().unwrap_or(u64::MAX),
         rewritten_sql,
     }
@@ -1274,6 +1297,7 @@ mod tests {
             max_rows: 10,
             query_timeout_ms: 2_000,
             max_connections: 1,
+            max_result_bytes: crate::config::default_max_result_bytes(),
         }
     }
 
@@ -1334,11 +1358,21 @@ mod tests {
             )
             .fetch(&pool),
             1,
+            crate::config::default_max_result_bytes(),
+            |row| unique_column_names(row.columns().iter().map(|column| column.name())),
+            sqlite_raw_row_bytes,
+            |row, columns| {
+                columns
+                    .iter()
+                    .enumerate()
+                    .map(|(index, column)| (column.clone(), sqlite_cell(row, index)))
+                    .collect()
+            },
         )
         .await
         .expect("SQLite rows should stream");
 
-        let result = sqlite_result(rows, 1, Duration::ZERO, "SELECT".to_string());
+        let result = result(rows, Duration::ZERO, "SELECT".to_string());
 
         assert_eq!(result.columns, ["id", "id__2", "payload", "missing"]);
         assert_eq!(result.row_count, 1);

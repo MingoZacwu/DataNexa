@@ -39,6 +39,27 @@ pub fn backend_text(language: &str) -> BackendText {
 }
 
 impl BackendText {
+    pub fn tray_mcp_status_running(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "MCP 服务运行中",
+            Locale::En => "MCP server running",
+        }
+    }
+
+    pub fn tray_mcp_status_stopped(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "MCP 服务已停止",
+            Locale::En => "MCP server stopped",
+        }
+    }
+
+    pub fn tray_mcp_status_error(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "MCP 服务启动失败",
+            Locale::En => "MCP server failed to start",
+        }
+    }
+
     pub fn tray_mcp_startup_error(self) -> &'static str {
         match self.locale {
             Locale::ZhCn => "MCP 自动启动失败（打开应用查看详情）",
@@ -47,8 +68,8 @@ impl BackendText {
     }
     pub fn local_host_only(self) -> &'static str {
         match self.locale {
-            Locale::ZhCn => "DataNexa v1 仅允许绑定 127.0.0.1 或 localhost。",
-            Locale::En => "DataNexa v1 can only bind to 127.0.0.1 or localhost.",
+            Locale::ZhCn => "监听地址仅支持 127.0.0.1 或 localhost。",
+            Locale::En => "The listen address must be 127.0.0.1 or localhost.",
         }
     }
 
