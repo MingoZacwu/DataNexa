@@ -82,7 +82,7 @@ fn status_tray_icon(status: TrayMcpStatus) -> tauri::image::Image<'static> {
             for (row, right) in outer_right.into_iter().enumerate() {
                 let y = 15 + row;
                 for x in 16..=right {
-                    let index = ((y * 32 + x) * 4) as usize;
+                    let index = (y * 32 + x) * 4;
                     rgba[index..index + 4].copy_from_slice(&[255, 255, 255, 0]);
                 }
             }
@@ -90,7 +90,7 @@ fn status_tray_icon(status: TrayMcpStatus) -> tauri::image::Image<'static> {
             for (row, right) in inner_right.into_iter().enumerate() {
                 let y = 18 + row;
                 for x in 19..=right {
-                    let index = ((y * 32 + x) * 4) as usize;
+                    let index = (y * 32 + x) * 4;
                     rgba[index..index + 4].copy_from_slice(&[255, 255, 255, 255]);
                 }
             }
@@ -105,7 +105,7 @@ fn status_tray_icon(status: TrayMcpStatus) -> tauri::image::Image<'static> {
             for (row, (left, right)) in outer_left.into_iter().zip(outer_right).enumerate() {
                 let y = 15 + row;
                 for x in left..=right {
-                    let index = ((y * 32 + x) * 4) as usize;
+                    let index = (y * 32 + x) * 4;
                     rgba[index..index + 4].copy_from_slice(&[255, 255, 255, 0]);
                 }
             }
@@ -114,7 +114,7 @@ fn status_tray_icon(status: TrayMcpStatus) -> tauri::image::Image<'static> {
             for (row, (left, right)) in inner_left.into_iter().zip(inner_right).enumerate() {
                 let y = 17 + row;
                 for x in left..=right {
-                    let index = ((y * 32 + x) * 4) as usize;
+                    let index = (y * 32 + x) * 4;
                     rgba[index..index + 4].copy_from_slice(&[255, 255, 255, 255]);
                 }
             }
@@ -132,7 +132,7 @@ fn status_tray_icon(status: TrayMcpStatus) -> tauri::image::Image<'static> {
                 }
             }
         }
-        return tauri::image::Image::new_owned(rgba, 32, 32);
+        tauri::image::Image::new_owned(rgba, 32, 32)
     }
 }
 
