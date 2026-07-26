@@ -305,6 +305,15 @@ p {
   box-shadow: 0 0 0 3px rgba(22, 160, 100, 0.12);
 }
 
+.sidebar-status-line.error {
+  color: var(--red);
+}
+
+.sidebar-status-line.error .status-orb {
+  background: var(--red);
+  box-shadow: 0 0 0 3px rgba(229, 72, 77, 0.12);
+}
+
 .footer-divider {
   width: 1px;
   height: 18px;

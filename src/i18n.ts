@@ -40,6 +40,7 @@ const zhCN = {
   sidebar: {
     serverRunning: "服务运行中 · {port}",
     serverStopped: "服务已停止",
+    serverFailed: "服务启动失败",
     systemTheme: "跟随系统",
     darkMode: "深色模式",
     lightMode: "浅色模式",
@@ -86,6 +87,7 @@ const zhCN = {
     metricUptime: "运行时间",
     running: "运行中",
     stopped: "已停止",
+    failed: "启动失败",
     notStarted: "未启动",
     newConnection: "新建连接",
     viewAllConnections: "查看全部连接",
@@ -377,6 +379,7 @@ const en: I18nMessages = {
   sidebar: {
     serverRunning: "Server running · {port}",
     serverStopped: "Server stopped",
+    serverFailed: "Server failed to start",
     systemTheme: "Use system theme",
     darkMode: "Dark mode",
     lightMode: "Light mode",
@@ -423,6 +426,7 @@ const en: I18nMessages = {
     metricUptime: "Uptime",
     running: "Running",
     stopped: "Stopped",
+    failed: "Failed to start",
     notStarted: "Not started",
     newConnection: "New connection",
     viewAllConnections: "View all connections",

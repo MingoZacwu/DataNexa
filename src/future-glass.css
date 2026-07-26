@@ -577,6 +577,16 @@ textarea:focus-visible,
   box-shadow: inset 0 1px 0 var(--glass-edge), 0 0 0 1px color-mix(in srgb, var(--green) 12%, transparent), 0 7px 18px color-mix(in srgb, var(--green) 9%, transparent);
 }
 
+.status-command.error {
+  border-color: color-mix(in srgb, var(--red) 30%, var(--line));
+  background: linear-gradient(105deg, color-mix(in srgb, var(--red) 12%, var(--surface-strong)), color-mix(in srgb, var(--amber) 5%, var(--surface)) 58%, var(--surface));
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 0 0 1px color-mix(in srgb, var(--red) 10%, transparent), 0 7px 18px color-mix(in srgb, var(--red) 8%, transparent);
+}
+
+.status-command.error::after {
+  background: linear-gradient(90deg, var(--red), var(--amber), transparent 75%);
+}
+
 .status-command-core,
 .server-identity {
   display: flex;
@@ -622,6 +632,14 @@ textarea:focus-visible,
   border-color: color-mix(in srgb, var(--green) 30%, var(--line));
   background: color-mix(in srgb, var(--green) 10%, var(--surface-strong));
   box-shadow: inset 0 1px 0 var(--glass-edge), 0 0 24px color-mix(in srgb, var(--green) 18%, transparent);
+}
+
+.error .status-beacon,
+.server-console.error .server-emblem {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 30%, var(--line));
+  background: color-mix(in srgb, var(--red) 10%, var(--surface-strong));
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 0 24px color-mix(in srgb, var(--red) 16%, transparent);
 }
 
 .running .status-beacon::after,
@@ -1090,6 +1108,10 @@ textarea:focus-visible,
   background: linear-gradient(90deg, var(--blue), var(--cyan), transparent 72%);
 }
 
+.server-console.error::before {
+  background: linear-gradient(90deg, var(--red), var(--amber), transparent 72%);
+}
+
 .server-console.running::before {
   background: linear-gradient(90deg, var(--green), var(--cyan), transparent 72%);
 }
@@ -1116,6 +1138,15 @@ textarea:focus-visible,
 .server-console.running .server-hero {
   border-bottom-color: color-mix(in srgb, var(--green) 20%, var(--line));
   background: linear-gradient(105deg, color-mix(in srgb, var(--green) 13%, transparent), color-mix(in srgb, var(--cyan) 7%, transparent));
+}
+
+.server-console.error {
+  border-color: color-mix(in srgb, var(--red) 25%, var(--line));
+}
+
+.server-console.error .server-hero {
+  border-bottom-color: color-mix(in srgb, var(--red) 20%, var(--line));
+  background: linear-gradient(105deg, color-mix(in srgb, var(--red) 12%, transparent), color-mix(in srgb, var(--amber) 5%, transparent));
 }
 
 .server-identity h2 {
@@ -1183,6 +1214,11 @@ textarea:focus-visible,
 
 .endpoint-section .status-pill {
   justify-self: start;
+}
+
+.endpoint-section .panel-header {
+  justify-content: flex-start;
+  gap: 8px;
 }
 
 .key-disabled-panel {

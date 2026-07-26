@@ -805,6 +805,7 @@ pub async fn start_mcp_server(
     let started = std::time::Instant::now();
     if let Err(error) = mcp::start(state.inner().clone()).await {
         let reason = error.to_string();
+        state.mcp.write().await.startup_error = Some(reason.clone());
         record_startup_event(
             state.inner(),
             "system.start_mcp",

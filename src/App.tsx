@@ -435,6 +435,7 @@ function App() {
       setSnapshot(snapshot?.server_status.running ? await api.stopServer() : await api.startServer());
     } catch (error) {
       showError(error);
+      await refresh({ quiet: true });
     } finally {
       setBusy(false);
     }
@@ -630,6 +631,7 @@ function App() {
               <SidebarFooter
                 t={t}
                 running={Boolean(snapshot?.server_status.running)}
+                startupFailed={Boolean(snapshot?.startup_error)}
                 port={snapshot?.config.server.port ?? 17321}
                 busy={busy}
                 disabled={!snapshot || (!snapshot.server_status.running && !migrationReady)}
@@ -930,6 +932,7 @@ function SidebarUpdateReminder({
 function SidebarFooter({
   t,
   running,
+  startupFailed,
   port,
   busy,
   disabled,
@@ -937,6 +940,7 @@ function SidebarFooter({
 }: {
   t: I18nMessages;
   running: boolean;
+  startupFailed: boolean;
   port: number;
   busy: boolean;
   disabled: boolean;
@@ -945,9 +949,9 @@ function SidebarFooter({
   const toggleLabel = running ? t.server.stop : t.server.start;
   return (
     <div className="sidebar-footer">
-      <div className={clsx("sidebar-status-line", running && "running")}>
+      <div className={clsx("sidebar-status-line", startupFailed ? "error" : running && "running")}>
         <span className="status-orb" />
-        <span>{running ? formatMessage(t.sidebar.serverRunning, { port }) : t.sidebar.serverStopped}</span>
+        <span>{startupFailed ? t.sidebar.serverFailed : running ? formatMessage(t.sidebar.serverRunning, { port }) : t.sidebar.serverStopped}</span>
       </div>
       <span className="footer-divider" aria-hidden="true" />
       <IconTooltip label={toggleLabel}>
@@ -1049,15 +1053,17 @@ function OverviewView({
   const totalConnections = snapshot.config.connections.length;
   const enabledTools = snapshot.tools.filter((tool) => tool.enabled).length;
   const uptime = snapshot.server_status.started_at ? relativeDuration(t, snapshot.server_status.started_at) : t.overview.notStarted;
+  const startupFailed = Boolean(snapshot.startup_error);
+  const statusLabel = startupFailed ? t.overview.failed : snapshot.server_status.running ? t.overview.running : t.overview.stopped;
 
   return (
     <section className="overview-page">
-      <section className={clsx("status-command", snapshot.server_status.running && "running")}>
+      <section className={clsx("status-command", startupFailed ? "error" : snapshot.server_status.running && "running")} title={snapshot.startup_error ?? undefined}>
         <div className="status-command-core">
-          <span className="status-beacon"><Activity size={19} /></span>
+          <span className="status-beacon">{startupFailed ? <AlertTriangle size={19} /> : <Activity size={19} />}</span>
           <div>
             <span>{t.overview.metricServer}</span>
-            <strong>{snapshot.server_status.running ? t.overview.running : t.overview.stopped}</strong>
+            <strong>{statusLabel}</strong>
           </div>
         </div>
         <div className="command-metrics">
@@ -1267,13 +1273,15 @@ function ServerView({
   startDisabled: boolean;
 }) {
   const requireToken = snapshot.config.server.require_token;
+  const startupFailed = Boolean(snapshot.startup_error);
+  const statusLabel = startupFailed ? t.overview.failed : snapshot.server_status.running ? t.overview.running : t.overview.stopped;
 
   return (
-    <section className={clsx("server-console", snapshot.server_status.running && "running")}>
+    <section className={clsx("server-console", startupFailed ? "error" : snapshot.server_status.running && "running")} title={snapshot.startup_error ?? undefined}>
       <div className="server-hero">
         <div className="server-identity">
-          <span className="server-emblem"><Server size={25} /></span>
-          <div><span className="panel-kicker">{t.overview.metricServer}</span><h2>{snapshot.server_status.running ? t.overview.running : t.overview.stopped}</h2></div>
+          <span className="server-emblem">{startupFailed ? <AlertTriangle size={25} /> : <Server size={25} />}</span>
+          <div><span className="panel-kicker">{t.overview.metricServer}</span><h2>{statusLabel}</h2></div>
         </div>
         <button type="button" className={clsx("button", snapshot.server_status.running ? "stop" : "primary")} onClick={onToggle} disabled={busy || startDisabled}>
           {snapshot.server_status.running ? <Square size={16} /> : <Play size={17} />}
@@ -1283,12 +1291,14 @@ function ServerView({
 
       <div className="server-console-grid">
         <div className="server-console-section endpoint-section">
-          <PanelHeader title={t.server.endpoint} />
+          <PanelHeader
+            title={t.server.endpoint}
+            action={<StatusPill tone={startupFailed ? "red" : snapshot.server_status.running ? "green" : "slate"} label={statusLabel} />}
+          />
           <div className="console-value">
             <code>{endpoint}</code>
             <button type="button" className="icon-button" onClick={() => navigator.clipboard.writeText(endpoint)} aria-label={t.server.copyEndpoint}><Clipboard size={16} /></button>
           </div>
-          <StatusPill tone={snapshot.server_status.running ? "green" : "slate"} label={snapshot.server_status.running ? t.overview.running : t.overview.stopped} />
         </div>
 
       {requireToken ? (
