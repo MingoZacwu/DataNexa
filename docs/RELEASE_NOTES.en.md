@@ -19,7 +19,7 @@
 - Query results are limited by both maximum rows and the connection-level result-size limit; truncated responses include the truncation reason and returned byte count.
 - In-progress settings edits are preserved while saves complete. Failed server-port or audit-retention saves restore valid values and refresh the interface.
 - Manual MCP startup failures are retained and shown in the sidebar, overview, and server views.
-- Simplified the desktop window interface and restored window dragging on macOS.
+- Optimized the desktop window interface by removing the title bars for a cleaner, more consistent look.
 
 ## Upgrade Notes
 
