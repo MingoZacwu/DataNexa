@@ -164,6 +164,7 @@ async fn activate_listener(
     config: &ServerConfig,
     listener: tokio::net::TcpListener,
 ) -> anyhow::Result<ServerStatus> {
+    app.reset_mcp_cancellation().await;
     let local_addr = listener.local_addr()?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let router = mcp_router(app.clone());
@@ -215,11 +216,14 @@ fn mcp_router(app: Arc<AppState>) -> Router {
 pub async fn stop(app: Arc<AppState>) -> ServerStatus {
     let _lifecycle = app.mcp_lifecycle.lock().await;
     stop_locked(&app).await;
+    app.exit_emergency_mode().await;
     app.mcp.write().await.startup_error = None;
     status(&app).await
 }
 
 async fn stop_locked(app: &Arc<AppState>) {
+    app.cancel_mcp_requests().await;
+    app.db.close_all().await;
     let config = app.config.read().await.server.clone();
     let mut runtime = app.mcp.write().await;
     runtime.generation = runtime.generation.wrapping_add(1);
@@ -574,6 +578,22 @@ async fn validate_request(app: Arc<AppState>, headers: &HeaderMap) -> Result<(),
 }
 
 async fn handle_tool_call(
+    state: &McpHttpState,
+    params: Option<Value>,
+) -> Result<Value, (i32, String)> {
+    if state.app.is_emergency_disabled() {
+        return Err((-32001, "MCP emergency disconnect is active".to_string()));
+    }
+    let cancellation = state.app.mcp_cancellation_token().await;
+    tokio::select! {
+        _ = cancellation.cancelled() => {
+            Err((-32001, "MCP request cancelled by emergency disconnect".to_string()))
+        }
+        result = handle_active_tool_call(state, params) => result,
+    }
+}
+
+async fn handle_active_tool_call(
     state: &McpHttpState,
     params: Option<Value>,
 ) -> Result<Value, (i32, String)> {
@@ -1333,6 +1353,8 @@ mod tests {
             db: DatabaseManager::default(),
             mcp: tokio::sync::RwLock::new(McpRuntime::default()),
             mcp_lifecycle: tokio::sync::Mutex::new(()),
+            mcp_cancellation: tokio::sync::RwLock::new(tokio_util::sync::CancellationToken::new()),
+            emergency_disabled: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -1350,6 +1372,8 @@ mod tests {
             db: DatabaseManager::default(),
             mcp: tokio::sync::RwLock::new(McpRuntime::default()),
             mcp_lifecycle: tokio::sync::Mutex::new(()),
+            mcp_cancellation: tokio::sync::RwLock::new(tokio_util::sync::CancellationToken::new()),
+            emergency_disabled: std::sync::atomic::AtomicBool::new(false),
         })
     }
 

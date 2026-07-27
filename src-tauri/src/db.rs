@@ -113,6 +113,34 @@ pub struct DatabaseManager {
 }
 
 impl DatabaseManager {
+    pub async fn close_all(&self) {
+        let creating_ids = self
+            .creation_locks
+            .lock()
+            .await
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        let pools = {
+            let mut state = self.pools.write().await;
+            let mut ids = state.entries.keys().cloned().collect::<HashSet<_>>();
+            ids.extend(creating_ids);
+            for connection_id in ids {
+                let generation = state.generations.entry(connection_id).or_default();
+                *generation = generation.wrapping_add(1);
+            }
+            state
+                .entries
+                .drain()
+                .map(|(_, entry)| entry.pool)
+                .collect::<Vec<_>>()
+        };
+
+        for pool in pools {
+            tokio::spawn(close_pool(pool));
+        }
+    }
+
     pub async fn close(&self, connection_id: &str) {
         let pool = {
             let mut state = self.pools.write().await;

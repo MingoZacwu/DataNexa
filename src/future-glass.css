@@ -348,6 +348,54 @@ textarea:focus-visible,
   background: transparent;
 }
 
+.top-icon-actions.emergency-active {
+  position: relative;
+  isolation: isolate;
+  background: var(--surface-strong);
+}
+
+.top-icon-actions.emergency-active > * {
+  position: relative;
+  z-index: 2;
+}
+
+.top-icon-actions.emergency-active::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset: -1px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--surface-strong), var(--surface-strong)) padding-box,
+    linear-gradient(90deg, color-mix(in srgb, var(--red) 98%, transparent) 0%, color-mix(in srgb, var(--red) 58%, transparent) 38%, color-mix(in srgb, var(--amber) 18%, transparent) 70%, transparent 94%) border-box;
+  box-shadow:
+    -3px 0 10px color-mix(in srgb, var(--red) 28%, transparent),
+    0 -2px 7px color-mix(in srgb, var(--red) 14%, transparent),
+    0 2px 7px color-mix(in srgb, var(--red) 14%, transparent);
+  animation: filter-edge-light-in 180ms ease-out both;
+}
+
+.top-icon-actions.emergency-active::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: -4px;
+  border-radius: 12px;
+  pointer-events: none;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--red) 40%, transparent) 0%, color-mix(in srgb, var(--red) 16%, transparent) 44%, transparent 84%);
+  filter: blur(6px);
+  opacity: 0.8;
+  animation: filter-edge-light-in 220ms ease-out both;
+}
+
+.top-icon-actions .icon-button.emergency-toggle-active,
+.top-icon-actions .icon-button.emergency-toggle-active:hover {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 12%, var(--surface-strong));
+}
+
 .view-stage {
   min-height: 0;
   flex: 1;
@@ -508,6 +556,12 @@ textarea:focus-visible,
   background: color-mix(in srgb, var(--red) 10%, var(--surface-strong));
 }
 
+.button.restore {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 34%, var(--line));
+  background: color-mix(in srgb, var(--green) 11%, var(--surface-strong));
+}
+
 .icon-button {
   width: 32px;
   height: 32px;
@@ -587,6 +641,16 @@ textarea:focus-visible,
   background: linear-gradient(90deg, var(--red), var(--amber), transparent 75%);
 }
 
+.status-command.emergency {
+  border-color: color-mix(in srgb, var(--red) 38%, var(--line));
+  background: linear-gradient(105deg, color-mix(in srgb, var(--red) 15%, var(--surface-strong)), color-mix(in srgb, var(--amber) 6%, var(--surface)) 58%, var(--surface));
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 0 0 1px color-mix(in srgb, var(--red) 13%, transparent), 0 8px 20px color-mix(in srgb, var(--red) 11%, transparent);
+}
+
+.status-command.emergency::after {
+  background: linear-gradient(90deg, var(--red), var(--amber), transparent 75%);
+}
+
 .status-command-core,
 .server-identity {
   display: flex;
@@ -635,6 +699,7 @@ textarea:focus-visible,
 }
 
 .error .status-beacon,
+.emergency .status-beacon,
 .server-console.error .server-emblem {
   color: var(--red);
   border-color: color-mix(in srgb, var(--red) 30%, var(--line));

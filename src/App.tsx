@@ -359,10 +359,16 @@ function App() {
   }
 
   async function disableAllConnections() {
+    const wasEmergencyDisconnected = Boolean(snapshot?.emergency_disconnect);
     setBusy(true);
     try {
       setSnapshot(await api.disableAllConnections());
-      pushToast(t.toast.allConnectionsDisabled, "info");
+      pushToast(
+        wasEmergencyDisconnected
+          ? t.toast.emergencyDisconnectRestored
+          : t.toast.allConnectionsDisabled,
+        "info"
+      );
     } catch (error) {
       showError(error);
     } finally {
@@ -587,6 +593,7 @@ function App() {
   const availableUpdateVersion = updater.state.kind === "available" ? updater.state.version : null;
   const showUpdateReminder = availableUpdateVersion !== null && dismissedUpdateVersion !== availableUpdateVersion;
   const migrationReady = snapshot?.audit_migration.status === "ready";
+  const emergencyDisconnect = Boolean(snapshot?.emergency_disconnect);
 
   return (
     <Tooltip.Provider delayDuration={180}>
@@ -664,10 +671,17 @@ function App() {
                     )}
                   </div>
                 )}
-                <div className="top-icon-actions">
+                <div className={clsx("top-icon-actions", activeView === "connections" && emergencyDisconnect && "emergency-active")}>
                   {snapshot && activeView === "connections" && (
-                    <IconTooltip label={t.connections.emergencyDisable}>
-                      <button type="button" className="icon-button danger" onClick={disableAllConnections} disabled={busy || connections.length === 0} aria-label={t.connections.emergencyDisable}>
+                    <IconTooltip label={emergencyDisconnect ? t.connections.emergencyRestore : t.connections.emergencyDisable}>
+                      <button
+                        type="button"
+                        className={clsx("icon-button danger", emergencyDisconnect && "emergency-toggle-active")}
+                        onClick={disableAllConnections}
+                        disabled={busy || !snapshot.server_status.running}
+                        aria-pressed={emergencyDisconnect}
+                        aria-label={emergencyDisconnect ? t.connections.emergencyRestore : t.connections.emergencyDisable}
+                      >
                         <AlertTriangle size={17} />
                       </button>
                     </IconTooltip>
@@ -684,7 +698,7 @@ function App() {
                   </button>
                 </div>
                 {snapshot && activeView === "connections" && (
-                  <button type="button" className="button primary" onClick={openNewConnection} disabled={busy}>
+                  <button type="button" className="button primary" onClick={openNewConnection} disabled={busy || emergencyDisconnect}>
                     <Plus size={16} />
                     {t.overview.newConnection}
                   </button>
@@ -708,6 +722,8 @@ function App() {
                     onSelectAudit={setSelectedAudit}
                     onCopyAgentPrompt={() => copyAgentPrompt(serverEndpoint, requireToken, serverToken)}
                     onToggleServer={toggleServer}
+                    onToggleEmergency={disableAllConnections}
+                    busy={busy}
                     startDisabled={!snapshot.server_status.running && !migrationReady}
                   />
                 )}
@@ -715,7 +731,7 @@ function App() {
                   <ConnectionsView
                     t={t}
                     connections={connections}
-                    busy={busy}
+                    busy={busy || emergencyDisconnect}
                     onEdit={openExistingConnection}
                     onDelete={deleteConnection}
                     onTest={testConnection}
@@ -1036,6 +1052,8 @@ function OverviewView({
   onSelectAudit,
   onCopyAgentPrompt,
   onToggleServer,
+  onToggleEmergency,
+  busy,
   startDisabled
 }: {
   t: I18nMessages;
@@ -1048,19 +1066,28 @@ function OverviewView({
   onSelectAudit: (event: AuditEvent) => void;
   onCopyAgentPrompt: () => void;
   onToggleServer: () => void;
+  onToggleEmergency: () => void;
+  busy: boolean;
   startDisabled: boolean;
 }) {
   const totalConnections = snapshot.config.connections.length;
   const enabledTools = snapshot.tools.filter((tool) => tool.enabled).length;
   const uptime = snapshot.server_status.started_at ? relativeDuration(t, snapshot.server_status.started_at) : t.overview.notStarted;
   const startupFailed = Boolean(snapshot.startup_error);
-  const statusLabel = startupFailed ? t.overview.failed : snapshot.server_status.running ? t.overview.running : t.overview.stopped;
+  const emergencyDisconnect = snapshot.emergency_disconnect;
+  const statusLabel = startupFailed
+    ? t.overview.failed
+    : emergencyDisconnect
+      ? t.overview.emergencyDisconnected
+      : snapshot.server_status.running
+        ? t.overview.running
+        : t.overview.stopped;
 
   return (
     <section className="overview-page">
-      <section className={clsx("status-command", startupFailed ? "error" : snapshot.server_status.running && "running")} title={snapshot.startup_error ?? undefined}>
+      <section className={clsx("status-command", startupFailed ? "error" : emergencyDisconnect ? "emergency" : snapshot.server_status.running && "running")} title={snapshot.startup_error ?? undefined}>
         <div className="status-command-core">
-          <span className="status-beacon">{startupFailed ? <AlertTriangle size={19} /> : <Activity size={19} />}</span>
+          <span className="status-beacon">{startupFailed || emergencyDisconnect ? <AlertTriangle size={19} /> : <Activity size={19} />}</span>
           <div>
             <span>{t.overview.metricServer}</span>
             <strong>{statusLabel}</strong>
@@ -1071,9 +1098,14 @@ function OverviewView({
           <div><span>{t.overview.metricTools}</span><strong>{enabledTools}<small> / {snapshot.tools.length}</small></strong></div>
           <div><span>{t.overview.metricUptime}</span><strong>{uptime}</strong></div>
         </div>
-        <button type="button" className={clsx("button command-button", snapshot.server_status.running ? "stop" : "primary")} onClick={onToggleServer} disabled={startDisabled}>
-          {snapshot.server_status.running ? <Square size={15} /> : <Play size={16} />}
-          {snapshot.server_status.running ? t.server.stop : t.server.start}
+        <button
+          type="button"
+          className={clsx("button command-button", emergencyDisconnect ? "restore" : snapshot.server_status.running ? "stop" : "primary")}
+          onClick={emergencyDisconnect ? onToggleEmergency : onToggleServer}
+          disabled={busy || startDisabled}
+        >
+          {emergencyDisconnect ? <Power size={16} /> : snapshot.server_status.running ? <Square size={15} /> : <Play size={16} />}
+          {emergencyDisconnect ? t.connections.restoreConnections : snapshot.server_status.running ? t.server.stop : t.server.start}
         </button>
       </section>
 
@@ -1083,7 +1115,7 @@ function OverviewView({
           title={t.connections.title}
           action={(
             <div className="panel-actions">
-              <PanelIconAction icon={<Plus size={16} />} label={t.overview.newConnection} onClick={onAdd} />
+              <PanelIconAction icon={<Plus size={16} />} label={t.overview.newConnection} onClick={onAdd} disabled={emergencyDisconnect} />
               <PanelIconAction icon={<ChevronRight size={16} />} label={t.overview.viewAllConnections} onClick={onOpenConnections} />
             </div>
           )}
@@ -1175,7 +1207,7 @@ function ConnectionsView({
           <>
             <div className="inspector-heading">
               <ConnectionListItem t={t} connection={selected} />
-              <button type="button" className="button ghost" onClick={() => onEdit(selected)}>{t.connections.edit}</button>
+              <button type="button" className="button ghost" disabled={busy} onClick={() => onEdit(selected)}>{t.connections.edit}</button>
             </div>
             <dl className="inspector-grid">
               <div><dt>{t.connectionDialog.host}</dt><dd><code>{selected.type === "sqlite" ? "LOCAL" : selected.host || "-"}</code></dd></div>
@@ -2364,12 +2396,12 @@ function ConnectionRow({
           </button>
         </IconTooltip>
         <IconTooltip label={t.connections.edit}>
-          <button type="button" className="icon-button" onClick={() => onEdit(connection)}>
+          <button type="button" className="icon-button" onClick={() => onEdit(connection)} disabled={busy}>
             <MoreVertical size={17} />
           </button>
         </IconTooltip>
         <IconTooltip label={t.connections.delete}>
-          <button type="button" className="icon-button danger" onClick={() => onDelete(connection.id)}>
+          <button type="button" className="icon-button danger" onClick={() => onDelete(connection.id)} disabled={busy}>
             <Trash2 size={17} />
           </button>
         </IconTooltip>

@@ -1,4 +1,7 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use tokio::sync::{Mutex, RwLock};
+use tokio_util::sync::CancellationToken;
 
 use crate::audit::AuditLogger;
 use crate::config::{AppConfig, ConfigStore};
@@ -15,6 +18,8 @@ pub struct AppState {
     pub db: DatabaseManager,
     pub mcp: RwLock<McpRuntime>,
     pub mcp_lifecycle: Mutex<()>,
+    pub mcp_cancellation: RwLock<CancellationToken>,
+    pub emergency_disabled: AtomicBool,
 }
 
 impl AppState {
@@ -32,6 +37,37 @@ impl AppState {
             db: DatabaseManager::default(),
             mcp: RwLock::new(McpRuntime::default()),
             mcp_lifecycle: Mutex::new(()),
+            mcp_cancellation: RwLock::new(CancellationToken::new()),
+            emergency_disabled: AtomicBool::new(false),
         })
+    }
+
+    pub async fn mcp_cancellation_token(&self) -> CancellationToken {
+        self.mcp_cancellation.read().await.clone()
+    }
+
+    pub async fn cancel_mcp_requests(&self) {
+        self.mcp_cancellation.read().await.cancel();
+    }
+
+    pub async fn reset_mcp_cancellation(&self) {
+        let mut cancellation = self.mcp_cancellation.write().await;
+        if cancellation.is_cancelled() {
+            *cancellation = CancellationToken::new();
+        }
+    }
+
+    pub fn is_emergency_disabled(&self) -> bool {
+        self.emergency_disabled.load(Ordering::Acquire)
+    }
+
+    pub async fn enter_emergency_mode(&self) {
+        self.emergency_disabled.store(true, Ordering::Release);
+        self.cancel_mcp_requests().await;
+    }
+
+    pub async fn exit_emergency_mode(&self) {
+        self.reset_mcp_cancellation().await;
+        self.emergency_disabled.store(false, Ordering::Release);
     }
 }

@@ -29,6 +29,7 @@ use crate::{hide_main_window_to_tray, refresh_tray_menu};
 pub struct AppSnapshot {
     pub config: AppConfig,
     pub server_status: ServerStatus,
+    pub emergency_disconnect: bool,
     pub audit_events: Vec<crate::audit::AuditEvent>,
     pub tools: Vec<McpToolInfo>,
     pub updater_enabled: bool,
@@ -551,29 +552,19 @@ pub async fn set_connection_enabled(
 pub async fn disable_all_connections(
     state: State<'_, Arc<AppState>>,
 ) -> Result<AppSnapshot, String> {
-    let _transaction = state.config_transaction.write().await;
-    let mut candidate = state.config.read().await.clone();
-    let connection_ids = candidate
-        .connections
-        .iter()
-        .map(|connection| connection.id.clone())
-        .collect::<Vec<_>>();
-    for connection in &mut candidate.connections {
-        connection.enabled = false;
+    let _lifecycle = state.mcp_lifecycle.lock().await;
+    if state.is_emergency_disabled() {
+        state.exit_emergency_mode().await;
+        return snapshot(state.inner()).await.map_err(to_client_error);
     }
-    candidate
-        .normalize_and_validate()
-        .map_err(to_client_error)?;
-    persist_invalidating_candidate(
-        &state.store,
-        &state.config,
-        &state.db,
-        candidate,
-        &connection_ids,
-    )
-    .await
-    .map_err(to_client_error)?;
-    drop(_transaction);
+    if !state.mcp.read().await.running {
+        return Err(
+            "MCP server must be running before emergency disconnect can be enabled".to_string(),
+        );
+    }
+
+    state.enter_emergency_mode().await;
+    state.db.close_all().await;
 
     snapshot(state.inner()).await.map_err(to_client_error)
 }
@@ -914,7 +905,13 @@ pub fn open_project_releases() -> Result<(), String> {
 }
 
 async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
-    let config = state.config.read().await.clone();
+    let emergency_disconnect = state.is_emergency_disabled();
+    let mut config = state.config.read().await.clone();
+    if emergency_disconnect {
+        for connection in &mut config.connections {
+            connection.enabled = false;
+        }
+    }
     let audit_ready = state.audit.is_ready().await;
     if audit_ready {
         state.audit.trim(config.settings.audit_max_events).await?;
@@ -926,6 +923,7 @@ async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
     };
     Ok(AppSnapshot {
         server_status: mcp::status(state).await,
+        emergency_disconnect,
         audit_events,
         tools: mcp::tool_infos(&config.tools),
         updater_enabled: cfg!(feature = "updater"),

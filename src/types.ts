@@ -70,6 +70,7 @@ export interface ServerStatus {
 export interface AppSnapshot {
   config: AppConfig;
   server_status: ServerStatus;
+  emergency_disconnect: boolean;
   audit_events: AuditEvent[];
   tools: McpToolInfo[];
   updater_enabled: boolean;
