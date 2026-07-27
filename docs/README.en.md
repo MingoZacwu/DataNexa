@@ -36,7 +36,7 @@ DataNexa currently supports SQLite, MySQL, and PostgreSQL. Its desktop applicati
 
 ## Interface Preview
 
-<img src="../resources/readme/overview.jpg" alt="DataNexa Overview UI">
+<img src="../resources/readme/overview.png" alt="DataNexa Overview UI">
 
 ## Download and Installation
 
