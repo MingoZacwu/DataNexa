@@ -56,6 +56,11 @@ struct McpToolCallCompletedPayload {
     failed: bool,
 }
 
+struct McpToolCallResult {
+    response: Value,
+    denied: bool,
+}
+
 #[derive(Clone)]
 struct McpHttpState {
     app: Arc<AppState>,
@@ -688,10 +693,13 @@ async fn handle_active_tool_call(
     let call_result = call_tool_audited(state.app.clone(), params).await;
     drop(connection_permit);
     drop(global_permit);
-    let call_failed = call_result.is_err();
+    let call_failed = match &call_result {
+        Ok(result) => result.denied,
+        Err(_) => true,
+    };
 
     let result = match call_result {
-        Ok(value) => value,
+        Ok(result) => result.response,
         Err(error) if sanitize_error(&error).starts_with("audit storage unavailable:") => {
             emit_mcp_tool_call_completed(&state.app, true);
             return Err((-32603, sanitize_error(&error)));
@@ -886,7 +894,7 @@ fn policy_check_schema() -> Value {
     })
 }
 
-async fn call_tool_audited(app: Arc<AppState>, params: Value) -> anyhow::Result<Value> {
+async fn call_tool_audited(app: Arc<AppState>, params: Value) -> anyhow::Result<McpToolCallResult> {
     let _config_transaction = app.config_transaction.read().await;
     let started = Instant::now();
     let name = params
@@ -959,7 +967,7 @@ async fn audit_sql_for_args(app: &Arc<AppState>, args: &Value) -> Option<AuditSq
     Some(AuditSql::redacted())
 }
 
-async fn call_tool(app: Arc<AppState>, params: Value) -> anyhow::Result<Value> {
+async fn call_tool(app: Arc<AppState>, params: Value) -> anyhow::Result<McpToolCallResult> {
     let name = params
         .get("name")
         .and_then(Value::as_str)
@@ -974,6 +982,7 @@ async fn call_tool(app: Arc<AppState>, params: Value) -> anyhow::Result<Value> {
     }
     let max_events = audit_limit(&app).await;
     let text = text_for_app(&app).await;
+    let mut denied = false;
 
     let payload = match name.as_str() {
         "datanexa_list_connections" => {
@@ -1092,6 +1101,7 @@ async fn call_tool(app: Arc<AppState>, params: Value) -> anyhow::Result<Value> {
                 .execute_readonly(&connection, &app.vault, &sql, &text)
                 .await?;
             if !policy.allowed {
+                denied = true;
                 app.audit
                     .record_with_limit(
                         Some(connection_id),
@@ -1137,6 +1147,7 @@ async fn call_tool(app: Arc<AppState>, params: Value) -> anyhow::Result<Value> {
                 .explain_sql(&connection, &app.vault, &sql, &text)
                 .await?;
             if !policy.allowed {
+                denied = true;
                 app.audit
                     .record_with_limit(
                         Some(connection_id),
@@ -1191,6 +1202,7 @@ async fn call_tool(app: Arc<AppState>, params: Value) -> anyhow::Result<Value> {
                 (connection.kind, connection.max_rows)
             };
             let policy = crate::policy::PolicyEngine::check_with_text(&kind, &sql, max_rows, &text);
+            denied = !policy.allowed;
             app.audit
                 .record_with_limit(
                     audit_connection_id,
@@ -1213,15 +1225,18 @@ async fn call_tool(app: Arc<AppState>, params: Value) -> anyhow::Result<Value> {
         _ => return Err(anyhow::anyhow!("unknown DataNexa tool: {name}")),
     };
 
-    Ok(json!({
-        "content": [
-            {
-                "type": "text",
-                "text": serde_json::to_string_pretty(&payload)?
-            }
-        ],
-        "isError": false
-    }))
+    Ok(McpToolCallResult {
+        response: json!({
+            "content": [
+                {
+                    "type": "text",
+                    "text": serde_json::to_string_pretty(&payload)?
+                }
+            ],
+            "isError": false
+        }),
+        denied,
+    })
 }
 
 async fn audit_limit(app: &Arc<AppState>) -> usize {
@@ -1469,6 +1484,40 @@ mod tests {
             negotiated_protocol_version(Some(&unsupported)),
             "2025-11-25"
         );
+    }
+
+    #[tokio::test]
+    async fn policy_rejection_marks_tool_completion_as_denied() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let state = test_state(
+            directory.path(),
+            17321,
+            &directory.path().join("audit.json"),
+        );
+
+        let allowed = call_tool(
+            state.clone(),
+            json!({
+                "name": "datanexa_policy_check",
+                "arguments": { "kind": "sqlite", "sql": "SELECT 1" }
+            }),
+        )
+        .await
+        .expect("allowed policy check");
+        assert!(!allowed.denied);
+        assert_eq!(allowed.response.get("isError"), Some(&Value::Bool(false)));
+
+        let denied = call_tool(
+            state,
+            json!({
+                "name": "datanexa_policy_check",
+                "arguments": { "kind": "sqlite", "sql": "DELETE FROM users" }
+            }),
+        )
+        .await
+        .expect("denied policy check");
+        assert!(denied.denied);
+        assert_eq!(denied.response.get("isError"), Some(&Value::Bool(false)));
     }
 
     #[tokio::test]
