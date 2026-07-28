@@ -611,11 +611,84 @@ textarea:focus-visible,
   backdrop-filter: blur(26px) saturate(150%);
 }
 
+.status-command > :not(.mcp-activity-effect) {
+  position: relative;
+  z-index: 2;
+}
+
+.mcp-activity-effect {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.mcp-activity-ripple {
+  position: absolute;
+  top: 50%;
+  left: 38px;
+  width: 42px;
+  height: 42px;
+  border: 1px solid color-mix(in srgb, var(--green) 55%, transparent);
+  border-radius: 10px;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.82);
+  animation: mcp-activity-ripple 1050ms cubic-bezier(0.2, 0.72, 0.25, 1) both;
+}
+
+.mcp-activity-ripple.first {
+  --mcp-ripple-peak: 0.18;
+}
+
+.mcp-activity-ripple.second {
+  --mcp-ripple-peak: 0.11;
+  animation-delay: 160ms;
+}
+
+.mcp-activity-sweep {
+  position: absolute;
+  top: -24%;
+  bottom: -24%;
+  left: 38px;
+  width: clamp(260px, 44%, 580px);
+  opacity: 0;
+  transform: translateX(-90%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--green) 10%, transparent) 12%,
+    color-mix(in srgb, var(--green) 22%, transparent) 42%,
+    color-mix(in srgb, var(--cyan) 34%, transparent) 70%,
+    color-mix(in srgb, white 40%, var(--cyan)) 90%,
+    color-mix(in srgb, var(--cyan) 30%, transparent) 95%,
+    transparent
+  );
+  filter: blur(1.4px);
+  animation: mcp-activity-sweep 1650ms cubic-bezier(0.32, 0.08, 0.62, 1) both;
+}
+
+@keyframes mcp-activity-ripple {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.82); }
+  20% { opacity: var(--mcp-ripple-peak, 0.15); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(2.75); }
+}
+
+@keyframes mcp-activity-sweep {
+  0% { left: -5%; opacity: 0.52; }
+  22% { opacity: 0.38; }
+  48% { opacity: 0.21; }
+  68% { opacity: 0.09; }
+  82% { opacity: 0.03; }
+  100% { left: 108%; opacity: 0; }
+}
+
 .status-command::after {
   content: "";
   position: absolute;
   inset: auto 0 0;
   height: 2px;
+  z-index: 3;
   opacity: 0.65;
   background: linear-gradient(90deg, var(--blue), var(--cyan), transparent 75%);
 }
@@ -2156,4 +2229,26 @@ textarea:focus {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+
+  .mcp-activity-ripple {
+    display: none;
+  }
+
+  .mcp-activity-sweep {
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    transform: none;
+    filter: none;
+    background: linear-gradient(90deg, var(--green), var(--cyan));
+    animation: mcp-activity-reduced 160ms ease-out both !important;
+  }
+}
+
+@keyframes mcp-activity-reduced {
+  from { opacity: 0.6; }
+  to { opacity: 0; }
 }

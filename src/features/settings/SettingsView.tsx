@@ -104,6 +104,7 @@ export function SettingsView({
         && current.audit_redact_sql_literals === settings.audit_redact_sql_literals
         && current.auto_check_updates === settings.auto_check_updates
         && current.auto_start_mcp === settings.auto_start_mcp
+        && current.mcp_activity_effects === settings.mcp_activity_effects
         && current.language === settings.language;
       if (saved) settingsDraftDirty.current = false;
       if (saved) setAuditMaxEventsDraft(String(settings.audit_max_events));
@@ -201,6 +202,15 @@ export function SettingsView({
                   ))}
                 </select>
               </Field>
+              <div className="field">
+                <span>{t.settings.interfaceEffects}</span>
+                <SwitchField label={t.settings.mcpActivityEffects} checked={settingsDraft.mcp_activity_effects} disabled={busy} onCheckedChange={(checked) => {
+                  const next = { ...settingsDraft, mcp_activity_effects: checked };
+                  settingsDraftDirty.current = true;
+                  setSettingsDraft(next);
+                  onSaveSettings(next);
+                }} />
+              </div>
               <div className="field span-all">
                 <span id="settings-theme-mode-label">{t.settings.theme}</span>
                 <ThemeModeControl
@@ -605,5 +615,3 @@ export function AboutUpdateSection({
     </section>
   );
 }
-
-

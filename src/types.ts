@@ -29,6 +29,7 @@ export interface SettingsConfig {
   audit_redact_sql_literals: boolean;
   auto_check_updates: boolean;
   auto_start_mcp: boolean;
+  mcp_activity_effects: boolean;
   language: string;
 }
 

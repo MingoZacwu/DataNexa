@@ -10,6 +10,7 @@ use crate::mcp::McpRuntime;
 use crate::vault::CredentialVault;
 
 pub struct AppState {
+    pub app_handle: Option<tauri::AppHandle>,
     pub store: ConfigStore,
     pub config: RwLock<AppConfig>,
     pub config_transaction: RwLock<()>,
@@ -29,6 +30,7 @@ impl AppState {
         let audit = AuditLogger::new(&app, config.settings.audit_max_events)?;
 
         Ok(Self {
+            app_handle: Some(app),
             store,
             config: RwLock::new(config),
             config_transaction: RwLock::new(()),
