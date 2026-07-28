@@ -5,8 +5,7 @@ import quickStep2Url from "../../../resources/quickguide/step2.png";
 import quickStep3Url from "../../../resources/quickguide/step3.png";
 import type { I18nMessages } from "../../i18n";
 import type { AppSnapshot, AuditEvent } from "../../types";
-import { relativeDuration } from "../../app/utils";
-import { EventList, PanelHeader, PanelIconAction, QuickStep } from "../../components/ui";
+import { EventList, IconTooltip, PanelHeader, PanelIconAction, QuickStep } from "../../components/ui";
 import { ConnectionListItem } from "../connections/ConnectionsView";
 
 export function OverviewView({
@@ -40,7 +39,13 @@ export function OverviewView({
 }) {
   const totalConnections = snapshot.config.connections.length;
   const enabledTools = snapshot.tools.filter((tool) => tool.enabled).length;
-  const uptime = snapshot.server_status.started_at ? relativeDuration(t, snapshot.server_status.started_at) : t.overview.notStarted;
+  const callsCutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const callsLast24Hours = snapshot.audit_events.filter((event) => (
+    event.tool.startsWith("datanexa_") && new Date(event.timestamp).getTime() >= callsCutoff
+  )).length;
+  const oldestAuditEvent = snapshot.audit_events[snapshot.audit_events.length - 1];
+  const callsPossiblyTruncated = snapshot.audit_events.length >= snapshot.config.settings.audit_max_events
+    && Boolean(oldestAuditEvent && new Date(oldestAuditEvent.timestamp).getTime() >= callsCutoff);
   const startupFailed = Boolean(snapshot.startup_error);
   const emergencyDisconnect = snapshot.emergency_disconnect;
   const statusLabel = startupFailed
@@ -64,7 +69,20 @@ export function OverviewView({
         <div className="command-metrics">
           <div><span>{t.overview.metricConnections}</span><strong>{enabledConnections}<small> / {totalConnections}</small></strong></div>
           <div><span>{t.overview.metricTools}</span><strong>{enabledTools}<small> / {snapshot.tools.length}</small></strong></div>
-          <div><span>{t.overview.metricUptime}</span><strong>{uptime}</strong></div>
+          <div>
+            <span>{t.overview.metricCallsLast24Hours}</span>
+            <strong className="call-count">
+              {callsLast24Hours}
+              <small> {t.overview.callsUnit}</small>
+              {callsPossiblyTruncated && (
+                <IconTooltip label={t.overview.callsTruncatedHint}>
+                  <span className="call-count-overflow" role="img" aria-label={t.overview.callsTruncatedHint} tabIndex={0}>
+                    <Plus size={10} strokeWidth={2.5} />
+                  </span>
+                </IconTooltip>
+              )}
+            </strong>
+          </div>
         </div>
         <button
           type="button"
@@ -115,5 +133,3 @@ export function OverviewView({
     </section>
   );
 }
-
-

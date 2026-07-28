@@ -621,67 +621,19 @@ pub async fn test_connection(
     state: State<'_, Arc<AppState>>,
     id: String,
 ) -> Result<String, String> {
-    if !state.audit.is_ready().await {
-        return Err("audit migration is not ready".to_string());
-    }
     let _config_transaction = state.config_transaction.read().await;
     let text = text_for_state(state.inner()).await;
     let connection = find_connection(state.inner(), &id)
         .await
         .map_err(to_client_error)?;
     state.db.close(&id).await;
-    let started = Instant::now();
-    let max_events = audit_limit(state.inner()).await;
     match state
         .db
         .test_connection(&connection, &state.vault, &text)
         .await
     {
-        Ok(duration) => {
-            state
-                .audit
-                .record_with_limit(
-                    Some(id),
-                    Some(connection.name.clone()),
-                    "test_connection",
-                    AuditStatus::Allowed,
-                    None,
-                    Some(duration.as_millis().try_into().unwrap_or(u64::MAX)),
-                    None,
-                    None,
-                    max_events,
-                )
-                .await
-                .map_err(|error| {
-                    format!(
-                        "Connection test succeeded, but audit storage is unavailable: {}",
-                        to_client_error(error)
-                    )
-                })?;
-            Ok(text.connection_test_ok(duration.as_millis()))
-        }
+        Ok(duration) => Ok(text.connection_test_ok(duration.as_millis())),
         Err(error) => {
-            state
-                .audit
-                .record_with_limit(
-                    Some(id),
-                    Some(connection.name.clone()),
-                    "test_connection",
-                    AuditStatus::Error,
-                    Some(sanitize_error(&error)),
-                    Some(started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)),
-                    None,
-                    None,
-                    max_events,
-                )
-                .await
-                .map_err(|audit_error| {
-                    format!(
-                        "Connection test failed and audit storage is unavailable: {}; original result: {}",
-                        to_client_error(audit_error),
-                        to_client_error(&error)
-                    )
-                })?;
             let diagnostics = state.db.diagnostics(&connection, &state.vault, &text);
             Err(format!(
                 "{}\n{}",
@@ -697,9 +649,6 @@ pub async fn test_connection_input(
     state: State<'_, Arc<AppState>>,
     input: ConnectionInput,
 ) -> Result<String, String> {
-    if !state.audit.is_ready().await {
-        return Err("audit migration is not ready".to_string());
-    }
     let _config_transaction = state.config_transaction.read().await;
     let text = text_for_state(state.inner()).await;
     validate_connection(&input.connection, &text).map_err(to_client_error)?;
@@ -711,9 +660,6 @@ pub async fn test_connection_input(
         connection.credential_ref = None;
     }
 
-    let started = Instant::now();
-    let max_events = audit_limit(state.inner()).await;
-    let connection_id = connection.id.clone();
     let password_override = if clear_password {
         None
     } else {
@@ -725,53 +671,8 @@ pub async fn test_connection_input(
         .test_connection_once(&connection, &state.vault, password_override, &text)
         .await
     {
-        Ok(duration) => {
-            state
-                .audit
-                .record_with_limit(
-                    Some(connection_id),
-                    Some(connection.name.clone()),
-                    "test_connection",
-                    AuditStatus::Allowed,
-                    None,
-                    Some(duration.as_millis().try_into().unwrap_or(u64::MAX)),
-                    None,
-                    None,
-                    max_events,
-                )
-                .await
-                .map_err(|error| {
-                    format!(
-                        "Connection test succeeded, but audit storage is unavailable: {}",
-                        to_client_error(error)
-                    )
-                })?;
-            Ok(text.connection_test_ok(duration.as_millis()))
-        }
-        Err(error) => {
-            state
-                .audit
-                .record_with_limit(
-                    Some(connection_id),
-                    Some(connection.name.clone()),
-                    "test_connection",
-                    AuditStatus::Error,
-                    Some(sanitize_error(&error)),
-                    Some(started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)),
-                    None,
-                    None,
-                    max_events,
-                )
-                .await
-                .map_err(|audit_error| {
-                    format!(
-                        "Connection test failed and audit storage is unavailable: {}; original result: {}",
-                        to_client_error(audit_error),
-                        to_client_error(&error)
-                    )
-                })?;
-            Err(to_client_error(&error))
-        }
+        Ok(duration) => Ok(text.connection_test_ok(duration.as_millis())),
+        Err(error) => Err(to_client_error(&error)),
     }
 }
 
@@ -1136,20 +1037,12 @@ fn normalize_settings(mut settings: SettingsConfig) -> SettingsConfig {
     settings
 }
 
-async fn audit_limit(state: &Arc<AppState>) -> usize {
-    state.config.read().await.settings.audit_max_events
-}
-
 async fn text_for_state(state: &Arc<AppState>) -> BackendText {
     let language = state.config.read().await.settings.language.clone();
     backend_text(&language)
 }
 
 fn to_client_error(error: impl std::fmt::Display) -> String {
-    sanitize_text(&error.to_string())
-}
-
-fn sanitize_error(error: &anyhow::Error) -> String {
     sanitize_text(&error.to_string())
 }
 

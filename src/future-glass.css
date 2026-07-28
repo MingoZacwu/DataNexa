@@ -778,6 +778,33 @@ textarea:focus-visible,
   font-weight: 700;
 }
 
+.command-metrics strong.call-count {
+  width: fit-content;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  overflow: visible;
+}
+
+.call-count-overflow {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+  display: inline-flex;
+  align-self: flex-end;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+  overflow: visible !important;
+  color: var(--muted);
+  outline: none;
+}
+
+.call-count-overflow:focus-visible {
+  color: var(--blue);
+}
+
 .command-metrics small {
   color: var(--muted);
   font-size: 11px;

@@ -9,6 +9,19 @@ import type { AuditEvent } from "../types";
 import type { ToastMessage } from "../app/types";
 import { statusLabel, statusTone, toolDisplayName } from "../app/utils";
 
+function formatCompactEventTimestamp(timestamp: string) {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const isToday = date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate();
+
+  if (isToday) return date.toLocaleTimeString();
+  return date.toLocaleDateString(undefined, date.getFullYear() === now.getFullYear()
+    ? { month: "2-digit", day: "2-digit" }
+    : { year: "numeric", month: "2-digit", day: "2-digit" });
+}
+
 export function EventList({ t, events, onSelect }: { t: I18nMessages; events: AuditEvent[]; onSelect?: (event: AuditEvent) => void }) {
   if (events.length === 0) {
     return <div className="empty-state compact">{t.audit.emptyCompact}</div>;
@@ -19,7 +32,7 @@ export function EventList({ t, events, onSelect }: { t: I18nMessages; events: Au
       {events.map((event) => (
         <button type="button" className="event-item" key={event.id} onClick={() => onSelect?.(event)}>
           <span className={clsx("event-dot", statusTone(event.status))} />
-          <time>{new Date(event.timestamp).toLocaleTimeString()}</time>
+          <time dateTime={event.timestamp} title={new Date(event.timestamp).toLocaleString()}>{formatCompactEventTimestamp(event.timestamp)}</time>
           <span>{event.reason ?? toolDisplayName(t, event.tool)}</span>
           <StatusPill tone={statusTone(event.status)} label={statusLabel(t, event.status)} />
         </button>
@@ -156,5 +169,4 @@ export function QuickStep({ image, title, text, wide, actionLabel, onAction }: {
 export function StatusPill({ tone, label }: { tone: "green" | "blue" | "amber" | "red" | "slate"; label: string }) {
   return <span className={clsx("status-pill", tone)}>{label}</span>;
 }
-
 
