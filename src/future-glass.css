@@ -617,11 +617,18 @@ textarea:focus-visible,
 }
 
 .mcp-activity-effect {
+  --mcp-activity-primary: var(--green);
+  --mcp-activity-secondary: var(--cyan);
   position: absolute;
   z-index: 1;
   inset: 0;
   overflow: hidden;
   pointer-events: none;
+}
+
+.mcp-activity-effect.error {
+  --mcp-activity-primary: var(--red);
+  --mcp-activity-secondary: color-mix(in srgb, var(--red) 72%, white);
 }
 
 .mcp-activity-ripple {
@@ -630,7 +637,7 @@ textarea:focus-visible,
   left: 38px;
   width: 42px;
   height: 42px;
-  border: 1px solid color-mix(in srgb, var(--green) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--mcp-activity-primary) 55%, transparent);
   border-radius: 10px;
   opacity: 0;
   transform: translate(-50%, -50%) scale(0.82);
@@ -657,11 +664,11 @@ textarea:focus-visible,
   background: linear-gradient(
     90deg,
     transparent,
-    color-mix(in srgb, var(--green) 10%, transparent) 12%,
-    color-mix(in srgb, var(--green) 22%, transparent) 42%,
-    color-mix(in srgb, var(--cyan) 34%, transparent) 70%,
-    color-mix(in srgb, white 40%, var(--cyan)) 90%,
-    color-mix(in srgb, var(--cyan) 30%, transparent) 95%,
+    color-mix(in srgb, var(--mcp-activity-primary) 10%, transparent) 12%,
+    color-mix(in srgb, var(--mcp-activity-primary) 22%, transparent) 42%,
+    color-mix(in srgb, var(--mcp-activity-secondary) 34%, transparent) 70%,
+    color-mix(in srgb, white 40%, var(--mcp-activity-secondary)) 90%,
+    color-mix(in srgb, var(--mcp-activity-secondary) 30%, transparent) 95%,
     transparent
   );
   filter: blur(1.4px);
@@ -2243,7 +2250,7 @@ textarea:focus {
     height: 2px;
     transform: none;
     filter: none;
-    background: linear-gradient(90deg, var(--green), var(--cyan));
+    background: linear-gradient(90deg, var(--mcp-activity-primary), var(--mcp-activity-secondary));
     animation: mcp-activity-reduced 160ms ease-out both !important;
   }
 }

@@ -927,7 +927,7 @@ dependencies = [
 
 [[package]]
 name = "datanexa"
-version = "0.6.0-beta1"
+version = "0.6.0-beta2"
 dependencies = [
  "anyhow",
  "async-stream",

@@ -22,6 +22,12 @@ import { ToolsView } from "./features/tools/ToolsView";
 import { AuditDetailDialog, AuditView } from "./features/audit/AuditView";
 import { SettingsView } from "./features/settings/SettingsView";
 
+type McpActivityTone = "success" | "error";
+type McpToolCallCompletedPayload = { failed: boolean };
+
+const MCP_ACTIVITY_DURATION_MS = 1750;
+const MCP_ACTIVITY_REDUCED_DURATION_MS = 200;
+
 const defaultConnection = (name: string): ConnectionConfig => ({
   id: `connection_${crypto.randomUUID().slice(0, 8)}`,
   name,
@@ -63,6 +69,7 @@ function App() {
   const [migrationDialogOpen, setMigrationDialogOpen] = useState(false);
   const [migrationRecoveryBusy, setMigrationRecoveryBusy] = useState(false);
   const [mcpActivitySequence, setMcpActivitySequence] = useState(0);
+  const [mcpActivityTone, setMcpActivityTone] = useState<McpActivityTone>("success");
   const [confirmClearLegacy, setConfirmClearLegacy] = useState(false);
   const effectiveTheme = resolveTheme(theme, systemThemeMode);
   const t = messages[locale];
@@ -70,10 +77,15 @@ function App() {
   const activeViewRef = useRef(activeView);
   const mcpActivityEffectsEnabled = snapshot?.config.settings.mcp_activity_effects ?? true;
   const mcpActivityEffectsEnabledRef = useRef(mcpActivityEffectsEnabled);
+  const mcpActivityPlayingRef = useRef(false);
+  const mcpActivityTimerRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     activeViewRef.current = activeView;
     if (activeView !== "overview") {
+      mcpActivityPlayingRef.current = false;
+      window.clearTimeout(mcpActivityTimerRef.current);
+      mcpActivityTimerRef.current = undefined;
       setMcpActivitySequence(0);
     }
   }, [activeView]);
@@ -81,6 +93,9 @@ function App() {
   useEffect(() => {
     mcpActivityEffectsEnabledRef.current = mcpActivityEffectsEnabled;
     if (!mcpActivityEffectsEnabled) {
+      mcpActivityPlayingRef.current = false;
+      window.clearTimeout(mcpActivityTimerRef.current);
+      mcpActivityTimerRef.current = undefined;
       setMcpActivitySequence(0);
     }
   }, [mcpActivityEffectsEnabled]);
@@ -163,50 +178,49 @@ function App() {
   }, []);
 
   useEffect(() => {
-    let unlistenStarted: UnlistenFn | undefined;
     let unlistenCompleted: UnlistenFn | undefined;
     let refreshTimer: number | undefined;
-    let activityTimer: number | undefined;
-    let lastActivityAt = 0;
     let cancelled = false;
 
-    const triggerActivity = () => {
-      if (!mcpActivityEffectsEnabledRef.current || activeViewRef.current !== "overview") return;
-      const now = performance.now();
-      const delay = Math.max(0, 320 - (now - lastActivityAt));
-      window.clearTimeout(activityTimer);
-      activityTimer = window.setTimeout(() => {
-        if (!mcpActivityEffectsEnabledRef.current || activeViewRef.current !== "overview") return;
-        lastActivityAt = performance.now();
-        setMcpActivitySequence((sequence) => sequence + 1);
-      }, delay);
+    const triggerActivity = (failed: boolean) => {
+      if (!mcpActivityEffectsEnabledRef.current
+        || activeViewRef.current !== "overview"
+        || mcpActivityPlayingRef.current) return;
+
+      mcpActivityPlayingRef.current = true;
+      setMcpActivityTone(failed ? "error" : "success");
+      setMcpActivitySequence((sequence) => sequence + 1);
+      const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const duration = reducedMotion ? MCP_ACTIVITY_REDUCED_DURATION_MS : MCP_ACTIVITY_DURATION_MS;
+      window.clearTimeout(mcpActivityTimerRef.current);
+      mcpActivityTimerRef.current = window.setTimeout(() => {
+        mcpActivityPlayingRef.current = false;
+        mcpActivityTimerRef.current = undefined;
+      }, duration);
     };
 
     void (async () => {
       try {
-        unlistenStarted = await listen("mcp://tool-call-started", triggerActivity);
-        unlistenCompleted = await listen("mcp://tool-call-completed", () => {
+        unlistenCompleted = await listen<McpToolCallCompletedPayload>("mcp://tool-call-completed", (event) => {
+          triggerActivity(event.payload.failed);
           window.clearTimeout(refreshTimer);
           refreshTimer = window.setTimeout(() => void refresh({ quiet: true }), 120);
         });
         if (cancelled) {
-          unlistenStarted();
           unlistenCompleted();
-          unlistenStarted = undefined;
           unlistenCompleted = undefined;
         }
       } catch {
-        unlistenStarted?.();
-        unlistenStarted = undefined;
         // The low-frequency snapshot refresh remains available if event delivery is unavailable.
       }
     })();
 
     return () => {
       cancelled = true;
-      unlistenStarted?.();
       unlistenCompleted?.();
-      window.clearTimeout(activityTimer);
+      mcpActivityPlayingRef.current = false;
+      window.clearTimeout(mcpActivityTimerRef.current);
+      mcpActivityTimerRef.current = undefined;
       window.clearTimeout(refreshTimer);
     };
   }, []);
@@ -673,6 +687,7 @@ function App() {
                     busy={busy}
                     startDisabled={!snapshot.server_status.running && !migrationReady}
                     mcpActivitySequence={mcpActivitySequence}
+                    mcpActivityTone={mcpActivityTone}
                   />
                 )}
                 {activeView === "connections" && (

@@ -22,7 +22,8 @@ export function OverviewView({
   onToggleEmergency,
   busy,
   startDisabled,
-  mcpActivitySequence
+  mcpActivitySequence,
+  mcpActivityTone
 }: {
   t: I18nMessages;
   snapshot: AppSnapshot;
@@ -38,6 +39,7 @@ export function OverviewView({
   busy: boolean;
   startDisabled: boolean;
   mcpActivitySequence: number;
+  mcpActivityTone: "success" | "error";
 }) {
   const totalConnections = snapshot.config.connections.length;
   const enabledTools = snapshot.tools.filter((tool) => tool.enabled).length;
@@ -62,7 +64,7 @@ export function OverviewView({
     <section className="overview-page">
       <section className={clsx("status-command", startupFailed ? "error" : emergencyDisconnect ? "emergency" : snapshot.server_status.running && "running")} title={snapshot.startup_error ?? undefined}>
         {mcpActivitySequence > 0 && (
-          <div className="mcp-activity-effect" key={mcpActivitySequence} aria-hidden="true">
+          <div className={clsx("mcp-activity-effect", mcpActivityTone)} key={mcpActivitySequence} aria-hidden="true">
             <i className="mcp-activity-ripple first" />
             <i className="mcp-activity-ripple second" />
             <i className="mcp-activity-sweep" />

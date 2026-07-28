@@ -51,6 +51,11 @@ pub struct McpToolInfo {
     pub enabled: bool,
 }
 
+#[derive(Clone, Serialize)]
+struct McpToolCallCompletedPayload {
+    failed: bool,
+}
+
 #[derive(Clone)]
 struct McpHttpState {
     app: Arc<AppState>,
@@ -67,7 +72,6 @@ const TOOL_RATE_PER_SECOND: f64 = 2.0;
 const TOOL_RATE_BURST: f64 = 20.0;
 const MAX_MCP_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_MCP_RESULT_BYTES: usize = MAX_MCP_RESPONSE_BYTES - 64 * 1024;
-const MCP_TOOL_CALL_STARTED_EVENT: &str = "mcp://tool-call-started";
 const MCP_TOOL_CALL_COMPLETED_EVENT: &str = "mcp://tool-call-completed";
 const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
 const SUPPORTED_PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", LATEST_PROTOCOL_VERSION];
@@ -681,23 +685,15 @@ async fn handle_active_tool_call(
         None
     };
 
-    if let Some(app_handle) = &state.app.app_handle {
-        if let Err(error) = app_handle.emit(MCP_TOOL_CALL_STARTED_EVENT, ()) {
-            eprintln!("failed to emit MCP tool-call start event: {error}");
-        }
-    }
     let call_result = call_tool_audited(state.app.clone(), params).await;
     drop(connection_permit);
     drop(global_permit);
-    if let Some(app_handle) = &state.app.app_handle {
-        if let Err(error) = app_handle.emit(MCP_TOOL_CALL_COMPLETED_EVENT, ()) {
-            eprintln!("failed to emit MCP tool-call completion event: {error}");
-        }
-    }
+    let call_failed = call_result.is_err();
 
     let result = match call_result {
         Ok(value) => value,
         Err(error) if sanitize_error(&error).starts_with("audit storage unavailable:") => {
+            emit_mcp_tool_call_completed(&state.app, true);
             return Err((-32603, sanitize_error(&error)));
         }
         Err(error) => tool_error_result(&sanitize_error(&error)),
@@ -706,11 +702,25 @@ async fn handle_active_tool_call(
         .map(|encoded| encoded.len() > MAX_MCP_RESULT_BYTES)
         .unwrap_or(true)
     {
+        emit_mcp_tool_call_completed(&state.app, true);
         return Ok(tool_error_result(
             "tool response exceeds the 16 MiB MCP safety limit",
         ));
     }
+    emit_mcp_tool_call_completed(&state.app, call_failed);
     Ok(result)
+}
+
+fn emit_mcp_tool_call_completed(app: &Arc<AppState>, failed: bool) {
+    let Some(app_handle) = &app.app_handle else {
+        return;
+    };
+    if let Err(error) = app_handle.emit(
+        MCP_TOOL_CALL_COMPLETED_EVENT,
+        McpToolCallCompletedPayload { failed },
+    ) {
+        eprintln!("failed to emit MCP tool-call completion event: {error}");
+    }
 }
 
 fn tool_error_result(message: &str) -> Value {
