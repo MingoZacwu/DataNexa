@@ -1,5 +1,4 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import * as Switch from "@radix-ui/react-switch";
 import clsx from "clsx";
 import { AlertTriangle, CheckCircle2, Download, ExternalLink, EyeOff, FileDown, FileText, FileUp, Github, Home, KeyRound, ListChecks, Monitor, RefreshCw, SearchCheck, ShieldCheck, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -104,6 +103,7 @@ export function SettingsView({
         && current.audit_redact_sql_literals === settings.audit_redact_sql_literals
         && current.auto_check_updates === settings.auto_check_updates
         && current.auto_start_mcp === settings.auto_start_mcp
+        && current.auto_lightweight_mode === settings.auto_lightweight_mode
         && current.mcp_activity_effects === settings.mcp_activity_effects
         && current.language === settings.language;
       if (saved) settingsDraftDirty.current = false;
@@ -171,12 +171,15 @@ export function SettingsView({
                   }}
                 />
               </Field>
-              <SwitchField label={t.settings.requireBearer} checked={serverDraft.require_token} disabled={busy} onCheckedChange={(checked) => {
-                const next = { ...serverDraft, require_token: checked };
-                serverDraftDirty.current = true;
-                setServerDraft(next);
-                onSaveServer(next);
-              }} />
+              <div className="field">
+                <span>{t.settings.accessControl}</span>
+                <SwitchField label={t.settings.requireBearer} checked={serverDraft.require_token} disabled={busy} onCheckedChange={(checked) => {
+                  const next = { ...serverDraft, require_token: checked };
+                  serverDraftDirty.current = true;
+                  setServerDraft(next);
+                  onSaveServer(next);
+                }} />
+              </div>
             </div>
           </section>
 
@@ -228,12 +231,24 @@ export function SettingsView({
           <section className="panel">
             <h2>{t.settings.startup}</h2>
             <div className="form-grid settings-grid">
-              <SwitchField label={t.settings.autoStartMcp} checked={autoStartStatus === "enabled"} disabled={busy} onCheckedChange={(checked) => {
-                const next = { ...settingsDraft, auto_start_mcp: checked };
-                settingsDraftDirty.current = true;
-                setSettingsDraft(next);
-                onSaveSettings(next, true);
-              }} />
+              <div className="field">
+                <span>{t.settings.autoStart}</span>
+                <SwitchField label={t.settings.autoStartMcp} checked={autoStartStatus === "enabled"} disabled={busy} onCheckedChange={(checked) => {
+                  const next = { ...settingsDraft, auto_start_mcp: checked };
+                  settingsDraftDirty.current = true;
+                  setSettingsDraft(next);
+                  onSaveSettings(next, true);
+                }} />
+              </div>
+              <div className="field">
+                <span>{t.settings.lightweightMode}</span>
+                <SwitchField label={t.settings.autoLightweightMode} tooltip={t.settings.autoLightweightModeHint} checked={settingsDraft.auto_lightweight_mode} disabled={busy} onCheckedChange={(checked) => {
+                  const next = { ...settingsDraft, auto_lightweight_mode: checked };
+                  settingsDraftDirty.current = true;
+                  setSettingsDraft(next);
+                  onSaveSettings(next);
+                }} />
+              </div>
             </div>
           </section>
 
@@ -259,12 +274,15 @@ export function SettingsView({
                   }}
                 />
               </Field>
-              <SwitchField label={t.settings.auditRedactSql} checked={settingsDraft.audit_redact_sql_literals} disabled={busy} onCheckedChange={(checked) => {
-                const next = { ...settingsDraft, audit_redact_sql_literals: checked };
-                settingsDraftDirty.current = true;
-                setSettingsDraft(next);
-                onSaveSettings(next);
-              }} />
+              <div className="field">
+                <span>{t.settings.auditPrivacy}</span>
+                <SwitchField label={t.settings.auditRedactSql} checked={settingsDraft.audit_redact_sql_literals} disabled={busy} onCheckedChange={(checked) => {
+                  const next = { ...settingsDraft, audit_redact_sql_literals: checked };
+                  settingsDraftDirty.current = true;
+                  setSettingsDraft(next);
+                  onSaveSettings(next);
+                }} />
+              </div>
             </div>
           </section>
 
@@ -604,13 +622,9 @@ export function AboutUpdateSection({
           </button>
         )}
       </div>
-      <div className="about-update-preferences">
-        <label className="about-update-switch-row">
-          <span>{t.settings.autoCheckUpdates}</span>
-          <Switch.Root className="switch" checked={enabled && autoCheckUpdates} disabled={!enabled} onCheckedChange={onAutoCheckUpdatesChange}>
-            <Switch.Thumb className="switch-thumb" />
-          </Switch.Root>
-        </label>
+      <div className="about-update-preferences field">
+        <span>{t.settings.autoUpdate}</span>
+        <SwitchField label={t.settings.autoCheckUpdates} checked={enabled && autoCheckUpdates} disabled={!enabled} onCheckedChange={onAutoCheckUpdatesChange} />
       </div>
     </section>
   );

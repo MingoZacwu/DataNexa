@@ -73,6 +73,7 @@ const mockSnapshot: AppSnapshot = {
       audit_redact_sql_literals: false,
       auto_check_updates: true,
       auto_start_mcp: false,
+      auto_lightweight_mode: false,
       mcp_activity_effects: true,
       language: "zh-CN"
     },

@@ -1,7 +1,7 @@
 import * as Switch from "@radix-ui/react-switch";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import clsx from "clsx";
-import { AlertTriangle, CheckCircle2, Clipboard, Plus, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clipboard, Info, Plus, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
 import type { I18nMessages } from "../i18n";
@@ -105,22 +105,33 @@ export function Field({ label, span, children }: { label: string; span?: boolean
 
 export function SwitchField({
   label,
+  tooltip,
   checked,
   disabled,
   onCheckedChange
 }: {
   label: string;
+  tooltip?: string;
   checked: boolean;
   disabled?: boolean;
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="switch-row">
-      <span>{label}</span>
-      <Switch.Root className="switch" checked={checked} disabled={disabled} onCheckedChange={onCheckedChange}>
+    <div className="switch-row">
+      <span className="switch-label">
+        {label}
+        {tooltip && (
+          <IconTooltip label={tooltip}>
+            <button type="button" className="switch-info" aria-label={tooltip}>
+              <Info size={13} />
+            </button>
+          </IconTooltip>
+        )}
+      </span>
+      <Switch.Root className="switch" checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} aria-label={label}>
         <Switch.Thumb className="switch-thumb" />
       </Switch.Root>
-    </label>
+    </div>
   );
 }
 
@@ -169,4 +180,3 @@ export function QuickStep({ image, title, text, wide, actionLabel, onAction }: {
 export function StatusPill({ tone, label }: { tone: "green" | "blue" | "amber" | "red" | "slate"; label: string }) {
   return <span className={clsx("status-pill", tone)}>{label}</span>;
 }
-
