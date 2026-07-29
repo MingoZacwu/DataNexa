@@ -1,4 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
+import * as Switch from "@radix-ui/react-switch";
 import clsx from "clsx";
 import { AlertTriangle, CheckCircle2, Download, ExternalLink, EyeOff, FileDown, FileText, FileUp, Github, Home, KeyRound, ListChecks, Monitor, RefreshCw, SearchCheck, ShieldCheck, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -622,9 +623,13 @@ export function AboutUpdateSection({
           </button>
         )}
       </div>
-      <div className="about-update-preferences field">
-        <span>{t.settings.autoUpdate}</span>
-        <SwitchField label={t.settings.autoCheckUpdates} checked={enabled && autoCheckUpdates} disabled={!enabled} onCheckedChange={onAutoCheckUpdatesChange} />
+      <div className="about-update-preferences">
+        <label className="about-update-switch-row">
+          <span>{t.settings.autoCheckUpdates}</span>
+          <Switch.Root className="switch" checked={enabled && autoCheckUpdates} disabled={!enabled} onCheckedChange={onAutoCheckUpdatesChange}>
+            <Switch.Thumb className="switch-thumb" />
+          </Switch.Root>
+        </label>
       </div>
     </section>
   );

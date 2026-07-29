@@ -2759,7 +2759,7 @@ pre {
   border-top: 1px solid var(--line);
 }
 
-.about-update-preferences .switch-row {
+.about-update-switch-row {
   min-height: var(--control-height);
   display: flex;
   align-items: center;
@@ -2767,14 +2767,14 @@ pre {
   gap: 16px;
 }
 
-.about-update-preferences .switch-label {
+.about-update-switch-row > span {
   color: var(--ink);
   font-size: 14px;
   font-weight: 400;
   line-height: 24px;
 }
 
-:root.dark .about-update-preferences .switch-label {
+:root.dark .about-update-switch-row > span {
   color: var(--ink);
   font-size: 14px;
   font-weight: 400;
