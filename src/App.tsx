@@ -126,17 +126,31 @@ function App() {
 
   useEffect(() => {
     const query = window.matchMedia("(prefers-color-scheme: dark)");
-    const updateSystemTheme = () => setSystemThemeMode(query.matches ? "dark" : "light");
+    const updateSystemTheme = () => {
+      if (theme === "system") {
+        setSystemThemeMode(query.matches ? "dark" : "light");
+      }
+    };
 
     updateSystemTheme();
     query.addEventListener("change", updateSystemTheme);
     return () => query.removeEventListener("change", updateSystemTheme);
-  }, []);
+  }, [theme]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.classList.toggle("dark", effectiveTheme === "dark");
     persistThemeMode(theme);
+    void api.setWindowMaterialTheme(theme === "system" ? null : effectiveTheme === "dark")
+      .then(([nativeDark, micaEnabled]) => {
+        if (theme === "system") {
+          setSystemThemeMode(nativeDark ? "dark" : "light");
+        }
+        document.documentElement.dataset.systemMaterial = micaEnabled ? "enabled" : "fallback";
+      })
+      .catch(() => {
+        document.documentElement.dataset.systemMaterial = "fallback";
+      });
   }, [theme, effectiveTheme]);
 
   useEffect(() => {

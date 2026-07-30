@@ -1,6 +1,6 @@
 [package]
 name = "datanexa"
-version = "0.6.0"
+version = "0.6.0-rc.3"
 description = "Local readonly MCP database gateway"
 authors = ["Zachary Wu"]
 edition = "2021"
@@ -41,6 +41,7 @@ toml = "0.8"
 urlencoding = "2.1"
 uuid = { version = "1.11", features = ["serde", "v4"] }
 rust_decimal = "1"
+window-vibrancy = "0.6"
 zeroize = "1.8"
 
 [target.'cfg(windows)'.dependencies]

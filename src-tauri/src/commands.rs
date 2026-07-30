@@ -766,6 +766,26 @@ pub fn start_window_drag(window: WebviewWindow) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn set_window_material_theme(
+    window: WebviewWindow,
+    dark: Option<bool>,
+) -> Result<(bool, bool), String> {
+    let theme = dark.map(|is_dark| {
+        if is_dark {
+            tauri::Theme::Dark
+        } else {
+            tauri::Theme::Light
+        }
+    });
+    window.set_theme(theme).map_err(to_client_error)?;
+    let mica_enabled = crate::apply_system_material(&window, dark)?;
+    window
+        .theme()
+        .map(|effective_theme| (effective_theme == tauri::Theme::Dark, mica_enabled))
+        .map_err(to_client_error)
+}
+
+#[tauri::command]
 pub async fn open_project_homepage() -> Result<(), String> {
     tauri_plugin_opener::open_url("https://github.com/MingoZacwu/DataNexa", None::<&str>)
         .map_err(to_client_error)

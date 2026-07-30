@@ -148,6 +148,33 @@ textarea:focus-visible,
   background: rgba(10, 14, 21, 0.67);
 }
 
+/* The native window paints Mica/Vibrancy underneath; only the sidebar reveals it. */
+:root[data-system-material="enabled"],
+:root[data-system-material="enabled"] body,
+:root[data-system-material="enabled"] #root {
+  background: transparent;
+  background-image: none;
+}
+
+:root[data-system-material="enabled"] .ambient-grid {
+  display: none;
+}
+
+:root[data-system-material="enabled"] .app-body {
+  background: rgba(246, 249, 253, 0.28);
+}
+
+:root[data-system-material="enabled"] .sidebar {
+  border-right: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:root.dark[data-system-material="enabled"] .app-body {
+  background: rgba(8, 12, 18, 0.30);
+}
+
 .brand {
   justify-content: flex-start;
   gap: 11px;
@@ -294,6 +321,28 @@ textarea:focus-visible,
   background: rgba(246, 249, 253, 0.26);
   scroll-padding-bottom: 24px;
   overflow: hidden;
+  border-radius: 0;
+  position: relative;
+}
+
+:root[data-platform="macos"] .workspace,
+:root[data-platform="other"] .workspace,
+:root[data-system-material="enabled"] .workspace {
+  border-radius: 12px 0 0 12px;
+}
+
+:root[data-platform="macos"] .workspace::before,
+:root[data-platform="other"] .workspace::before,
+:root[data-system-material="enabled"] .workspace::before {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  inset: 0 auto 0 0;
+  width: 12px;
+  border: 1px solid var(--line);
+  border-right: 0;
+  border-radius: 12px 0 0 12px;
+  pointer-events: none;
 }
 
 :root.dark .workspace {
@@ -2258,4 +2307,12 @@ textarea:focus {
 @keyframes mcp-activity-reduced {
   from { opacity: 0.6; }
   to { opacity: 0; }
+}
+
+:root[data-system-material="enabled"] .workspace {
+  background: rgba(247, 249, 252, 0.96);
+}
+
+:root.dark[data-system-material="enabled"] .workspace {
+  background: rgba(8, 11, 16, 0.96);
 }

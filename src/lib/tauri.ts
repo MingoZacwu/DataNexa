@@ -12,6 +12,7 @@ import type {
   SettingsConfig
 } from "../types";
 import { formatMessage, messages, type Locale } from "../i18n";
+import { systemTheme } from "../app/theme";
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const previewText = messages["zh-CN"].api;
@@ -302,6 +303,8 @@ export const api = {
   minimizeWindow: () => command<void>("minimize_main_window", undefined, undefined),
   hideWindow: () => command<void>("hide_main_window", undefined, undefined),
   startWindowDrag: () => command<void>("start_window_drag", undefined, undefined),
+  setWindowMaterialTheme: (dark: boolean | null) =>
+    command<[boolean, boolean]>("set_window_material_theme", { dark }, [dark ?? systemTheme() === "dark", false]),
   openProjectHomepage: () => {
     if (!isTauri) {
       window.open("https://github.com/MingoZacwu/DataNexa", "_blank", "noopener,noreferrer");

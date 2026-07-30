@@ -22,8 +22,8 @@ use commands::{
     hide_main_window, import_connections, minimize_main_window, open_project_homepage,
     open_project_releases, open_project_site, policy_check, retry_audit_migration,
     rotate_server_token, save_server_config, save_settings_config, set_connection_enabled,
-    set_mcp_tool_enabled, start_mcp_server, start_window_drag, stop_mcp_server, test_connection,
-    test_connection_input, upsert_connection,
+    set_mcp_tool_enabled, set_window_material_theme, start_mcp_server, start_window_drag,
+    stop_mcp_server, test_connection, test_connection_input, upsert_connection,
 };
 use i18n::{backend_text, BackendText};
 use state::AppState;
@@ -32,6 +32,38 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Manager, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 
 const LIGHTWEIGHT_MODE_DELAY: Duration = Duration::from_secs(5 * 60);
+
+pub(crate) fn apply_system_material(
+    window: &WebviewWindow,
+    dark: Option<bool>,
+) -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    {
+        if let Err(error) = window_vibrancy::apply_mica(window, dark) {
+            eprintln!("Windows Mica unavailable, using the standard CSS appearance: {error}");
+            let _ = window_vibrancy::clear_acrylic(window);
+            let _ = window.set_shadow(true);
+            return Ok(false);
+        }
+        let _ = window.set_shadow(true);
+        return Ok(true);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        window_vibrancy::apply_vibrancy(
+            window,
+            window_vibrancy::NSVisualEffectMaterial::Sidebar,
+            None,
+            None,
+        )
+        .map_err(|error| error.to_string())?;
+        return Ok(true);
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    Ok(false)
+}
 
 #[derive(Default)]
 struct MainWindowState {
@@ -320,6 +352,9 @@ fn show_main_window(app: &AppHandle) {
 
         match WebviewWindowBuilder::from_config(&app, config).and_then(|builder| builder.build()) {
             Ok(window) => {
+                if let Err(error) = apply_system_material(&window, None) {
+                    eprintln!("failed to apply system window material: {error}");
+                }
                 window_state
                     .lightweight_active
                     .store(false, Ordering::Release);
@@ -414,6 +449,12 @@ pub fn run() {
 
     builder
         .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(error) = apply_system_material(&window, None) {
+                    eprintln!("failed to apply system window material: {error}");
+                }
+            }
+
             let mut state =
                 tauri::async_runtime::block_on(async { AppState::new(app.handle().clone()) })?;
             let tray_text = backend_text(&state.config.get_mut().settings.language);
@@ -591,6 +632,7 @@ pub fn run() {
             export_connections,
             import_connections,
             set_mcp_tool_enabled,
+            set_window_material_theme,
             upsert_connection,
             delete_connection,
             set_connection_enabled,
