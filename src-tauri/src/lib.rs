@@ -40,6 +40,9 @@ pub(crate) fn apply_system_material(
     #[cfg(not(target_os = "windows"))]
     let _ = dark;
 
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let _ = window;
+
     #[cfg(target_os = "windows")]
     {
         if let Err(error) = window_vibrancy::apply_mica(window, dark) {
