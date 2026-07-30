@@ -2311,8 +2311,10 @@ textarea:focus {
 
 :root[data-system-material="enabled"] .workspace {
   background: rgba(247, 249, 252, 0.96);
+  box-shadow: -5px 0 14px rgba(28, 40, 58, 0.045);
 }
 
 :root.dark[data-system-material="enabled"] .workspace {
   background: rgba(8, 11, 16, 0.96);
+  box-shadow: -6px 0 18px rgba(0, 0, 0, 0.16);
 }
