@@ -1,6 +1,6 @@
 [package]
 name = "datanexa"
-version = "0.6.0-rc.3"
+version = "0.6.0"
 description = "Local readonly MCP database gateway"
 authors = ["Zachary Wu"]
 edition = "2021"
@@ -27,7 +27,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sqlparser = { version = "0.59", features = ["visitor"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "postgres", "mysql", "chrono", "uuid", "json", "rust_decimal"] }
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = [ "tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-process = "2"

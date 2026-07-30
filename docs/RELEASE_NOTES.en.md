@@ -6,6 +6,7 @@
 
 - Upgraded emergency disconnect to immediately cancel in-flight requests, block new tool calls, and close active database pools.
 - Added a lightweight mode that releases window UI resources while keeping background services running.
+- On Windows 11 and macOS, the navigation bar now uses the native system material and follows the app theme, with the existing interface style retained when native material is unavailable.
 - Improved MySQL schema selection and result-type handling for more accurate cross-schema queries and boolean, string, and binary values.
 
 ## Added
