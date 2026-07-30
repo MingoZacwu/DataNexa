@@ -160,7 +160,7 @@ textarea:focus-visible,
   display: none;
 }
 
-:root[data-system-material="enabled"] .app-body {
+:root[data-platform="windows"][data-system-material="enabled"] .app-body {
   background: rgba(246, 249, 253, 0.28);
 }
 
@@ -171,7 +171,7 @@ textarea:focus-visible,
   -webkit-backdrop-filter: none;
 }
 
-:root.dark[data-system-material="enabled"] .app-body {
+:root.dark[data-platform="windows"][data-system-material="enabled"] .app-body {
   background: rgba(8, 12, 18, 0.30);
 }
 
