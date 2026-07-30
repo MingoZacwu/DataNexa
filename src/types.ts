@@ -29,6 +29,8 @@ export interface SettingsConfig {
   audit_redact_sql_literals: boolean;
   auto_check_updates: boolean;
   auto_start_mcp: boolean;
+  auto_lightweight_mode: boolean;
+  mcp_activity_effects: boolean;
   language: string;
 }
 
@@ -70,6 +72,7 @@ export interface ServerStatus {
 export interface AppSnapshot {
   config: AppConfig;
   server_status: ServerStatus;
+  emergency_disconnect: boolean;
   audit_events: AuditEvent[];
   tools: McpToolInfo[];
   updater_enabled: boolean;

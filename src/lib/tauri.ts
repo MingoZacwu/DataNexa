@@ -12,6 +12,7 @@ import type {
   SettingsConfig
 } from "../types";
 import { formatMessage, messages, type Locale } from "../i18n";
+import { systemTheme } from "../app/theme";
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const previewText = messages["zh-CN"].api;
@@ -55,6 +56,7 @@ const mockTools: McpToolInfo[] = [
 ];
 
 const mockSnapshot: AppSnapshot = {
+  emergency_disconnect: false,
   updater_enabled: false,
   startup_error: null,
   auto_start_status: "disabled",
@@ -72,6 +74,8 @@ const mockSnapshot: AppSnapshot = {
       audit_redact_sql_literals: false,
       auto_check_updates: true,
       auto_start_mcp: false,
+      auto_lightweight_mode: false,
+      mcp_activity_effects: true,
       language: "zh-CN"
     },
     tools: mockTools.map(({ name, enabled }) => ({ name, enabled })),
@@ -182,12 +186,18 @@ function withConnectionEnabled(id: string, enabled: boolean): AppSnapshot {
   };
 }
 
-function withAllConnectionsDisabled(): AppSnapshot {
+let mockEmergencyDisconnect = false;
+
+function withEmergencyDisconnectToggled(): AppSnapshot {
+  mockEmergencyDisconnect = !mockEmergencyDisconnect;
   return {
     ...mockSnapshot,
+    emergency_disconnect: mockEmergencyDisconnect,
     config: {
       ...mockSnapshot.config,
-      connections: mockSnapshot.config.connections.map((connection) => ({ ...connection, enabled: false }))
+      connections: mockSnapshot.config.connections.map((connection) => (
+        mockEmergencyDisconnect ? { ...connection, enabled: false } : connection
+      ))
     }
   };
 }
@@ -244,7 +254,7 @@ export const api = {
   setConnectionEnabled: (id: string, enabled: boolean) =>
     command<AppSnapshot>("set_connection_enabled", { id, enabled }, withConnectionEnabled(id, enabled)),
   disableAllConnections: () =>
-    command<AppSnapshot>("disable_all_connections", undefined, withAllConnectionsDisabled()),
+    command<AppSnapshot>("disable_all_connections", undefined, withEmergencyDisconnectToggled()),
   clearAuditEvents: () =>
     command<AppSnapshot>("clear_audit_events", undefined, withAuditCleared()),
   retryAuditMigration: () => command<AppSnapshot>("retry_audit_migration", undefined, mockSnapshot),
@@ -272,7 +282,10 @@ export const api = {
     ...mockSnapshot,
     server_status: { ...mockSnapshot.server_status, running: true, started_at: new Date().toISOString() }
   }),
-  stopServer: () => command<AppSnapshot>("stop_mcp_server", undefined, mockSnapshot),
+  stopServer: () => {
+    mockEmergencyDisconnect = false;
+    return command<AppSnapshot>("stop_mcp_server", undefined, mockSnapshot);
+  },
   rotateToken: () => command<AppSnapshot>("rotate_server_token", undefined, {
     ...mockSnapshot,
     server_status: { ...mockSnapshot.server_status, token: "rotated-preview-token" }
@@ -290,6 +303,8 @@ export const api = {
   minimizeWindow: () => command<void>("minimize_main_window", undefined, undefined),
   hideWindow: () => command<void>("hide_main_window", undefined, undefined),
   startWindowDrag: () => command<void>("start_window_drag", undefined, undefined),
+  setWindowMaterialTheme: (dark: boolean | null) =>
+    command<[boolean, boolean]>("set_window_material_theme", { dark }, [dark ?? systemTheme() === "dark", false]),
   openProjectHomepage: () => {
     if (!isTauri) {
       window.open("https://github.com/MingoZacwu/DataNexa", "_blank", "noopener,noreferrer");

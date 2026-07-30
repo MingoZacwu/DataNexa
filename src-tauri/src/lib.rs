@@ -12,7 +12,9 @@ mod vault;
 #[cfg(feature = "updater")]
 mod updater;
 
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use commands::{
     check_updates_if_due, clear_audit_events, clear_legacy_audit_log, delete_connection,
@@ -20,14 +22,61 @@ use commands::{
     hide_main_window, import_connections, minimize_main_window, open_project_homepage,
     open_project_releases, open_project_site, policy_check, retry_audit_migration,
     rotate_server_token, save_server_config, save_settings_config, set_connection_enabled,
-    set_mcp_tool_enabled, start_mcp_server, start_window_drag, stop_mcp_server, test_connection,
-    test_connection_input, upsert_connection,
+    set_mcp_tool_enabled, set_window_material_theme, start_mcp_server, start_window_drag,
+    stop_mcp_server, test_connection, test_connection_input, upsert_connection,
 };
 use i18n::{backend_text, BackendText};
 use state::AppState;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, WebviewWindow, WindowEvent};
+use tauri::{AppHandle, Manager, WebviewWindow, WebviewWindowBuilder, WindowEvent};
+
+const LIGHTWEIGHT_MODE_DELAY: Duration = Duration::from_secs(5 * 60);
+
+pub(crate) fn apply_system_material(
+    window: &WebviewWindow,
+    dark: Option<bool>,
+) -> Result<bool, String> {
+    #[cfg(not(target_os = "windows"))]
+    let _ = dark;
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let _ = window;
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Err(error) = window_vibrancy::apply_mica(window, dark) {
+            eprintln!("Windows Mica unavailable, using the standard CSS appearance: {error}");
+            let _ = window_vibrancy::clear_acrylic(window);
+            let _ = window.set_shadow(true);
+            return Ok(false);
+        }
+        let _ = window.set_shadow(true);
+        return Ok(true);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        window_vibrancy::apply_vibrancy(
+            window,
+            window_vibrancy::NSVisualEffectMaterial::Sidebar,
+            None,
+            None,
+        )
+        .map_err(|error| error.to_string())?;
+        return Ok(true);
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    Ok(false)
+}
+
+#[derive(Default)]
+struct MainWindowState {
+    lifecycle: tokio::sync::Mutex<()>,
+    generation: AtomicU64,
+    lightweight_active: AtomicBool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TrayMcpStatus {
@@ -171,6 +220,18 @@ fn create_tray_menu(
         mcp_running,
         None::<&str>,
     )?;
+    let lightweight_active = app
+        .try_state::<Arc<MainWindowState>>()
+        .map(|state| state.lightweight_active.load(Ordering::Acquire))
+        .unwrap_or(false);
+    let lightweight_item = CheckMenuItem::with_id(
+        app,
+        "toggle_lightweight",
+        text.tray_lightweight_mode(),
+        true,
+        lightweight_active,
+        None::<&str>,
+    )?;
     let separator = PredefinedMenuItem::separator(app)?;
     let error_item = MenuItem::with_id(
         app,
@@ -183,10 +244,26 @@ fn create_tray_menu(
     if startup_error {
         Menu::with_items(
             app,
-            &[&show_item, &mcp_item, &separator, &error_item, &quit_item],
+            &[
+                &show_item,
+                &mcp_item,
+                &lightweight_item,
+                &separator,
+                &error_item,
+                &quit_item,
+            ],
         )
     } else {
-        Menu::with_items(app, &[&show_item, &mcp_item, &separator, &quit_item])
+        Menu::with_items(
+            app,
+            &[
+                &show_item,
+                &mcp_item,
+                &lightweight_item,
+                &separator,
+                &quit_item,
+            ],
+        )
     }
 }
 
@@ -220,20 +297,142 @@ fn set_dock_visibility(app: &AppHandle, visible: bool) -> tauri::Result<()> {
     Ok(())
 }
 
+async fn refresh_tray_from_state(app: &AppHandle, state: &Arc<AppState>) -> tauri::Result<()> {
+    let running = mcp::status(state).await.running;
+    let startup_error = state.mcp.read().await.startup_error.is_some();
+    let language = state.config.read().await.settings.language.clone();
+    refresh_tray_menu(
+        app,
+        backend_text(&language),
+        running,
+        startup_error,
+        state.audit.is_ready().await,
+    )
+}
+
+fn reveal_main_window(window: &WebviewWindow) {
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+}
+
 fn show_main_window(app: &AppHandle) {
     let _ = startup::set_activation_policy(true);
     let _ = set_dock_visibility(app, true);
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
+    let app_state = app.state::<Arc<AppState>>().inner().clone();
+    let window_state = app.state::<Arc<MainWindowState>>().inner().clone();
+    window_state.generation.fetch_add(1, Ordering::AcqRel);
+
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let _lifecycle = window_state.lifecycle.lock().await;
+        if !window_state.lightweight_active.load(Ordering::Acquire) {
+            if let Some(window) = app.get_webview_window("main") {
+                reveal_main_window(&window);
+                return;
+            }
+        }
+
+        for _ in 0..40 {
+            if app.get_webview_window("main").is_none() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+
+        if app.get_webview_window("main").is_some() {
+            eprintln!("failed to recreate main window: previous window is still being destroyed");
+            return;
+        }
+
+        let Some(config) = app
+            .config()
+            .app
+            .windows
+            .iter()
+            .find(|config| config.label == "main")
+        else {
+            eprintln!("failed to recreate main window: main window config is missing");
+            return;
+        };
+
+        match WebviewWindowBuilder::from_config(&app, config).and_then(|builder| builder.build()) {
+            Ok(window) => {
+                if let Err(error) = apply_system_material(&window, None) {
+                    eprintln!("failed to apply system window material: {error}");
+                }
+                window_state
+                    .lightweight_active
+                    .store(false, Ordering::Release);
+                reveal_main_window(&window);
+                if let Err(error) = refresh_tray_from_state(&app, &app_state).await {
+                    eprintln!("failed to refresh tray after recreating main window: {error}");
+                }
+            }
+            Err(error) => eprintln!("failed to recreate main window: {error}"),
+        }
+    });
+}
+
+async fn activate_lightweight_mode(app: AppHandle, generation: u64, automatic: bool) {
+    let app_state = app.state::<Arc<AppState>>().inner().clone();
+    let window_state = app.state::<Arc<MainWindowState>>().inner().clone();
+    let _lifecycle = window_state.lifecycle.lock().await;
+    if window_state.generation.load(Ordering::Acquire) != generation {
+        return;
     }
+    if automatic && !app_state.config.read().await.settings.auto_lightweight_mode {
+        return;
+    }
+    if window_state.generation.load(Ordering::Acquire) != generation {
+        return;
+    }
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+        let _ = startup::set_activation_policy(false);
+        let _ = set_dock_visibility(&app, false);
+        if let Err(error) = window.destroy() {
+            eprintln!("failed to activate lightweight mode: {error}");
+            return;
+        }
+    }
+
+    window_state
+        .lightweight_active
+        .store(true, Ordering::Release);
+    if let Err(error) = refresh_tray_from_state(&app, &app_state).await {
+        eprintln!("failed to refresh tray after activating lightweight mode: {error}");
+    }
+}
+
+fn request_lightweight_mode(app: &AppHandle, automatic: bool) {
+    let state = app.state::<Arc<MainWindowState>>().inner().clone();
+    let generation = state.generation.fetch_add(1, Ordering::AcqRel) + 1;
+    let app = app.clone();
+    tauri::async_runtime::spawn(activate_lightweight_mode(app, generation, automatic));
+}
+
+fn schedule_lightweight_mode(app: &AppHandle) {
+    let app_state = app.state::<Arc<AppState>>().inner().clone();
+    let window_state = app.state::<Arc<MainWindowState>>().inner().clone();
+    let generation = window_state.generation.fetch_add(1, Ordering::AcqRel) + 1;
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if !app_state.config.read().await.settings.auto_lightweight_mode {
+            return;
+        }
+        tokio::time::sleep(LIGHTWEIGHT_MODE_DELAY).await;
+        activate_lightweight_mode(app, generation, true).await;
+    });
 }
 
 pub(crate) fn hide_main_window_to_tray(window: &WebviewWindow) -> tauri::Result<()> {
     window.hide()?;
     let _ = startup::set_activation_policy(false);
-    set_dock_visibility(window.app_handle(), false)
+    let dock_result = set_dock_visibility(window.app_handle(), false);
+    schedule_lightweight_mode(window.app_handle());
+    dock_result
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -256,11 +455,18 @@ pub fn run() {
 
     builder
         .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(error) = apply_system_material(&window, None) {
+                    eprintln!("failed to apply system window material: {error}");
+                }
+            }
+
             let mut state =
                 tauri::async_runtime::block_on(async { AppState::new(app.handle().clone()) })?;
             let tray_text = backend_text(&state.config.get_mut().settings.language);
             let state = Arc::new(state);
             app.manage(state);
+            app.manage(Arc::new(MainWindowState::default()));
 
             let tray_icon = status_tray_icon(TrayMcpStatus::Stopped);
 
@@ -286,11 +492,16 @@ pub fn run() {
             let state = app.state::<Arc<AppState>>().inner().clone();
             let autostart = std::env::args().any(|arg| arg == "--autostart");
             let login_launch = autostart || startup::launched_at_login();
-            let configured = state
+            let (configured, auto_lightweight_mode) = state
                 .config
                 .try_read()
-                .map(|config| config.settings.auto_start_mcp)
-                .unwrap_or(false);
+                .map(|config| {
+                    (
+                        config.settings.auto_start_mcp,
+                        config.settings.auto_lightweight_mode,
+                    )
+                })
+                .unwrap_or((false, false));
             // Reconcile the Run registry value with the persistent preference so
             // that manual reinstalls (which force uninstall-then-install on
             // Windows NSIS) do not leave the auto-start entry missing after
@@ -335,7 +546,9 @@ pub fn run() {
                     refresh_tray_menu(&app_handle, backend_text(&language), running, error, ready);
             });
             if login_launch {
-                if let Some(window) = app.get_webview_window("main") {
+                if auto_lightweight_mode {
+                    request_lightweight_mode(app.handle(), true);
+                } else if let Some(window) = app.get_webview_window("main") {
                     let _ = hide_main_window_to_tray(&window);
                 }
             } else {
@@ -350,6 +563,14 @@ pub fn run() {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => {
                 show_main_window(app);
+            }
+            "toggle_lightweight" => {
+                let state = app.state::<Arc<MainWindowState>>();
+                if state.lightweight_active.load(Ordering::Acquire) {
+                    show_main_window(app);
+                } else {
+                    request_lightweight_mode(app, false);
+                }
             }
             "toggle_mcp" => {
                 let app = app.clone();
@@ -399,10 +620,14 @@ pub fn run() {
             _ => {}
         })
         .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                if window.hide().is_ok() {
-                    let _ = set_dock_visibility(window.app_handle(), false);
+            if window.label() == "main" {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    if let Some(main_window) = window.app_handle().get_webview_window("main") {
+                        if let Err(error) = hide_main_window_to_tray(&main_window) {
+                            eprintln!("failed to hide main window: {error}");
+                        }
+                    }
                 }
             }
         })
@@ -413,6 +638,7 @@ pub fn run() {
             export_connections,
             import_connections,
             set_mcp_tool_enabled,
+            set_window_material_theme,
             upsert_connection,
             delete_connection,
             set_connection_enabled,
@@ -438,6 +664,12 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build DataNexa")
         .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { code, api, .. } = &event {
+                if code.is_none() {
+                    api.prevent_exit();
+                }
+            }
+
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen {
                 has_visible_windows,

@@ -314,6 +314,13 @@ impl BackendText {
         }
     }
 
+    pub fn tray_lightweight_mode(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "轻量模式",
+            Locale::En => "Lightweight Mode",
+        }
+    }
+
     pub fn tray_quit(self) -> &'static str {
         match self.locale {
             Locale::ZhCn => "退出",

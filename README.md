@@ -36,7 +36,7 @@ DataNexa 是一个运行在本机的数据库 MCP 服务。它为 AI Agent 提�
 
 ## 界面预览
 
-<img src="resources/readme/overview.jpg" alt="DataNexa Overview UI">
+<img src="resources/readme/overview.png" alt="DataNexa Overview UI">
 
 ## 下载与安装
 

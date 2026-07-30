@@ -1,146 +1,32 @@
-import * as Dialog from "@radix-ui/react-dialog";
-import * as Switch from "@radix-ui/react-switch";
 import * as Tooltip from "@radix-ui/react-tooltip";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import clsx from "clsx";
-import {
-  Activity,
-  AlertTriangle,
-  CalendarDays,
-  Cable,
-  CheckCircle2,
-  ChevronRight,
-  Clipboard,
-  Clock3,
-  ChevronLeft,
-  Database,
-  Download,
-  ExternalLink,
-  EyeOff,
-  FileDown,
-  FileText,
-  FileUp,
-  Filter,
-  Github,
-  Home,
-  KeyRound,
-  ListChecks,
-  Logs,
-  Minus,
-  Moon,
-  Monitor,
-  MoreVertical,
-  Play,
-  Plus,
-  Power,
-  RefreshCw,
-  SearchCheck,
-  Server,
-  Settings,
-  ShieldCheck,
-  Square,
-  Sun,
-  Trash2,
-  Wrench,
-  X
-} from "lucide-react";
+import { AlertTriangle, Database, Filter, Home, Logs, Plus, RefreshCw, Server, Settings, Trash2, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import type { FormEvent, MouseEvent as ReactMouseEvent, ReactNode, UIEvent as ReactUIEvent } from "react";
-import appConfig from "../app.config.json";
-import appIconUrl from "../resources/icon.png";
+import type { FormEvent } from "react";
 import brandLogoUrl from "../resources/datanexa.png";
-import mysqlLogoUrl from "../resources/db-logo/mysql.png";
-import postgresLogoUrl from "../resources/db-logo/postgres.png";
-import sqliteLogoUrl from "../resources/db-logo/sqlite.png";
-import quickStep1Url from "../resources/quickguide/step1.png";
-import quickStep2Url from "../resources/quickguide/step2.png";
-import quickStep3Url from "../resources/quickguide/step3.png";
-import {
-  detectLocale,
-  formatMessage,
-  languageOptions,
-  messages,
-  normalizeLocale,
-  persistLocale
-} from "./i18n";
-import type { I18nMessages, Locale } from "./i18n";
+import { detectLocale, formatMessage, messages, normalizeLocale, persistLocale } from "./i18n";
+import type { Locale } from "./i18n";
 import { api } from "./lib/tauri";
-import { useAppUpdater, type UpdateState } from "./lib/updater";
-import type {
-  AppSnapshot,
-  AuditEvent,
-  AuditMigrationState,
-  ConnectionConfig,
-  ConnectionDiagnostics,
-  DatabaseType,
-  McpToolInfo,
-  PolicyCheckResult,
-  ServerConfig,
-  SettingsConfig
-} from "./types";
+import { useAppUpdater } from "./lib/updater";
+import type { AppSnapshot, AuditEvent, ConnectionConfig, DatabaseType, PolicyCheckResult, ServerConfig, SettingsConfig } from "./types";
+import { detectThemeMode, persistThemeMode, resolveTheme, systemTheme } from "./app/theme";
+import type { AuditFilters, EffectiveTheme, SettingsTab, ThemeMode, ToastMessage, ToastTone, View } from "./app/types";
+import { buildAgentPrompt, compactConnectionError, formatConnectionTest, formatDiagnostics, toolDisplayName, updateScrollFade, viewTitle } from "./app/utils";
+import { AuditMigrationDialog, AuditMigrationReminder, NavButton, SidebarFooter, SidebarUpdateReminder, WindowControls, WindowDragRegion } from "./components/chrome";
+import { IconTooltip, ToastViewport } from "./components/ui";
+import { OverviewView } from "./features/overview/OverviewView";
+import { ConnectionDialog, ConnectionsView } from "./features/connections/ConnectionsView";
+import { ServerView } from "./features/server/ServerView";
+import { ToolsView } from "./features/tools/ToolsView";
+import { AuditDetailDialog, AuditView } from "./features/audit/AuditView";
+import { SettingsView } from "./features/settings/SettingsView";
 
-type View = "overview" | "connections" | "server" | "tools" | "audit" | "settings";
-type SettingsTab = "general" | "about";
-type ThemeMode = "system" | "light" | "dark";
-type EffectiveTheme = "light" | "dark";
-type ToastTone = "success" | "error" | "info";
-type AuditFilters = { from: string; to: string; tool: string; connection: string; status: string };
+type McpActivityTone = "success" | "error";
+type McpToolCallCompletedPayload = { failed: boolean };
 
-function parseAuditDate(value: string, endOfDay = false) {
-  const normalized = value.trim().replace(/[年月]/g, "-").replace(/日$/, "").replace(/\//g, "-");
-  if (!/^\d{4}-\d{1,2}-\d{1,2}$/.test(normalized)) return null;
-  const date = new Date(`${normalized}${endOfDay ? "T23:59:59.999" : "T00:00:00"}`);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-const APP_VERSION = appConfig.version;
-const THEME_STORAGE_KEY = "datanexa.theme";
-const AUDIT_PAGE_SIZE = 50;
-const DATABASE_LOGOS: Record<DatabaseType, string> = {
-  mysql: mysqlLogoUrl,
-  postgres: postgresLogoUrl,
-  sqlite: sqliteLogoUrl
-};
-
-function updateScrollFade(event: ReactUIEvent<HTMLDivElement>) {
-  const element = event.currentTarget;
-  const pastStart = element.scrollTop > 1;
-  const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
-  element.classList.toggle("scroll-past-start", pastStart);
-  element.classList.toggle("scroll-at-end", atBottom);
-}
-
-function isThemeMode(value: string | null): value is ThemeMode {
-  return value === "system" || value === "light" || value === "dark";
-}
-
-function systemTheme(): EffectiveTheme {
-  if (typeof window === "undefined") return "light";
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
-
-function resolveTheme(mode: ThemeMode, fallback: EffectiveTheme): EffectiveTheme {
-  return mode === "system" ? fallback : mode;
-}
-
-function detectThemeMode(): ThemeMode {
-  if (typeof window === "undefined") return "system";
-  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-  return isThemeMode(stored) ? stored : "system";
-}
-
-function persistThemeMode(mode: ThemeMode) {
-  if (typeof window !== "undefined") {
-    window.localStorage.setItem(THEME_STORAGE_KEY, mode);
-  }
-}
-
-interface ToastMessage {
-  id: string;
-  message: string;
-  tone: ToastTone;
-  leaving?: boolean;
-}
+const MCP_ACTIVITY_DURATION_MS = 1750;
+const MCP_ACTIVITY_REDUCED_DURATION_MS = 200;
 
 const defaultConnection = (name: string): ConnectionConfig => ({
   id: `connection_${crypto.randomUUID().slice(0, 8)}`,
@@ -182,10 +68,37 @@ function App() {
   const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string | null>(null);
   const [migrationDialogOpen, setMigrationDialogOpen] = useState(false);
   const [migrationRecoveryBusy, setMigrationRecoveryBusy] = useState(false);
+  const [mcpActivitySequence, setMcpActivitySequence] = useState(0);
+  const [mcpActivityTone, setMcpActivityTone] = useState<McpActivityTone>("success");
   const [confirmClearLegacy, setConfirmClearLegacy] = useState(false);
   const effectiveTheme = resolveTheme(theme, systemThemeMode);
   const t = messages[locale];
   const hasAuditFilters = Object.values(auditFilters).some(Boolean);
+  const activeViewRef = useRef(activeView);
+  const mcpActivityEffectsEnabled = snapshot?.config.settings.mcp_activity_effects ?? true;
+  const mcpActivityEffectsEnabledRef = useRef(mcpActivityEffectsEnabled);
+  const mcpActivityPlayingRef = useRef(false);
+  const mcpActivityTimerRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    activeViewRef.current = activeView;
+    if (activeView !== "overview") {
+      mcpActivityPlayingRef.current = false;
+      window.clearTimeout(mcpActivityTimerRef.current);
+      mcpActivityTimerRef.current = undefined;
+      setMcpActivitySequence(0);
+    }
+  }, [activeView]);
+
+  useEffect(() => {
+    mcpActivityEffectsEnabledRef.current = mcpActivityEffectsEnabled;
+    if (!mcpActivityEffectsEnabled) {
+      mcpActivityPlayingRef.current = false;
+      window.clearTimeout(mcpActivityTimerRef.current);
+      mcpActivityTimerRef.current = undefined;
+      setMcpActivitySequence(0);
+    }
+  }, [mcpActivityEffectsEnabled]);
 
   const updater = useAppUpdater(
     snapshot?.updater_enabled ?? null,
@@ -213,17 +126,31 @@ function App() {
 
   useEffect(() => {
     const query = window.matchMedia("(prefers-color-scheme: dark)");
-    const updateSystemTheme = () => setSystemThemeMode(query.matches ? "dark" : "light");
+    const updateSystemTheme = () => {
+      if (theme === "system") {
+        setSystemThemeMode(query.matches ? "dark" : "light");
+      }
+    };
 
     updateSystemTheme();
     query.addEventListener("change", updateSystemTheme);
     return () => query.removeEventListener("change", updateSystemTheme);
-  }, []);
+  }, [theme]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.classList.toggle("dark", effectiveTheme === "dark");
     persistThemeMode(theme);
+    void api.setWindowMaterialTheme(theme === "system" ? null : effectiveTheme === "dark")
+      .then(([nativeDark, micaEnabled]) => {
+        if (theme === "system") {
+          setSystemThemeMode(nativeDark ? "dark" : "light");
+        }
+        document.documentElement.dataset.systemMaterial = micaEnabled ? "enabled" : "fallback";
+      })
+      .catch(() => {
+        document.documentElement.dataset.systemMaterial = "fallback";
+      });
   }, [theme, effectiveTheme]);
 
   useEffect(() => {
@@ -260,8 +187,56 @@ function App() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       void refresh({ quiet: true });
-    }, 2500);
+    }, 15000);
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    let unlistenCompleted: UnlistenFn | undefined;
+    let refreshTimer: number | undefined;
+    let cancelled = false;
+
+    const triggerActivity = (failed: boolean) => {
+      if (!mcpActivityEffectsEnabledRef.current
+        || activeViewRef.current !== "overview"
+        || mcpActivityPlayingRef.current) return;
+
+      mcpActivityPlayingRef.current = true;
+      setMcpActivityTone(failed ? "error" : "success");
+      setMcpActivitySequence((sequence) => sequence + 1);
+      const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const duration = reducedMotion ? MCP_ACTIVITY_REDUCED_DURATION_MS : MCP_ACTIVITY_DURATION_MS;
+      window.clearTimeout(mcpActivityTimerRef.current);
+      mcpActivityTimerRef.current = window.setTimeout(() => {
+        mcpActivityPlayingRef.current = false;
+        mcpActivityTimerRef.current = undefined;
+      }, duration);
+    };
+
+    void (async () => {
+      try {
+        unlistenCompleted = await listen<McpToolCallCompletedPayload>("mcp://tool-call-completed", (event) => {
+          triggerActivity(event.payload.failed);
+          window.clearTimeout(refreshTimer);
+          refreshTimer = window.setTimeout(() => void refresh({ quiet: true }), 120);
+        });
+        if (cancelled) {
+          unlistenCompleted();
+          unlistenCompleted = undefined;
+        }
+      } catch {
+        // The low-frequency snapshot refresh remains available if event delivery is unavailable.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unlistenCompleted?.();
+      mcpActivityPlayingRef.current = false;
+      window.clearTimeout(mcpActivityTimerRef.current);
+      mcpActivityTimerRef.current = undefined;
+      window.clearTimeout(refreshTimer);
+    };
   }, []);
 
   async function refresh(options: { quiet?: boolean } = {}) {
@@ -359,10 +334,16 @@ function App() {
   }
 
   async function disableAllConnections() {
+    const wasEmergencyDisconnected = Boolean(snapshot?.emergency_disconnect);
     setBusy(true);
     try {
       setSnapshot(await api.disableAllConnections());
-      pushToast(t.toast.allConnectionsDisabled, "info");
+      pushToast(
+        wasEmergencyDisconnected
+          ? t.toast.emergencyDisconnectRestored
+          : t.toast.allConnectionsDisabled,
+        "info"
+      );
     } catch (error) {
       showError(error);
     } finally {
@@ -587,6 +568,7 @@ function App() {
   const availableUpdateVersion = updater.state.kind === "available" ? updater.state.version : null;
   const showUpdateReminder = availableUpdateVersion !== null && dismissedUpdateVersion !== availableUpdateVersion;
   const migrationReady = snapshot?.audit_migration.status === "ready";
+  const emergencyDisconnect = Boolean(snapshot?.emergency_disconnect);
 
   return (
     <Tooltip.Provider delayDuration={180}>
@@ -664,10 +646,17 @@ function App() {
                     )}
                   </div>
                 )}
-                <div className="top-icon-actions">
+                <div className={clsx("top-icon-actions", activeView === "connections" && emergencyDisconnect && "emergency-active")}>
                   {snapshot && activeView === "connections" && (
-                    <IconTooltip label={t.connections.emergencyDisable}>
-                      <button type="button" className="icon-button danger" onClick={disableAllConnections} disabled={busy || connections.length === 0} aria-label={t.connections.emergencyDisable}>
+                    <IconTooltip label={emergencyDisconnect ? t.connections.emergencyRestore : t.connections.emergencyDisable}>
+                      <button
+                        type="button"
+                        className={clsx("icon-button danger", emergencyDisconnect && "emergency-toggle-active")}
+                        onClick={disableAllConnections}
+                        disabled={busy || !snapshot.server_status.running}
+                        aria-pressed={emergencyDisconnect}
+                        aria-label={emergencyDisconnect ? t.connections.emergencyRestore : t.connections.emergencyDisable}
+                      >
                         <AlertTriangle size={17} />
                       </button>
                     </IconTooltip>
@@ -684,7 +673,7 @@ function App() {
                   </button>
                 </div>
                 {snapshot && activeView === "connections" && (
-                  <button type="button" className="button primary" onClick={openNewConnection} disabled={busy}>
+                  <button type="button" className="button primary" onClick={openNewConnection} disabled={busy || emergencyDisconnect}>
                     <Plus size={16} />
                     {t.overview.newConnection}
                   </button>
@@ -708,14 +697,18 @@ function App() {
                     onSelectAudit={setSelectedAudit}
                     onCopyAgentPrompt={() => copyAgentPrompt(serverEndpoint, requireToken, serverToken)}
                     onToggleServer={toggleServer}
+                    onToggleEmergency={disableAllConnections}
+                    busy={busy}
                     startDisabled={!snapshot.server_status.running && !migrationReady}
+                    mcpActivitySequence={mcpActivitySequence}
+                    mcpActivityTone={mcpActivityTone}
                   />
                 )}
                 {activeView === "connections" && (
                   <ConnectionsView
                     t={t}
                     connections={connections}
-                    busy={busy}
+                    busy={busy || emergencyDisconnect}
                     onEdit={openExistingConnection}
                     onDelete={deleteConnection}
                     onTest={testConnection}
@@ -814,1853 +807,5 @@ function App() {
   );
 }
 
-function WindowDragRegion() {
-  function handleDragStart(event: ReactMouseEvent<HTMLDivElement>) {
-    if (event.button !== 0) return;
-    if (event.detail > 1) {
-      event.preventDefault();
-      return;
-    }
-    void api.startWindowDrag().catch(() => undefined);
-  }
-
-  return (
-    <div className="window-drag-region" onMouseDown={handleDragStart} aria-hidden="true" />
-  );
-}
-
-function WindowControls({ t }: { t: I18nMessages }) {
-  return (
-    <div className="window-controls">
-      <button type="button" className="window-control minimize" onClick={() => void api.minimizeWindow().catch(() => undefined)} aria-label={t.common.minimize}>
-        <Minus size={13} />
-      </button>
-      <button type="button" className="window-control close" onClick={() => void api.hideWindow().catch(() => undefined)} aria-label={t.common.close}>
-        <X size={13} />
-      </button>
-    </div>
-  );
-}
-
-function AuditMigrationReminder({ t, state, onOpen }: { t: I18nMessages; state: Exclude<AuditMigrationState, { status: "ready" }>; onOpen: () => void }) {
-  if (state.status === "failed") {
-    return (
-      <button type="button" className="sidebar-migration-reminder failed" onClick={onOpen}>
-        <span className="sidebar-migration-icon"><AlertTriangle size={16} /></span>
-        <span className="sidebar-migration-copy"><strong>{t.auditMigration.failedTitle}</strong><span>{t.auditMigration.failedCompact}</span></span>
-      </button>
-    );
-  }
-  const finishing = state.phase === "committing" || state.phase === "finalizing";
-  const percent = state.total > 0 ? Math.min(100, Math.round((state.processed / state.total) * 100)) : 0;
-  return (
-    <div className="sidebar-migration-reminder migrating">
-      <span className="sidebar-migration-icon"><RefreshCw className="is-spinning" size={16} /></span>
-      <span className="sidebar-migration-copy"><strong>{t.auditMigration.migratingTitle}</strong><span>{finishing ? t.auditMigration.finishing : state.total > 0 ? formatMessage(t.auditMigration.progress, { processed: state.processed, total: state.total }) : t.auditMigration.preparing}</span></span>
-      <span className="migration-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><span style={{ width: `${percent}%` }} /></span>
-    </div>
-  );
-}
-
-function AuditMigrationDialog({ t, state, open, busy, confirmClear, onOpenChange, onRetry, onRequestClear, onCancelClear, onConfirmClear }: { t: I18nMessages; state: Extract<AuditMigrationState, { status: "failed" }>; open: boolean; busy: boolean; confirmClear: boolean; onOpenChange: (open: boolean) => void; onRetry: () => void; onRequestClear: () => void; onCancelClear: () => void; onConfirmClear: () => void }) {
-  return (
-    <Dialog.Root open={open} onOpenChange={(next) => { if (!busy) { if (!next) onCancelClear(); onOpenChange(next); } }}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className={clsx("policy-dialog migration-dialog", confirmClear && "confirming")}>
-          <div className="dialog-titlebar">
-            <div className="migration-dialog-copy">
-              <Dialog.Title>{confirmClear ? t.auditMigration.clearConfirmTitle : t.auditMigration.failedTitle}</Dialog.Title>
-              <Dialog.Description>{confirmClear ? t.auditMigration.clearConfirmDescription : t.auditMigration.dialogDescription}</Dialog.Description>
-            </div>
-            <Dialog.Close asChild><button type="button" className="icon-button" disabled={busy} aria-label={t.common.close}><X size={17} /></button></Dialog.Close>
-          </div>
-          {!confirmClear && (
-            <div className="migration-error" role="alert">
-              <span className="migration-error-icon"><AlertTriangle size={16} /></span>
-              <div><strong>{t.auditMigration.errorReason}</strong><p>{state.reason}</p></div>
-            </div>
-          )}
-          <div className="migration-dialog-actions">
-            {confirmClear ? (
-              <>
-                <button type="button" className="button ghost" disabled={busy} onClick={onCancelClear}>{t.common.cancel}</button>
-                <button type="button" className="button danger" disabled={busy} onClick={onConfirmClear}><Trash2 size={15} />{t.auditMigration.confirmClear}</button>
-              </>
-            ) : (
-              <>
-                <button type="button" className="button" disabled={busy} onClick={onRequestClear}>{t.auditMigration.clear}</button>
-                <button type="button" className="button primary" autoFocus disabled={busy} onClick={onRetry}><RefreshCw size={15} className={clsx(busy && "is-spinning")} />{t.auditMigration.retry}</button>
-              </>
-            )}
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-  );
-}
-
-function SidebarUpdateReminder({
-  t,
-  version,
-  onOpenAbout,
-  onDismiss
-}: {
-  t: I18nMessages;
-  version: string;
-  onOpenAbout: () => void;
-  onDismiss: () => void;
-}) {
-  return (
-    <div className="sidebar-update-reminder">
-      <button type="button" className="sidebar-update-main" onClick={onOpenAbout}>
-        <span className="sidebar-update-icon"><Download size={16} /></span>
-        <span className="sidebar-update-copy">
-          <strong>{t.updates.availableTitle}</strong>
-          <span>{formatMessage(t.updates.availableCompact, { version })}</span>
-        </span>
-      </button>
-      <IconTooltip label={t.updates.dismissReminder}>
-        <button type="button" className="sidebar-update-dismiss" onClick={onDismiss} aria-label={t.updates.dismissReminder}>
-          <X size={14} />
-        </button>
-      </IconTooltip>
-    </div>
-  );
-}
-
-function SidebarFooter({
-  t,
-  running,
-  startupFailed,
-  port,
-  busy,
-  disabled,
-  onToggle
-}: {
-  t: I18nMessages;
-  running: boolean;
-  startupFailed: boolean;
-  port: number;
-  busy: boolean;
-  disabled: boolean;
-  onToggle: () => void;
-}) {
-  const toggleLabel = running ? t.server.stop : t.server.start;
-  return (
-    <div className="sidebar-footer">
-      <div className={clsx("sidebar-status-line", startupFailed ? "error" : running && "running")}>
-        <span className="status-orb" />
-        <span>{startupFailed ? t.sidebar.serverFailed : running ? formatMessage(t.sidebar.serverRunning, { port }) : t.sidebar.serverStopped}</span>
-      </div>
-      <span className="footer-divider" aria-hidden="true" />
-      <IconTooltip label={toggleLabel}>
-        <button
-          type="button"
-          className={clsx("sidebar-service-button", running && "running")}
-          onClick={onToggle}
-          disabled={busy || disabled}
-          aria-label={toggleLabel}
-        >
-          {running ? <Square size={16} /> : <Play size={16} />}
-        </button>
-      </IconTooltip>
-    </div>
-  );
-}
-
-function NavButton({ icon, label, active, onClick }: { icon: ReactNode; label: string; active: boolean; onClick: () => void }) {
-  return (
-    <button type="button" className={clsx("nav-button", active && "active")} onClick={onClick}>
-      {icon}
-      <span>{label}</span>
-    </button>
-  );
-}
-
-function ThemeModeControl({
-  t,
-  theme,
-  effectiveTheme,
-  labelledBy,
-  disabled,
-  onChange
-}: {
-  t: I18nMessages;
-  theme: ThemeMode;
-  effectiveTheme: EffectiveTheme;
-  labelledBy?: string;
-  disabled?: boolean;
-  onChange: (theme: ThemeMode) => void;
-}) {
-  const options: Array<{ value: ThemeMode; label: string; icon: ReactNode }> = [
-    { value: "system", label: t.settings.themeSystem, icon: <Monitor size={15} /> },
-    { value: "light", label: t.settings.themeLight, icon: <Sun size={15} /> },
-    { value: "dark", label: t.settings.themeDark, icon: <Moon size={15} /> }
-  ];
-
-  return (
-    <div
-      className="theme-mode-control"
-      role="radiogroup"
-      aria-label={labelledBy ? undefined : t.settings.theme}
-      aria-labelledby={labelledBy}
-      data-effective-theme={effectiveTheme}
-    >
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          role="radio"
-          aria-checked={theme === option.value}
-          className={clsx(theme === option.value && "active")}
-          disabled={disabled}
-          onClick={() => onChange(option.value)}
-        >
-          {option.icon}
-          <span>{option.label}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function OverviewView({
-  t,
-  snapshot,
-  enabledConnections,
-  recentEvents,
-  onAdd,
-  onOpenConnections,
-  onOpenAudit,
-  onSelectAudit,
-  onCopyAgentPrompt,
-  onToggleServer,
-  startDisabled
-}: {
-  t: I18nMessages;
-  snapshot: AppSnapshot;
-  enabledConnections: number;
-  recentEvents: AuditEvent[];
-  onAdd: () => void;
-  onOpenConnections: () => void;
-  onOpenAudit: () => void;
-  onSelectAudit: (event: AuditEvent) => void;
-  onCopyAgentPrompt: () => void;
-  onToggleServer: () => void;
-  startDisabled: boolean;
-}) {
-  const totalConnections = snapshot.config.connections.length;
-  const enabledTools = snapshot.tools.filter((tool) => tool.enabled).length;
-  const uptime = snapshot.server_status.started_at ? relativeDuration(t, snapshot.server_status.started_at) : t.overview.notStarted;
-  const startupFailed = Boolean(snapshot.startup_error);
-  const statusLabel = startupFailed ? t.overview.failed : snapshot.server_status.running ? t.overview.running : t.overview.stopped;
-
-  return (
-    <section className="overview-page">
-      <section className={clsx("status-command", startupFailed ? "error" : snapshot.server_status.running && "running")} title={snapshot.startup_error ?? undefined}>
-        <div className="status-command-core">
-          <span className="status-beacon">{startupFailed ? <AlertTriangle size={19} /> : <Activity size={19} />}</span>
-          <div>
-            <span>{t.overview.metricServer}</span>
-            <strong>{statusLabel}</strong>
-          </div>
-        </div>
-        <div className="command-metrics">
-          <div><span>{t.overview.metricConnections}</span><strong>{enabledConnections}<small> / {totalConnections}</small></strong></div>
-          <div><span>{t.overview.metricTools}</span><strong>{enabledTools}<small> / {snapshot.tools.length}</small></strong></div>
-          <div><span>{t.overview.metricUptime}</span><strong>{uptime}</strong></div>
-        </div>
-        <button type="button" className={clsx("button command-button", snapshot.server_status.running ? "stop" : "primary")} onClick={onToggleServer} disabled={startDisabled}>
-          {snapshot.server_status.running ? <Square size={15} /> : <Play size={16} />}
-          {snapshot.server_status.running ? t.server.stop : t.server.start}
-        </button>
-      </section>
-
-      <div className="overview-grid">
-        <section className="panel connections-panel">
-        <PanelHeader
-          title={t.connections.title}
-          action={(
-            <div className="panel-actions">
-              <PanelIconAction icon={<Plus size={16} />} label={t.overview.newConnection} onClick={onAdd} />
-              <PanelIconAction icon={<ChevronRight size={16} />} label={t.overview.viewAllConnections} onClick={onOpenConnections} />
-            </div>
-          )}
-        />
-        <div className="compact-list">
-          {snapshot.config.connections.slice(0, 5).map((connection) => (
-            <ConnectionListItem t={t} key={connection.id} connection={connection} compact />
-          ))}
-        </div>
-        </section>
-
-        <section className="panel logs-panel">
-        <PanelHeader
-          title={t.overview.recentLogs}
-          action={<PanelIconAction icon={<ChevronRight size={16} />} label={t.overview.viewAll} onClick={onOpenAudit} />}
-        />
-        <EventList t={t} events={recentEvents} onSelect={onSelectAudit} />
-        </section>
-      </div>
-
-      <section className="panel quick-panel">
-        <h2>{t.overview.quickStart}</h2>
-        <div className="quick-steps">
-          <QuickStep image={quickStep1Url} title={t.overview.quickConnectTitle} text={t.overview.quickConnectText} />
-          <QuickStep image={quickStep2Url} title={t.overview.quickServerTitle} text={t.overview.quickServerText} />
-          <QuickStep image={quickStep3Url} title={t.overview.quickAgentTitle} text={t.overview.quickAgentText} wide actionLabel={t.overview.copyAgentConfig} onAction={onCopyAgentPrompt} />
-        </div>
-      </section>
-    </section>
-  );
-}
-
-function ConnectionsView({
-  t,
-  connections,
-  busy,
-  onEdit,
-  onDelete,
-  onTest,
-  onDiagnose,
-  onToggleEnabled,
-  migrationReady
-}: {
-  t: I18nMessages;
-  connections: ConnectionConfig[];
-  busy: boolean;
-  onEdit: (connection: ConnectionConfig) => void;
-  onDelete: (id: string) => void;
-  onTest: (id: string) => void;
-  onDiagnose: (id: string) => void;
-  onToggleEnabled: (id: string, enabled: boolean) => void;
-  migrationReady: boolean;
-}) {
-  const [selectedId, setSelectedId] = useState(connections[0]?.id ?? "");
-  const selected = connections.find((connection) => connection.id === selectedId) ?? connections[0];
-
-  return (
-    <section className="connections-workbench">
-      <div className="panel connection-browser">
-        <div className="data-list-header">
-          <span>{t.connections.title}</span>
-          <span>{connections.length}</span>
-        </div>
-        <div className="connection-list page-scroll-list">
-        {connections.length === 0 ? (
-          <div className="empty-state">{t.connections.empty}</div>
-        ) : (
-          connections.map((connection) => (
-            <ConnectionRow
-              t={t}
-              key={connection.id}
-              connection={connection}
-              busy={busy}
-              onEdit={onEdit}
-              onDelete={onDelete}
-              onTest={onTest}
-              onDiagnose={onDiagnose}
-              onToggleEnabled={onToggleEnabled}
-              migrationReady={migrationReady}
-              selected={selected?.id === connection.id}
-              onSelect={() => setSelectedId(connection.id)}
-            />
-          ))
-        )}
-        </div>
-      </div>
-      <aside className="panel connection-inspector">
-        {selected ? (
-          <>
-            <div className="inspector-heading">
-              <ConnectionListItem t={t} connection={selected} />
-              <button type="button" className="button ghost" onClick={() => onEdit(selected)}>{t.connections.edit}</button>
-            </div>
-            <dl className="inspector-grid">
-              <div><dt>{t.connectionDialog.host}</dt><dd><code>{selected.type === "sqlite" ? "LOCAL" : selected.host || "-"}</code></dd></div>
-              <div><dt>{t.connectionDialog.port}</dt><dd><code>{selected.type === "sqlite" ? "-" : selected.port ?? defaultPort(selected.type)}</code></dd></div>
-              <div><dt>{t.connectionDialog.database}</dt><dd><code>{selected.database || "-"}</code></dd></div>
-              <div><dt>{t.connectionDialog.username}</dt><dd><code>{selected.username || "-"}</code></dd></div>
-              <div><dt>{t.connectionDialog.sslMode}</dt><dd>{selected.ssl_mode || "-"}</dd></div>
-              <div><dt>{t.connectionDialog.maxRows}</dt><dd>{selected.max_rows}</dd></div>
-              <div><dt>{t.connectionDialog.queryTimeoutMs}</dt><dd>{selected.query_timeout_ms} ms</dd></div>
-              <div><dt>{t.connectionDialog.maxConnections}</dt><dd>{selected.max_connections}</dd></div>
-              <div className="inspector-grid-wide"><dt>{t.connectionDialog.maxResultBytes}</dt><dd>{Math.round(selected.max_result_bytes / 1024)} KiB</dd></div>
-            </dl>
-            <div className="inspector-actions">
-              <button type="button" className="button soft" disabled={busy || !selected.enabled || !migrationReady} onClick={() => onTest(selected.id)}><Cable size={15} />{t.connections.test}</button>
-              <button type="button" className="button ghost" disabled={busy || !selected.enabled} onClick={() => onDiagnose(selected.id)}><SearchCheck size={15} />{t.connections.diagnose}</button>
-            </div>
-          </>
-        ) : <div className="empty-state">{t.connections.empty}</div>}
-      </aside>
-    </section>
-  );
-}
-
-function ToolsView({
-  t,
-  tools,
-  busy,
-  onToggle
-}: {
-  t: I18nMessages;
-  tools: McpToolInfo[];
-  busy: boolean;
-  onToggle: (name: string, enabled: boolean) => void;
-}) {
-  const enabledCount = tools.filter((tool) => tool.enabled).length;
-  const groups = [
-    { key: "discovery" as const, tools: tools.filter((tool) => ["datanexa_list_connections", "datanexa_get_schema", "datanexa_describe_table"].includes(tool.name)) },
-    { key: "access" as const, tools: tools.filter((tool) => ["datanexa_sample_rows", "datanexa_execute_readonly_sql"].includes(tool.name)) },
-    { key: "analysis" as const, tools: tools.filter((tool) => ["datanexa_explain_sql", "datanexa_policy_check"].includes(tool.name)) }
-  ];
-
-  return (
-    <section className="tools-page">
-      <div className="panel tools-summary">
-        <div>
-          <h2>{formatMessage(t.tools.summary, { enabled: enabledCount, total: tools.length })}</h2>
-        </div>
-      </div>
-
-      <div className="tools-list">
-        {groups.map((group) => (
-          <section className="tool-group" key={group.key}>
-            <header><span>{t.tools.groups[group.key]}</span><small>{group.tools.filter((tool) => tool.enabled).length} / {group.tools.length}</small></header>
-            {group.tools.map((tool) => (
-              <article className={clsx("tool-card", !tool.enabled && "disabled")} key={tool.name}>
-                <span className="tool-signal" />
-                <div className="tool-body">
-                  <div className="tool-title-row">
-                    <div>
-                      <strong>{toolDisplayName(t, tool.name)}</strong>
-                      <code>{tool.name}</code>
-                    </div>
-                  </div>
-                  <p>{toolIntro(t, tool)}</p>
-                </div>
-                <Switch.Root className="switch" checked={tool.enabled} disabled={busy} onCheckedChange={(checked) => onToggle(tool.name, checked)} aria-label={formatMessage(t.tools.toggle, { name: tool.name })}>
-                  <Switch.Thumb className="switch-thumb" />
-                </Switch.Root>
-              </article>
-            ))}
-          </section>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function ServerView({
-  t,
-  snapshot,
-  busy,
-  endpoint,
-  onCopyAgentPrompt,
-  onToggle,
-  onRotate,
-  startDisabled
-}: {
-  t: I18nMessages;
-  snapshot: AppSnapshot;
-  busy: boolean;
-  endpoint: string;
-  onCopyAgentPrompt: () => void;
-  onToggle: () => void;
-  onRotate: () => void;
-  startDisabled: boolean;
-}) {
-  const requireToken = snapshot.config.server.require_token;
-  const startupFailed = Boolean(snapshot.startup_error);
-  const statusLabel = startupFailed ? t.overview.failed : snapshot.server_status.running ? t.overview.running : t.overview.stopped;
-
-  return (
-    <section className={clsx("server-console", startupFailed ? "error" : snapshot.server_status.running && "running")} title={snapshot.startup_error ?? undefined}>
-      <div className="server-hero">
-        <div className="server-identity">
-          <span className="server-emblem">{startupFailed ? <AlertTriangle size={25} /> : <Server size={25} />}</span>
-          <div><span className="panel-kicker">{t.overview.metricServer}</span><h2>{statusLabel}</h2></div>
-        </div>
-        <button type="button" className={clsx("button", snapshot.server_status.running ? "stop" : "primary")} onClick={onToggle} disabled={busy || startDisabled}>
-          {snapshot.server_status.running ? <Square size={16} /> : <Play size={17} />}
-          {snapshot.server_status.running ? t.server.stop : t.server.start}
-        </button>
-      </div>
-
-      <div className="server-console-grid">
-        <div className="server-console-section endpoint-section">
-          <PanelHeader
-            title={t.server.endpoint}
-            action={<StatusPill tone={startupFailed ? "red" : snapshot.server_status.running ? "green" : "slate"} label={statusLabel} />}
-          />
-          <div className="console-value">
-            <code>{endpoint}</code>
-            <button type="button" className="icon-button" onClick={() => navigator.clipboard.writeText(endpoint)} aria-label={t.server.copyEndpoint}><Clipboard size={16} /></button>
-          </div>
-        </div>
-
-      {requireToken ? (
-        <div className="server-console-section token-section">
-          <PanelHeader
-            title={t.server.accessToken}
-            action={<PanelIconAction icon={<RefreshCw size={16} />} label={t.server.rotateToken} onClick={onRotate} disabled={busy} />}
-          />
-          <div className="token-row console-value">
-            <code>{snapshot.server_status.token ? "•••• •••• •••• •••• ••••" : t.server.generatedOnStart}</code>
-            <button type="button" className="icon-button" onClick={() => navigator.clipboard.writeText(snapshot.server_status.token ?? "")} aria-label={t.server.copyToken}>
-              <Clipboard size={16} />
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="server-console-section key-disabled-panel">
-          <div className="key-disabled-icon">
-            <EyeOff size={20} />
-          </div>
-          <h2>{t.server.tokenDisabledTitle}</h2>
-          <p className="muted">{t.server.tokenDisabledText}</p>
-        </div>
-      )}
-
-        <div className="server-console-section agent-copy-panel">
-        <h2>{t.server.agentAccess}</h2>
-        <p className="muted">{t.overview.quickAgentText}</p>
-        <button type="button" className="button soft" onClick={onCopyAgentPrompt}>
-          <Clipboard size={16} />
-          {t.server.copyToAgent}
-        </button>
-      </div>
-      </div>
-    </section>
-  );
-}
-
-function AuditDateField({ t, value, minDate, maxDate, onChange }: { t: I18nMessages; value: string; minDate?: Date | null; maxDate?: Date | null; onChange: (value: string) => void }) {
-  const initial = parseAuditDate(value) ?? new Date();
-  const [open, setOpen] = useState(false);
-  const [month, setMonth] = useState(new Date(initial.getFullYear(), initial.getMonth(), 1));
-  const fieldRef = useRef<HTMLDivElement>(null);
-  const calendarRef = useRef<HTMLDivElement>(null);
-  const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
-  const startOffset = new Date(month.getFullYear(), month.getMonth(), 1).getDay();
-  const cells = Array.from({ length: Math.ceil((startOffset + daysInMonth) / 7) * 7 }, (_, index) => {
-    const day = index - startOffset + 1;
-    return day > 0 && day <= daysInMonth ? day : null;
-  });
-  const selectedKey = initial ? `${initial.getFullYear()}-${initial.getMonth()}-${initial.getDate()}` : "";
-  const weekdays = [t.audit.weekdaySun, t.audit.weekdayMon, t.audit.weekdayTue, t.audit.weekdayWed, t.audit.weekdayThu, t.audit.weekdayFri, t.audit.weekdaySat];
-  const selectDay = (day: number) => {
-    const selected = new Date(month.getFullYear(), month.getMonth(), day);
-    if ((minDate && selected < minDate) || (maxDate && selected > maxDate)) return;
-    const formatted = `${selected.getFullYear()}/${String(selected.getMonth() + 1).padStart(2, "0")}/${String(day).padStart(2, "0")}`;
-    onChange(formatted);
-    setOpen(false);
-  };
-
-  useEffect(() => {
-    if (!open) return;
-    const closeWhenOutside = (target: EventTarget | null) => {
-      if (!(target instanceof Node) || fieldRef.current?.contains(target) || calendarRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    const onPointerDown = (event: PointerEvent) => closeWhenOutside(event.target);
-    const onKeyDown = (event: KeyboardEvent) => event.key === "Escape" && setOpen(false);
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
-
-  return (
-    <div className="audit-date-field" ref={fieldRef}>
-      <input className="audit-date-input" type="text" inputMode="numeric" placeholder={t.audit.datePlaceholder} value={value} onFocus={() => setOpen(true)} onChange={(event) => onChange(event.target.value)} />
-      <button type="button" className="audit-date-trigger" aria-label={t.audit.selectDate} onClick={() => setOpen((current) => !current)}><CalendarDays size={16} /></button>
-      {open && (
-        <div className="audit-calendar" role="dialog" aria-label={t.audit.selectDate} ref={calendarRef} onPointerDown={(event) => event.stopPropagation()}>
-          <div className="audit-calendar-header"><button type="button" aria-label={t.audit.previousMonth} onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}><ChevronLeft size={15} /></button><strong>{formatMessage(t.audit.calendarMonth, { year: month.getFullYear(), month: month.getMonth() + 1 })}</strong><button type="button" aria-label={t.audit.nextMonth} onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}><ChevronRight size={15} /></button></div>
-          <div className="audit-calendar-weekdays">{weekdays.map((day) => <span key={day}>{day}</span>)}</div>
-          <div className="audit-calendar-days">{cells.map((day, index) => {
-            if (!day) return <span key={`empty-${index}`} />;
-            const date = new Date(month.getFullYear(), month.getMonth(), day);
-            const disabled = Boolean((minDate && date < minDate) || (maxDate && date > maxDate));
-            return <button type="button" key={`${day}-${index}`} disabled={disabled} className={selectedKey === `${month.getFullYear()}-${month.getMonth()}-${day}` ? "selected" : ""} onClick={() => selectDay(day)}>{day}</button>;
-          })}</div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function AuditView({ t, events, tools, connections, filters, onFiltersChange, filterOpen, onFilterOpenChange, onSelect }: { t: I18nMessages; events: AuditEvent[]; tools: McpToolInfo[]; connections: ConnectionConfig[]; filters: AuditFilters; onFiltersChange: (filters: AuditFilters) => void; filterOpen: boolean; onFilterOpenChange: (open: boolean) => void; onSelect: (event: AuditEvent) => void }) {
-  const [page, setPage] = useState(1);
-  const [draftFilters, setDraftFilters] = useState(filters);
-  const auditBodyRef = useRef<HTMLDivElement>(null);
-  const draftFrom = draftFilters.from ? parseAuditDate(draftFilters.from) : null;
-  const draftTo = draftFilters.to ? parseAuditDate(draftFilters.to) : null;
-  const invalidDateRange = Boolean(draftFrom && draftTo && draftTo < draftFrom);
-  const filteredEvents = events.filter((event) => {
-    const date = new Date(event.timestamp);
-    const from = filters.from ? parseAuditDate(filters.from) : null;
-    const to = filters.to ? parseAuditDate(filters.to, true) : null;
-    return (!from || date >= from) && (!to || date <= to) && (!filters.tool || event.tool === filters.tool) && (!filters.connection || (event.connection_id ?? "") === filters.connection) && (!filters.status || event.status === filters.status);
-  });
-  const totalPages = Math.max(1, Math.ceil(filteredEvents.length / AUDIT_PAGE_SIZE));
-  const currentPage = Math.min(page, totalPages);
-  const pageStart = (currentPage - 1) * AUDIT_PAGE_SIZE;
-  const pageEvents = filteredEvents.slice(pageStart, pageStart + AUDIT_PAGE_SIZE);
-  const pageNumbers = Array.from({ length: Math.min(3, totalPages) }, (_, index) => {
-    if (totalPages <= 3) return index + 1;
-    if (currentPage <= 2) return index + 1;
-    if (currentPage >= totalPages - 1) return totalPages - 2 + index;
-    return currentPage - 1 + index;
-  });
-
-  useEffect(() => {
-    setPage((current) => Math.min(current, totalPages));
-  }, [totalPages]);
-
-  useEffect(() => {
-    auditBodyRef.current?.scrollTo({ top: 0 });
-  }, [currentPage]);
-
-  useEffect(() => {
-    if (filterOpen) setDraftFilters(filters);
-  }, [filterOpen, filters]);
-
-  return (
-    <section className="panel page-panel list-page-panel audit-page-panel">
-      <div className="audit-table">
-        <div className="audit-row header">
-          <span>{t.audit.time}</span>
-          <span>{t.audit.tool}</span>
-          <span>{t.audit.connection}</span>
-          <span>{t.audit.status}</span>
-          <span>{t.audit.detail}</span>
-        </div>
-        <div className="audit-table-body" ref={auditBodyRef}>
-          {filteredEvents.length === 0 ? (
-            <div className="empty-state">{t.audit.empty}</div>
-          ) : (
-            pageEvents.map((event) => (
-              <button type="button" className="audit-row audit-button" key={event.id} onClick={() => onSelect(event)}>
-                <span>{new Date(event.timestamp).toLocaleString()}</span>
-                <span>{toolDisplayName(t, event.tool)}</span>
-                <span>{event.connection_name ?? event.connection_id ?? "—"}</span>
-                <span>
-                  <StatusPill tone={statusTone(event.status)} label={statusLabel(t, event.status)} />
-                </span>
-                <span>{event.reason ?? formatMessage(t.common.rowsElapsed, { rows: event.row_count ?? 0, elapsed: event.elapsed_ms ?? 0 })}</span>
-              </button>
-            ))
-          )}
-        </div>
-        {filteredEvents.length > 0 && (
-          <div className="pagination-footer">
-            <span>{formatMessage(t.audit.pageInfo, { page: currentPage, totalPages, total: filteredEvents.length })}</span>
-            <div className="pagination-actions">
-              <button type="button" className="button ghost" disabled={currentPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
-                {t.common.previous}
-              </button>
-              <div className="page-number-actions">
-                {pageNumbers.map((pageNumber) => <button type="button" key={pageNumber} className={clsx("page-number", pageNumber === currentPage && "active")} onClick={() => setPage(pageNumber)}>{pageNumber}</button>)}
-              </div>
-              <button type="button" className="button ghost" disabled={currentPage >= totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}>
-                {t.common.next}
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-      <Dialog.Root open={filterOpen} onOpenChange={onFilterOpenChange}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="dialog-overlay" />
-          <Dialog.Content className="policy-dialog audit-filter-dialog">
-            <div className="dialog-titlebar">
-              <Dialog.Title>{t.audit.filterTitle}</Dialog.Title>
-              <Dialog.Close asChild>
-                <button type="button" className="icon-button" aria-label={t.common.close}><X size={18} /></button>
-              </Dialog.Close>
-            </div>
-            <div className="audit-filter-grid">
-              <label><span>{t.audit.from}</span><AuditDateField t={t} value={draftFilters.from} maxDate={draftTo} onChange={(from) => setDraftFilters({ ...draftFilters, from })} /></label>
-              <label><span>{t.audit.to}</span><AuditDateField t={t} value={draftFilters.to} minDate={draftFrom} onChange={(to) => setDraftFilters({ ...draftFilters, to })} /></label>
-              <label><span>{t.audit.tool}</span><select value={draftFilters.tool} onChange={(event) => setDraftFilters({ ...draftFilters, tool: event.target.value })}><option value="">{t.audit.all}</option>{tools.map((tool) => <option key={tool.name} value={tool.name}>{toolDisplayName(t, tool.name)}</option>)}</select></label>
-              <label><span>{t.audit.connection}</span><select value={draftFilters.connection} onChange={(event) => setDraftFilters({ ...draftFilters, connection: event.target.value })}><option value="">{t.audit.all}</option>{connections.map((connection) => <option key={connection.id} value={connection.id}>{connection.name}</option>)}</select></label>
-              <label><span>{t.audit.status}</span><select value={draftFilters.status} onChange={(event) => setDraftFilters({ ...draftFilters, status: event.target.value })}><option value="">{t.audit.all}</option>{(["allowed", "denied", "error", "timeout", "truncated"] as AuditEvent["status"][]).map((status) => <option key={status} value={status}>{statusLabel(t, status)}</option>)}</select></label>
-            </div>
-            {invalidDateRange && <p className="audit-filter-error">{t.audit.invalidDateRange}</p>}
-            <div className="dialog-actions"><button type="button" className="button ghost" onClick={() => onFilterOpenChange(false)}>{t.common.cancel}</button><button type="button" className="button primary" disabled={invalidDateRange} onClick={() => { onFiltersChange(draftFilters); setPage(1); onFilterOpenChange(false); }}>{t.audit.applyFilter}</button></div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
-    </section>
-  );
-}
-
-function SettingsView({
-  t,
-  locale,
-  theme,
-  effectiveTheme,
-  server,
-  settings,
-  autoStartStatus,
-  busy,
-  tab,
-  policySql,
-  policyKind,
-  policyResult,
-  updaterEnabled,
-  updateState,
-  onCheckUpdate,
-  onUpdate,
-  onOpenProjectReleases,
-  onTabChange,
-  onThemeChange,
-  onPolicyKindChange,
-  onSqlChange,
-  onPolicyCheck,
-  onSaveServer,
-  onSaveSettings,
-  onExportConnections,
-  onImportConnections,
-  onOpenProjectHomepage,
-  onOpenProjectSite
-}: {
-  t: I18nMessages;
-  locale: Locale;
-  theme: ThemeMode;
-  effectiveTheme: EffectiveTheme;
-  server: ServerConfig;
-  settings: SettingsConfig;
-  autoStartStatus: AppSnapshot["auto_start_status"];
-  busy: boolean;
-  tab: SettingsTab;
-  policySql: string;
-  policyKind: DatabaseType;
-  policyResult: PolicyCheckResult | null;
-  updaterEnabled: boolean;
-  updateState: UpdateState;
-  onCheckUpdate: () => void;
-  onUpdate: () => void;
-  onOpenProjectReleases: () => void;
-  onTabChange: (tab: SettingsTab) => void;
-  onThemeChange: (theme: ThemeMode) => void;
-  onPolicyKindChange: (kind: DatabaseType) => void;
-  onSqlChange: (sql: string) => void;
-  onPolicyCheck: () => void;
-  onSaveServer: (server: ServerConfig) => Promise<boolean>;
-  onSaveSettings: (settings: SettingsConfig, applyAutoStart?: boolean) => void;
-  onExportConnections: () => void;
-  onImportConnections: () => void;
-  onOpenProjectHomepage: () => void;
-  onOpenProjectSite: () => void;
-}) {
-  const [serverDraft, setServerDraft] = useState(server);
-  const [settingsDraft, setSettingsDraft] = useState(settings);
-  const [serverPortDraft, setServerPortDraft] = useState(String(server.port));
-  const [auditMaxEventsDraft, setAuditMaxEventsDraft] = useState(String(settings.audit_max_events));
-  const serverDraftDirty = useRef(false);
-  const settingsDraftDirty = useRef(false);
-  const [policyDialogOpen, setPolicyDialogOpen] = useState(false);
-  const [exportDialogOpen, setExportDialogOpen] = useState(false);
-  const [exportAcknowledged, setExportAcknowledged] = useState(false);
-
-  useEffect(() => {
-    setServerDraft((current) => {
-      if (!serverDraftDirty.current) return server;
-      const saved = current.host === server.host
-        && current.port === server.port
-        && current.require_token === server.require_token;
-      if (saved) serverDraftDirty.current = false;
-      if (saved) setServerPortDraft(String(server.port));
-      return saved ? server : current;
-    });
-    if (!serverDraftDirty.current) setServerPortDraft(String(server.port));
-  }, [server]);
-  useEffect(() => {
-    setSettingsDraft((current) => {
-      if (!settingsDraftDirty.current) return settings;
-      const saved = current.audit_max_events === settings.audit_max_events
-        && current.audit_redact_sql_literals === settings.audit_redact_sql_literals
-        && current.auto_check_updates === settings.auto_check_updates
-        && current.auto_start_mcp === settings.auto_start_mcp
-        && current.language === settings.language;
-      if (saved) settingsDraftDirty.current = false;
-      if (saved) setAuditMaxEventsDraft(String(settings.audit_max_events));
-      return saved ? settings : current;
-    });
-    if (!settingsDraftDirty.current) setAuditMaxEventsDraft(String(settings.audit_max_events));
-  }, [settings]);
-  useEffect(() => {
-    setSettingsDraft((current) => ({ ...current, language: locale }));
-  }, [locale]);
-
-  return (
-    <section className="settings-page">
-      <div className="settings-tabs">
-        <button type="button" className={clsx(tab === "general" && "active")} onClick={() => onTabChange("general")}>
-          {t.settings.general}
-        </button>
-        <button type="button" className={clsx(tab === "about" && "active")} onClick={() => onTabChange("about")}>
-          {t.settings.about}
-        </button>
-      </div>
-
-      {tab === "general" ? (
-        <div className="settings-stack" onScroll={updateScrollFade}>
-          <section className="panel">
-            <h2>{t.settings.servicePolicy}</h2>
-            <div className="form-grid settings-grid">
-              <Field label={t.settings.listenHost}>
-                <input
-                  value={serverDraft.host}
-                  onChange={(event) => {
-                    serverDraftDirty.current = true;
-                    setServerDraft({ ...serverDraft, host: event.target.value });
-                  }}
-                  onBlur={async (event) => {
-                    const saved = await onSaveServer({ ...serverDraft, host: event.currentTarget.value });
-                    if (!saved) {
-                      serverDraftDirty.current = false;
-                      setServerDraft(server);
-                      setServerPortDraft(String(server.port));
-                    }
-                  }}
-                />
-              </Field>
-              <Field label={t.settings.port}>
-                <input
-                  type="number"
-                  value={serverPortDraft}
-                  onChange={(event) => {
-                    serverDraftDirty.current = true;
-                    setServerPortDraft(event.target.value);
-                    setServerDraft({ ...serverDraft, port: Number(event.target.value) || 0 });
-                  }}
-                  onBlur={async (event) => {
-                    const port = Math.max(1, Math.min(65535, Number(event.currentTarget.value) || server.port));
-                    setServerPortDraft(String(port));
-                    setServerDraft((current) => ({ ...current, port }));
-                    const saved = await onSaveServer({ ...serverDraft, port });
-                    if (!saved) {
-                      serverDraftDirty.current = false;
-                      setServerDraft(server);
-                      setServerPortDraft(String(server.port));
-                    }
-                  }}
-                />
-              </Field>
-              <SwitchField label={t.settings.requireBearer} checked={serverDraft.require_token} disabled={busy} onCheckedChange={(checked) => {
-                const next = { ...serverDraft, require_token: checked };
-                serverDraftDirty.current = true;
-                setServerDraft(next);
-                onSaveServer(next);
-              }} />
-            </div>
-          </section>
-
-          <section className="panel">
-            <h2>{t.settings.display}</h2>
-            <div className="form-grid settings-grid">
-              <Field label={t.settings.language}>
-                <select
-                  value={locale}
-                  onChange={(event) => {
-                    const language = normalizeLocale(event.target.value);
-                    const next = { ...settingsDraft, language };
-                    settingsDraftDirty.current = true;
-                    setSettingsDraft(next);
-                    onSaveSettings(next);
-                  }}
-                  disabled={busy}
-                >
-                  {languageOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.nativeLabel}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <div className="field span-all">
-                <span id="settings-theme-mode-label">{t.settings.theme}</span>
-                <ThemeModeControl
-                  t={t}
-                  theme={theme}
-                  effectiveTheme={effectiveTheme}
-                  labelledBy="settings-theme-mode-label"
-                  disabled={busy}
-                  onChange={onThemeChange}
-                />
-              </div>
-            </div>
-          </section>
-
-          <section className="panel">
-            <h2>{t.settings.startup}</h2>
-            <div className="form-grid settings-grid">
-              <SwitchField label={t.settings.autoStartMcp} checked={autoStartStatus === "enabled"} disabled={busy} onCheckedChange={(checked) => {
-                const next = { ...settingsDraft, auto_start_mcp: checked };
-                settingsDraftDirty.current = true;
-                setSettingsDraft(next);
-                onSaveSettings(next, true);
-              }} />
-            </div>
-          </section>
-
-          <section className="panel">
-            <h2>{t.settings.auditLog}</h2>
-            <div className="form-grid settings-grid">
-              <Field label={t.settings.auditMaxEvents}>
-                <input
-                  type="number"
-                  min={1}
-                  max={5000}
-                  value={auditMaxEventsDraft}
-                  onChange={(event) => {
-                    settingsDraftDirty.current = true;
-                    setAuditMaxEventsDraft(event.target.value);
-                    setSettingsDraft({ ...settingsDraft, audit_max_events: Number(event.target.value) || 0 });
-                  }}
-                  onBlur={(event) => {
-                    const auditMaxEvents = Math.max(1, Math.min(5000, Number(event.currentTarget.value) || settings.audit_max_events));
-                    setAuditMaxEventsDraft(String(auditMaxEvents));
-                    setSettingsDraft((current) => ({ ...current, audit_max_events: auditMaxEvents }));
-                    onSaveSettings({ ...settingsDraft, audit_max_events: auditMaxEvents });
-                  }}
-                />
-              </Field>
-              <SwitchField label={t.settings.auditRedactSql} checked={settingsDraft.audit_redact_sql_literals} disabled={busy} onCheckedChange={(checked) => {
-                const next = { ...settingsDraft, audit_redact_sql_literals: checked };
-                settingsDraftDirty.current = true;
-                setSettingsDraft(next);
-                onSaveSettings(next);
-              }} />
-            </div>
-          </section>
-
-          <Dialog.Root
-            open={exportDialogOpen}
-            onOpenChange={(open) => {
-              setExportDialogOpen(open);
-              if (!open) setExportAcknowledged(false);
-            }}
-          >
-            <section className="panel transfer-panel">
-              <h2>{t.settings.importExport}</h2>
-              <div className="transfer-actions">
-                <button type="button" className="transfer-action" disabled={busy} onClick={onImportConnections}>
-                  <span className="transfer-action-copy">
-                    <strong>{t.settings.importConnections}</strong>
-                    <span>{t.settings.importConnectionsDescription}</span>
-                  </span>
-                  <span className="transfer-action-icon" aria-hidden="true"><FileUp size={18} /></span>
-                </button>
-                <Dialog.Trigger asChild>
-                  <button type="button" className="transfer-action" disabled={busy}>
-                    <span className="transfer-action-copy">
-                    <strong>{t.settings.exportConnections}</strong>
-                      <span>{t.settings.exportConnectionsDescription}</span>
-                    </span>
-                    <span className="transfer-action-icon" aria-hidden="true"><FileDown size={18} /></span>
-                  </button>
-                </Dialog.Trigger>
-              </div>
-            </section>
-            <Dialog.Portal>
-              <Dialog.Overlay className="dialog-overlay" />
-              <Dialog.Content className="policy-dialog transfer-dialog">
-                <div className="dialog-titlebar">
-                  <div>
-                    <Dialog.Title>{t.settings.exportWarningTitle}</Dialog.Title>
-                    <Dialog.Description>{t.settings.exportWarningDescription}</Dialog.Description>
-                  </div>
-                  <Dialog.Close asChild>
-                    <button type="button" className="icon-button" aria-label={t.common.close}>
-                      <X size={18} />
-                    </button>
-                  </Dialog.Close>
-                </div>
-                <div className="transfer-warning">
-                  <div className="transfer-warning-icon"><AlertTriangle size={22} /></div>
-                  <ul>
-                    <li>{t.settings.exportWarningAccess}</li>
-                    <li>{t.settings.exportWarningLocation}</li>
-                    <li>{t.settings.exportWarningCleanup}</li>
-                  </ul>
-                </div>
-                <label className="transfer-acknowledgement">
-                  <input
-                    type="checkbox"
-                    checked={exportAcknowledged}
-                    onChange={(event) => setExportAcknowledged(event.target.checked)}
-                  />
-                  <span>{t.settings.exportAcknowledgement}</span>
-                </label>
-                <footer className="transfer-dialog-actions">
-                  <Dialog.Close asChild>
-                    <button type="button" className="button ghost">{t.common.cancel}</button>
-                  </Dialog.Close>
-                  <button
-                    type="button"
-                    className="button danger-solid"
-                    disabled={!exportAcknowledged || busy}
-                    onClick={() => {
-                      setExportDialogOpen(false);
-                      setExportAcknowledged(false);
-                      onExportConnections();
-                    }}
-                  >
-                    <FileDown size={16} />
-                    {t.settings.confirmExport}
-                  </button>
-                </footer>
-              </Dialog.Content>
-            </Dialog.Portal>
-          </Dialog.Root>
-
-          <Dialog.Root open={policyDialogOpen} onOpenChange={setPolicyDialogOpen}>
-            <section className="panel safety-panel">
-              <div className="panel-header">
-                <h2>{t.settings.securityPosture}</h2>
-                <IconTooltip label={t.settings.checkSql}>
-                  <Dialog.Trigger asChild>
-                    <button type="button" className="policy-check-button" disabled={busy} aria-label={t.settings.checkSql}>
-                      <SearchCheck size={17} />
-                    </button>
-                  </Dialog.Trigger>
-                </IconTooltip>
-              </div>
-              <ul className="security-list">
-                <li><ShieldCheck size={16} /> {t.settings.securityAst}</li>
-                <li><ListChecks size={16} /> {t.settings.securityReadonly}</li>
-                <li><KeyRound size={16} /> {t.settings.securityVault}</li>
-                <li><FileText size={16} /> {t.settings.securityAudit}</li>
-                <li className="security-warning"><AlertTriangle size={16} /> {t.settings.securityWarning}</li>
-              </ul>
-            </section>
-            <Dialog.Portal>
-              <Dialog.Overlay className="dialog-overlay" />
-              <Dialog.Content className="policy-dialog">
-                <div className="dialog-titlebar">
-                  <div>
-                    <Dialog.Title>{t.settings.policyConsole}</Dialog.Title>
-                    <Dialog.Description>{t.settings.policyDescription}</Dialog.Description>
-                  </div>
-                  <Dialog.Close asChild>
-                    <button type="button" className="icon-button" aria-label={t.common.close}>
-                      <X size={18} />
-                    </button>
-                  </Dialog.Close>
-                </div>
-                <div className="policy-panel">
-                  <div className="policy-toolbar">
-                    <Field label={t.settings.sqlDialect}>
-                      <select value={policyKind} onChange={(event) => onPolicyKindChange(event.target.value as DatabaseType)}>
-                        <option value="mysql">MySQL</option>
-                        <option value="postgres">PostgreSQL</option>
-                        <option value="sqlite">SQLite</option>
-                      </select>
-                    </Field>
-                    <button type="button" className="button primary" disabled={busy} onClick={onPolicyCheck}>
-                      <SearchCheck size={17} />
-                      {t.settings.checkSql}
-                    </button>
-                  </div>
-                  <textarea value={policySql} onChange={(event) => onSqlChange(event.target.value)} spellCheck={false} />
-                  {policyResult && (
-                    <div className={clsx("policy-result", policyResult.allowed ? "allowed" : "denied")}>
-                      {policyResult.allowed ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
-                      <div>
-                        <strong>{policyResult.allowed ? t.settings.allowed : t.settings.denied}</strong>
-                        <p>{policyResult.reason}</p>
-                        {policyResult.rewritten_sql && <code>{policyResult.rewritten_sql}</code>}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </Dialog.Content>
-            </Dialog.Portal>
-          </Dialog.Root>
-        </div>
-      ) : (
-        <div className="settings-stack" onScroll={updateScrollFade}>
-          <section className="panel about-panel">
-            <div className="about-hero">
-              <img src={appIconUrl} alt="DataNexa" />
-              <div>
-                <h2>DataNexa <span className="version-badge">v{APP_VERSION}</span></h2>
-                <p>{t.settings.aboutText}</p>
-              </div>
-            </div>
-            <AboutUpdateSection
-              t={t}
-              enabled={updaterEnabled}
-              state={updateState}
-              autoCheckUpdates={settingsDraft.auto_check_updates}
-              onAutoCheckUpdatesChange={(checked) => {
-                const next = { ...settingsDraft, auto_check_updates: checked };
-                settingsDraftDirty.current = true;
-                setSettingsDraft(next);
-                onSaveSettings(next);
-              }}
-              onCheck={onCheckUpdate}
-              onUpdate={onUpdate}
-              onOpenProjectReleases={onOpenProjectReleases}
-            />
-            <footer className="about-footer">
-              <div className="about-footer-links">
-                <a
-                  className="github-link"
-                  href="https://mingozacwu.github.io/datanexa-site/"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    onOpenProjectSite();
-                  }}
-                >
-                  <Home size={16} />
-                  {t.settings.officialHomepage}
-                </a>
-                <a
-                  className="github-link"
-                  href="https://github.com/MingoZacwu/DataNexa"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    onOpenProjectHomepage();
-                  }}
-                >
-                  <Github size={16} />
-                  GitHub
-                </a>
-              </div>
-              <p>(C) 2026 Zachary Wu All Rights Reserved.</p>
-            </footer>
-          </section>
-        </div>
-      )}
-    </section>
-  );
-}
-function AboutUpdateSection({
-  t,
-  enabled,
-  state,
-  autoCheckUpdates,
-  onAutoCheckUpdatesChange,
-  onCheck,
-  onUpdate,
-  onOpenProjectReleases
-}: {
-  t: I18nMessages;
-  enabled: boolean;
-  state: UpdateState;
-  autoCheckUpdates: boolean;
-  onAutoCheckUpdatesChange: (checked: boolean) => void;
-  onCheck: () => void;
-  onUpdate: () => void;
-  onOpenProjectReleases: () => void;
-}) {
-  let icon: ReactNode = <RefreshCw size={19} />;
-  let title = t.updates.readyTitle;
-  let description = t.updates.readyDescription;
-
-  if (!enabled || state.kind === "disabled") {
-    icon = <Monitor size={19} />;
-    title = t.updates.localBuildTitle;
-    description = t.updates.localBuildDescription;
-  } else if (state.kind === "checking") {
-    icon = <RefreshCw size={19} />;
-    title = t.updates.checkingTitle;
-    description = t.updates.checkingDescription;
-  } else if (state.kind === "up-to-date") {
-    icon = <CheckCircle2 size={19} />;
-    title = t.updates.upToDateTitle;
-    description = formatMessage(t.updates.upToDateDescription, { version: APP_VERSION });
-  } else if (state.kind === "available") {
-    icon = <Download size={19} />;
-    title = t.updates.availableTitle;
-    description = formatMessage(t.updates.availableDescription, { version: state.version });
-  } else if (state.kind === "downloading") {
-    icon = <Download size={19} />;
-    title = t.updates.downloadingTitle;
-    description = state.total
-      ? formatMessage(t.updates.downloadingProgress, {
-          progress: Math.min(100, Math.round((state.downloaded / state.total) * 100))
-        })
-      : t.updates.downloadingDescription;
-  } else if (state.kind === "relaunching") {
-    icon = <RefreshCw size={19} />;
-    title = t.updates.relaunchingTitle;
-    description = t.updates.relaunchingDescription;
-  } else if (state.kind === "error") {
-    icon = <AlertTriangle size={19} />;
-    if (state.phase === "download") {
-      title = t.updates.downloadFailedTitle;
-      description = t.updates.downloadFailedDescription;
-    } else if (state.phase === "relaunch") {
-      title = t.updates.relaunchFailedTitle;
-      description = t.updates.relaunchFailedDescription;
-    } else {
-      title = t.updates.checkFailedTitle;
-      description = t.updates.checkFailedDescription;
-    }
-  }
-
-  const progress = state.kind === "downloading" && state.total
-    ? Math.min(100, Math.round((state.downloaded / state.total) * 100))
-    : null;
-
-  return (
-    <section className={clsx("about-update-section", "state-" + state.kind)}>
-      <div className={clsx("about-update-icon", (state.kind === "checking" || state.kind === "relaunching") && "is-spinning")}>
-        {icon}
-      </div>
-      <div className="about-update-content">
-        <strong>{title}</strong>
-        <p>{description}</p>
-      </div>
-      <div className="about-update-actions">
-        {state.kind === "downloading" && (
-          <div
-            className={clsx("update-progress", progress === null && "indeterminate")}
-            role="progressbar"
-            aria-label={t.updates.downloadingTitle}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={progress ?? undefined}
-          >
-            <span style={{ width: progress === null ? "22%" : String(progress) + "%" }} />
-          </div>
-        )}
-        {(!enabled || state.kind === "disabled") && (
-          <button type="button" className="button soft" onClick={onOpenProjectReleases}>
-            <ExternalLink size={16} />
-            {t.updates.openReleases}
-          </button>
-        )}
-        {enabled && (state.kind === "idle" || state.kind === "up-to-date" || (state.kind === "error" && state.phase === "check")) && (
-          <button type="button" className="button soft" onClick={onCheck}>
-            <RefreshCw size={16} />
-            {state.kind === "error" ? t.updates.retry : t.updates.checkNow}
-          </button>
-        )}
-        {state.kind === "available" && (
-          <>
-            <button type="button" className="button soft" onClick={onOpenProjectReleases}>
-              <ExternalLink size={16} />
-              {t.updates.viewReleaseNotes}
-            </button>
-            <button type="button" className="button primary" onClick={onUpdate}>
-              <Download size={16} />
-              {t.updates.updateNow}
-            </button>
-          </>
-        )}
-        {state.kind === "error" && state.phase === "download" && (
-          <>
-            <button type="button" className="button soft" onClick={onOpenProjectReleases}>
-              <ExternalLink size={16} />
-              {t.updates.manualDownload}
-            </button>
-            <button type="button" className="button primary" onClick={onUpdate}>
-              <Download size={16} />
-              {t.updates.retry}
-            </button>
-          </>
-        )}
-        {state.kind === "error" && state.phase === "relaunch" && (
-          <button type="button" className="button soft" onClick={onOpenProjectReleases}>
-            <ExternalLink size={16} />
-            {t.updates.openReleases}
-          </button>
-        )}
-      </div>
-      <div className="about-update-preferences">
-        <label className="about-update-switch-row">
-          <span>{t.settings.autoCheckUpdates}</span>
-          <Switch.Root className="switch" checked={enabled && autoCheckUpdates} disabled={!enabled} onCheckedChange={onAutoCheckUpdatesChange}>
-            <Switch.Thumb className="switch-thumb" />
-          </Switch.Root>
-        </label>
-      </div>
-    </section>
-  );
-}
-
-
-function ConnectionDialog({
-  t,
-  editing,
-  busy,
-  password,
-  clearPassword,
-  onPasswordChange,
-  onClearPasswordChange,
-  onEditingChange,
-  onTest,
-  migrationReady,
-  onSubmit,
-  onClose
-}: {
-  t: I18nMessages;
-  editing: ConnectionConfig | null;
-  busy: boolean;
-  password: string;
-  clearPassword: boolean;
-  onPasswordChange: (value: string) => void;
-  onClearPasswordChange: (checked: boolean) => void;
-  onEditingChange: (connection: ConnectionConfig) => void;
-  onTest: () => void;
-  migrationReady: boolean;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  onClose: () => void;
-}) {
-  if (!editing) return null;
-
-  return (
-    <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="connection-dialog">
-          <div className="dialog-titlebar">
-            <div>
-              <Dialog.Title>{editing.id.startsWith("connection_") ? t.connectionDialog.addTitle : t.connectionDialog.editTitle}</Dialog.Title>
-              <Dialog.Description>{t.connectionDialog.description}</Dialog.Description>
-            </div>
-            <Dialog.Close asChild>
-              <button type="button" className="icon-button" aria-label={t.common.close}>
-                <X size={18} />
-              </button>
-            </Dialog.Close>
-          </div>
-
-          <form className="connection-form" onSubmit={onSubmit}>
-            <div className="connection-form-scroll">
-            <FormSection title={t.connectionDialog.basicInfo}>
-              <Field label={t.connectionDialog.name} span>
-                <input value={editing.name} onChange={(event) => onEditingChange({ ...editing, name: event.target.value })} required />
-              </Field>
-              <Field label={t.connectionDialog.databaseType}>
-                <select
-                  value={editing.type}
-                  onChange={(event) => {
-                    const type = event.target.value as DatabaseType;
-                    onEditingChange({ ...editing, type, port: defaultPort(type), ssl_mode: type === "sqlite" ? null : editing.ssl_mode ?? "prefer" });
-                  }}
-                >
-                  <option value="sqlite">SQLite</option>
-                  <option value="mysql">MySQL</option>
-                  <option value="postgres">PostgreSQL</option>
-                </select>
-              </Field>
-            </FormSection>
-
-            <FormSection title={t.connectionDialog.address}>
-              {editing.type === "sqlite" ? (
-                <Field label={t.connectionDialog.databaseFile} span>
-                  <input value={editing.database} onChange={(event) => onEditingChange({ ...editing, database: event.target.value })} placeholder="E:/data/app.db" required />
-                </Field>
-              ) : (
-                <>
-                  <Field label={t.connectionDialog.host}>
-                    <input value={editing.host ?? ""} onChange={(event) => onEditingChange({ ...editing, host: event.target.value })} required />
-                  </Field>
-                  <Field label={t.connectionDialog.port}>
-                    <input type="number" value={editing.port ?? defaultPort(editing.type) ?? ""} onChange={(event) => onEditingChange({ ...editing, port: Number(event.target.value) })} required />
-                  </Field>
-                  <Field label={t.connectionDialog.database}>
-                    <input value={editing.database} onChange={(event) => onEditingChange({ ...editing, database: event.target.value })} required />
-                  </Field>
-                  <Field label={t.connectionDialog.username}>
-                    <input value={editing.username ?? ""} onChange={(event) => onEditingChange({ ...editing, username: event.target.value })} />
-                  </Field>
-                  <Field label={t.connectionDialog.sslMode} span>
-                    <select value={editing.ssl_mode ?? "prefer"} onChange={(event) => onEditingChange({ ...editing, ssl_mode: event.target.value })}>
-                      <option value="disable">{t.connectionDialog.sslDisable}</option>
-                      <option value="prefer">{t.connectionDialog.sslPrefer}</option>
-                      <option value="require">{t.connectionDialog.sslRequire}</option>
-                    </select>
-                  </Field>
-                </>
-              )}
-            </FormSection>
-
-            <FormSection title={t.connectionDialog.credentialsAndLimits}>
-              <Field label={t.connectionDialog.password}>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(event) => onPasswordChange(event.target.value)}
-                  disabled={clearPassword}
-                  placeholder={editing.credential_ref ? t.connectionDialog.keepExistingPassword : t.connectionDialog.saveToVault}
-                />
-              </Field>
-              <div className="credential-action-field">
-                <button
-                  type="button"
-                  className={clsx("button ghost credential-clear-button", clearPassword && "pending")}
-                  disabled={!editing.credential_ref || busy || clearPassword}
-                  onClick={() => onClearPasswordChange(true)}
-                >
-                  <Trash2 size={15} />
-                  {t.connectionDialog.clearSavedCredential}
-                </button>
-              </div>
-              <Field label={t.connectionDialog.maxRows}>
-                <input type="number" min={1} max={5000} value={editing.max_rows} onChange={(event) => onEditingChange({ ...editing, max_rows: Number(event.target.value) })} />
-              </Field>
-              <Field label={t.connectionDialog.queryTimeoutMs}>
-                <input type="number" min={500} value={editing.query_timeout_ms} onChange={(event) => onEditingChange({ ...editing, query_timeout_ms: Number(event.target.value) })} />
-              </Field>
-              <Field label={t.connectionDialog.maxConnections}>
-                <input type="number" min={1} max={3} value={editing.max_connections} onChange={(event) => onEditingChange({ ...editing, max_connections: Number(event.target.value) })} />
-              </Field>
-              <Field label={t.connectionDialog.maxResultBytes}>
-                <input type="number" min={64} max={8192} step={64} value={Math.round(editing.max_result_bytes / 1024)} onChange={(event) => onEditingChange({ ...editing, max_result_bytes: Number(event.target.value) * 1024 })} />
-              </Field>
-              <p className="field-note span-all">
-                {formatMessage(t.connectionDialog.currentCredential, { credential: editing.credential_ref ?? t.connectionDialog.credentialNotSaved })}
-              </p>
-            </FormSection>
-            </div>
-
-            <footer>
-              <button type="button" className="button soft" disabled={busy || !migrationReady} onClick={onTest}>
-                <Cable size={16} />
-                {t.connections.test}
-              </button>
-              <Dialog.Close asChild>
-                <button type="button" className="button ghost">{t.common.cancel}</button>
-              </Dialog.Close>
-              <button type="submit" className="button primary" disabled={busy}>{t.connectionDialog.save}</button>
-            </footer>
-          </form>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-  );
-}
-
-function AuditDetailDialog({ t, event, onClose }: { t: I18nMessages; event: AuditEvent | null; onClose: () => void }) {
-  return (
-    <Dialog.Root open={Boolean(event)} onOpenChange={(open) => !open && onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="audit-dialog">
-          {event && (
-            <>
-              <div className="dialog-titlebar">
-                <div>
-                  <Dialog.Title>{t.audit.detailTitle}</Dialog.Title>
-                  <Dialog.Description>{new Date(event.timestamp).toLocaleString()}</Dialog.Description>
-                </div>
-                <Dialog.Close asChild>
-                  <button type="button" className="icon-button" aria-label={t.common.close}>
-                    <X size={18} />
-                  </button>
-                </Dialog.Close>
-              </div>
-
-              <dl className="detail-grid">
-                <div>
-                  <dt>{t.audit.tool}</dt>
-                  <dd>{toolDisplayName(t, event.tool)}</dd>
-                </div>
-                <div>
-                  <dt>{t.audit.connection}</dt>
-                  <dd>{event.connection_name ?? event.connection_id ?? "—"}</dd>
-                </div>
-                <div>
-                  <dt>{t.audit.status}</dt>
-                  <dd><StatusPill tone={statusTone(event.status)} label={statusLabel(t, event.status)} /></dd>
-                </div>
-                <div>
-                  <dt>{t.audit.elapsedRows}</dt>
-                  <dd>{formatMessage(t.audit.elapsedRowsValue, { elapsed: event.elapsed_ms ?? 0, rows: event.row_count ?? 0 })}</dd>
-                </div>
-              </dl>
-
-              {event.reason && (
-                <div className="detail-section">
-                  <h3>{t.audit.reason}</h3>
-                  <p>{event.reason}</p>
-                </div>
-              )}
-
-              <div className="detail-section">
-                <div className="detail-section-title">
-                  <h3>SQL</h3>
-                  {event.sql && (
-                    <button type="button" className="button ghost" onClick={() => navigator.clipboard.writeText(event.sql ?? "")}>
-                      <Clipboard size={15} />
-                      {t.common.copy}
-                    </button>
-                  )}
-                </div>
-                {event.sql ? <pre>{event.sql}</pre> : <p className="muted">{t.audit.noSql}</p>}
-              </div>
-            </>
-          )}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-  );
-}
-
-function ConnectionRow({
-  t,
-  connection,
-  busy,
-  onEdit,
-  onDelete,
-  onTest,
-  onDiagnose,
-  onToggleEnabled,
-  migrationReady,
-  selected,
-  onSelect
-}: {
-  t: I18nMessages;
-  connection: ConnectionConfig;
-  busy: boolean;
-  onEdit: (connection: ConnectionConfig) => void;
-  onDelete: (id: string) => void;
-  onTest: (id: string) => void;
-  onDiagnose: (id: string) => void;
-  onToggleEnabled: (id: string, enabled: boolean) => void;
-  migrationReady: boolean;
-  selected?: boolean;
-  onSelect?: () => void;
-}) {
-  return (
-    <div className={clsx("connection-row", !connection.enabled && "disabled", selected && "selected")}>
-      <button type="button" className="connection-select" onClick={onSelect}>
-        <ConnectionListItem t={t} connection={connection} />
-      </button>
-      <div className="row-actions">
-        <IconTooltip label={formatMessage(t.connections.toggleEnabled, { name: connection.name })}>
-          <button
-            type="button"
-            className={clsx("icon-button connection-toggle-button", !connection.enabled && "off")}
-            onClick={() => onToggleEnabled(connection.id, !connection.enabled)}
-            disabled={busy}
-            aria-label={formatMessage(t.connections.toggleEnabled, { name: connection.name })}
-          >
-            <Power size={17} />
-          </button>
-        </IconTooltip>
-        <IconTooltip label={t.connections.test}>
-          <button type="button" className="icon-button" onClick={() => onTest(connection.id)} disabled={busy || !connection.enabled || !migrationReady}>
-            <Cable size={17} />
-          </button>
-        </IconTooltip>
-        <IconTooltip label={t.connections.diagnose}>
-          <button type="button" className="icon-button" onClick={() => onDiagnose(connection.id)} disabled={busy || !connection.enabled}>
-            <SearchCheck size={17} />
-          </button>
-        </IconTooltip>
-        <IconTooltip label={t.connections.edit}>
-          <button type="button" className="icon-button" onClick={() => onEdit(connection)}>
-            <MoreVertical size={17} />
-          </button>
-        </IconTooltip>
-        <IconTooltip label={t.connections.delete}>
-          <button type="button" className="icon-button danger" onClick={() => onDelete(connection.id)}>
-            <Trash2 size={17} />
-          </button>
-        </IconTooltip>
-      </div>
-    </div>
-  );
-}
-
-function ConnectionListItem({ t, connection, compact = false }: { t: I18nMessages; connection: ConnectionConfig; compact?: boolean }) {
-  return (
-    <div className={clsx("connection-item", compact && "compact")}>
-      <div className={clsx("db-badge", connection.type)}>
-        <img src={DATABASE_LOGOS[connection.type]} alt="" aria-hidden="true" />
-      </div>
-      <div className="connection-info">
-        <div>
-          <strong>{connection.name}</strong>
-          <StatusPill tone={connection.enabled ? "green" : "slate"} label={connection.enabled ? t.connections.enabled : t.connections.paused} />
-        </div>
-        <p>
-          {connection.type === "sqlite"
-            ? connection.database || t.connections.noDatabaseFile
-            : `${connection.host || "-"}:${connection.port ?? defaultPort(connection.type)}`}
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function EventList({ t, events, onSelect }: { t: I18nMessages; events: AuditEvent[]; onSelect?: (event: AuditEvent) => void }) {
-  if (events.length === 0) {
-    return <div className="empty-state compact">{t.audit.emptyCompact}</div>;
-  }
-
-  return (
-    <div className="event-list">
-      {events.map((event) => (
-        <button type="button" className="event-item" key={event.id} onClick={() => onSelect?.(event)}>
-          <span className={clsx("event-dot", statusTone(event.status))} />
-          <time>{new Date(event.timestamp).toLocaleTimeString()}</time>
-          <span>{event.reason ?? toolDisplayName(t, event.tool)}</span>
-          <StatusPill tone={statusTone(event.status)} label={statusLabel(t, event.status)} />
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function ToastViewport({ t, toasts, onDismiss }: { t: I18nMessages; toasts: ToastMessage[]; onDismiss: (id: string) => void }) {
-  if (toasts.length === 0) return null;
-
-  return createPortal(
-    <div className="toast-viewport" role="status" aria-live="polite">
-      {toasts.map((toast) => (
-        <div className={clsx("toast", toast.tone, toast.leaving && "leaving")} key={toast.id}>
-          {toast.tone === "error" ? <AlertTriangle size={18} /> : <CheckCircle2 size={18} />}
-          <span>{toast.message}</span>
-          <button type="button" onClick={() => onDismiss(toast.id)} aria-label={t.common.closeNotice}>
-            <X size={15} />
-          </button>
-        </div>
-      ))}
-    </div>,
-    document.body
-  );
-}
-
-function PanelHeader({ title, action, onAction, disabled }: { title: string; action?: ReactNode; onAction?: () => void; disabled?: boolean }) {
-  return (
-    <div className="panel-header">
-      <h2>{title}</h2>
-      {typeof action === "string" && (
-        <button type="button" className="button primary" onClick={onAction} disabled={disabled}>
-          <Plus size={16} />
-          {action}
-        </button>
-      )}
-      {action && typeof action !== "string" && action}
-    </div>
-  );
-}
-
-function PanelIconAction({ icon, label, className, onClick, disabled }: { icon: ReactNode; label: string; className?: string; onClick: () => void; disabled?: boolean }) {
-  return (
-    <IconTooltip label={label}>
-      <button type="button" className={clsx("panel-icon-action", className)} onClick={onClick} disabled={disabled} aria-label={label}>
-        {icon}
-      </button>
-    </IconTooltip>
-  );
-}
-
-function FormSection({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="form-section">
-      <h3>{title}</h3>
-      <div className="form-grid">{children}</div>
-    </section>
-  );
-}
-
-function Field({ label, span, children }: { label: string; span?: boolean; children: ReactNode }) {
-  return (
-    <label className={clsx("field", span && "span-all")}>
-      <span>{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function SwitchField({
-  label,
-  checked,
-  disabled,
-  onCheckedChange
-}: {
-  label: string;
-  checked: boolean;
-  disabled?: boolean;
-  onCheckedChange: (checked: boolean) => void;
-}) {
-  return (
-    <label className="switch-row">
-      <span>{label}</span>
-      <Switch.Root className="switch" checked={checked} disabled={disabled} onCheckedChange={onCheckedChange}>
-        <Switch.Thumb className="switch-thumb" />
-      </Switch.Root>
-    </label>
-  );
-}
-
-function IconTooltip({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <Tooltip.Root>
-      <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
-      <Tooltip.Portal>
-        <Tooltip.Content className="tooltip" side="top">
-          {label}
-          <Tooltip.Arrow className="tooltip-arrow" />
-        </Tooltip.Content>
-      </Tooltip.Portal>
-    </Tooltip.Root>
-  );
-}
-
-function MetricIcon({ icon }: { icon: ReactNode }) {
-  return <div className="metric-icon">{icon}</div>;
-}
-
-function MetricValue({ value, suffix }: { value: ReactNode; suffix?: string }) {
-  return (
-    <div className="metric-value">
-      <strong>{value}</strong>
-      {suffix && <small>{suffix}</small>}
-    </div>
-  );
-}
-
-function QuickStep({ image, title, text, wide, actionLabel, onAction }: { image: string; title: string; text: string; wide?: boolean; actionLabel?: string; onAction?: () => void }) {
-  return (
-    <div className={clsx("quick-step", wide && "wide")}>
-      <img src={image} alt="" />
-      <div className="quick-step-body">
-        <strong>{title}</strong>
-        <span>{text}</span>
-      </div>
-      {onAction && actionLabel && (
-        <PanelIconAction icon={<Clipboard size={16} />} label={actionLabel} onClick={onAction} />
-      )}
-    </div>
-  );
-}
-
-function StatusPill({ tone, label }: { tone: "green" | "blue" | "amber" | "red" | "slate"; label: string }) {
-  return <span className={clsx("status-pill", tone)}>{label}</span>;
-}
-
-function viewTitle(t: I18nMessages, view: View) {
-  switch (view) {
-    case "overview":
-      return t.nav.overview;
-    case "connections":
-      return t.nav.connections;
-    case "server":
-      return t.nav.server;
-    case "tools":
-      return t.nav.tools;
-    case "audit":
-      return t.nav.audit;
-    case "settings":
-      return t.nav.settings;
-  }
-}
-
-function toolDisplayName(t: I18nMessages, name: string) {
-  const names: Record<string, string> = t.tools.names;
-  if (name === "system.auto_start_mcp") return names.system_auto_start_mcp;
-  if (name === "system.start_mcp") return names.system_start_mcp;
-  return names[name] ?? name;
-}
-
-function toolIntro(t: I18nMessages, tool: McpToolInfo) {
-  const intros: Record<string, string> = t.tools.intros;
-  return intros[tool.name] ?? tool.description;
-}
-
-function dbTypeLabel(type: DatabaseType) {
-  if (type === "postgres") return "PostgreSQL";
-  if (type === "mysql") return "MySQL";
-  return "SQLite";
-}
-
-function defaultPort(type: DatabaseType) {
-  if (type === "postgres") return 5432;
-  if (type === "mysql") return 3306;
-  return null;
-}
-
-function statusTone(status: AuditEvent["status"]): "green" | "blue" | "amber" | "red" | "slate" {
-  if (status === "allowed") return "green";
-  if (status === "denied") return "red";
-  if (status === "timeout") return "amber";
-  if (status === "truncated") return "blue";
-  if (status === "error") return "red";
-  return "slate";
-}
-
-function statusLabel(t: I18nMessages, status: AuditEvent["status"]) {
-  if (status === "allowed") return t.status.allowed;
-  if (status === "denied") return t.status.denied;
-  if (status === "timeout") return t.status.timeout;
-  if (status === "truncated") return t.status.truncated;
-  return t.status.error;
-}
-
-function formatDiagnostics(t: I18nMessages, diagnostics: ConnectionDiagnostics) {
-  const summary = formatMessage(t.diagnostics.summary, {
-    name: diagnostics.name,
-    type: dbTypeLabel(diagnostics.database_type),
-    credential: credentialStateLabel(t, diagnostics.credential_state)
-  });
-  return diagnostics.hint ? `${summary}\n${diagnostics.hint.trim()}` : summary;
-}
-
-function formatConnectionTest(t: I18nMessages, message: string) {
-  const elapsed = message.match(/(\d+)\s*ms/i)?.[1] ?? "-";
-  return formatMessage(t.toast.connectionTestPassed, { elapsed });
-}
-
-function compactConnectionError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  const lines = message.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  return [...new Set(lines)].join("\n") || message;
-}
-
-function credentialStateLabel(t: I18nMessages, state: string) {
-  if (state === "not_required") return t.diagnostics.notRequired;
-  if (state === "not_saved") return t.diagnostics.notSaved;
-  if (state === "saved_empty") return t.diagnostics.savedEmpty;
-  if (state === "saved") return t.diagnostics.saved;
-  if (state === "missing_in_vault") return t.diagnostics.missingInVault;
-  if (state === "vault_error") return t.diagnostics.vaultError;
-  return state;
-}
-
-function buildAgentPrompt(t: I18nMessages, endpoint: string, requireToken: boolean, token?: string | null) {
-  const datanexa: Record<string, unknown> = {
-    transport: "streamable-http",
-    url: endpoint
-  };
-  if (requireToken) {
-    datanexa.headers = {
-      Authorization: `Bearer ${token ?? "TOKEN"}`
-    };
-  }
-
-  return [
-    t.agentPrompt.intro,
-    t.agentPrompt.configIntro,
-    JSON.stringify({ mcpServers: { datanexa } }, null, 2)
-  ].join("\n\n");
-}
-
-function relativeDuration(t: I18nMessages, timestamp: string) {
-  const elapsedMs = Date.now() - new Date(timestamp).getTime();
-  if (elapsedMs < 0) return t.common.justNow;
-  const minutes = Math.floor(elapsedMs / 60000);
-  const hours = Math.floor(minutes / 60);
-  if (hours > 0) return `${hours}h ${minutes % 60}m`;
-  if (minutes > 0) return `${minutes}m`;
-  return t.common.justNow;
-}
 
 export default App;

@@ -9,8 +9,12 @@ const themeMode = (() => {
   return stored === "system" || stored === "light" || stored === "dark" ? stored : "system";
 })();
 const systemPrefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-
-document.documentElement.dataset.platform = /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent) ? "macos" : "other";
+document.documentElement.dataset.platform = /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent)
+  ? "macos"
+  : /Windows/i.test(navigator.userAgent)
+    ? "windows"
+    : "other";
+document.documentElement.dataset.systemMaterial = "fallback";
 document.documentElement.dataset.theme = themeMode;
 document.documentElement.classList.toggle("dark", themeMode === "dark" || (themeMode === "system" && systemPrefersDark));
 

@@ -113,6 +113,34 @@ pub struct DatabaseManager {
 }
 
 impl DatabaseManager {
+    pub async fn close_all(&self) {
+        let creating_ids = self
+            .creation_locks
+            .lock()
+            .await
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        let pools = {
+            let mut state = self.pools.write().await;
+            let mut ids = state.entries.keys().cloned().collect::<HashSet<_>>();
+            ids.extend(creating_ids);
+            for connection_id in ids {
+                let generation = state.generations.entry(connection_id).or_default();
+                *generation = generation.wrapping_add(1);
+            }
+            state
+                .entries
+                .drain()
+                .map(|(_, entry)| entry.pool)
+                .collect::<Vec<_>>()
+        };
+
+        for pool in pools {
+            tokio::spawn(close_pool(pool));
+        }
+    }
+
     pub async fn close(&self, connection_id: &str) {
         let pool = {
             let mut state = self.pools.write().await;
@@ -301,10 +329,12 @@ impl DatabaseManager {
                     .collect())
             }
             ManagedPool::Mysql(pool) => {
+                let schema = schema.unwrap_or(&config.database);
                 let rows = timeout(
                     query_timeout(config),
                     collect_metadata_rows(
-                        sqlx::query("SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_KEY FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION")
+                        sqlx::query("SELECT COLUMN_NAME, CAST(DATA_TYPE AS CHAR) AS DATA_TYPE, CAST(IS_NULLABLE AS CHAR) AS IS_NULLABLE, CAST(COLUMN_KEY AS CHAR) AS COLUMN_KEY FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION")
+                            .bind(schema)
                             .bind(table)
                             .fetch(&pool),
                     ),
@@ -378,13 +408,13 @@ impl DatabaseManager {
             validate_identifier(schema)?;
         }
 
-        let table_sql = match (&config.kind, schema) {
-            (DbKind::Postgres, Some(schema)) => format!(
+        let table_sql = match schema {
+            Some(schema) => format!(
                 "{}.{}",
                 quote_identifier(&config.kind, schema)?,
                 quote_identifier(&config.kind, table)?
             ),
-            _ => quote_identifier(&config.kind, table)?,
+            None => quote_identifier(&config.kind, table)?,
         };
         let max_rows = limit.unwrap_or(config.max_rows).min(config.max_rows).max(1);
         let fetch_limit = max_rows
@@ -1120,6 +1150,7 @@ fn mysql_cell(row: &MySqlRow, index: usize) -> Value {
     if mysql_is_null(row, index) {
         return Value::Null;
     }
+    let database_type = row.columns()[index].type_info().name();
     if let Ok(value) = row.try_get::<sqlx::types::Json<Value>, _>(index) {
         return value.0;
     }
@@ -1135,8 +1166,10 @@ fn mysql_cell(row: &MySqlRow, index: usize) -> Value {
     if let Ok(value) = row.try_get::<NaiveTime, _>(index) {
         return Value::String(value.to_string());
     }
-    if let Ok(value) = row.try_get::<bool, _>(index) {
-        return Value::Bool(value);
+    if database_type == "BOOLEAN" {
+        if let Ok(value) = row.try_get::<bool, _>(index) {
+            return Value::Bool(value);
+        }
     }
     if let Ok(value) = row.try_get::<i64, _>(index) {
         return Value::Number(value.into());
@@ -1149,13 +1182,13 @@ fn mysql_cell(row: &MySqlRow, index: usize) -> Value {
             .map(Value::Number)
             .unwrap_or(Value::Null);
     }
-    if let Ok(value) = row.try_get::<Vec<u8>, _>(index) {
-        return binary_value(value);
-    }
     if let Ok(value) = row.try_get::<String, _>(index) {
         return Value::String(value);
     }
-    unsupported_cell(row.columns()[index].type_info().name())
+    if let Ok(value) = row.try_get::<Vec<u8>, _>(index) {
+        return binary_value(value);
+    }
+    unsupported_cell(database_type)
 }
 
 fn pg_cell(row: &PgRow, index: usize) -> Value {

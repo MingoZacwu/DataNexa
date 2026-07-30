@@ -39,6 +39,10 @@ pub struct SettingsConfig {
     pub auto_check_updates: bool,
     #[serde(default)]
     pub auto_start_mcp: bool,
+    #[serde(default)]
+    pub auto_lightweight_mode: bool,
+    #[serde(default = "default_true")]
+    pub mcp_activity_effects: bool,
     #[serde(default = "default_language")]
     pub language: String,
 }
@@ -196,6 +200,8 @@ impl Default for SettingsConfig {
             audit_redact_sql_literals: false,
             auto_check_updates: true,
             auto_start_mcp: false,
+            auto_lightweight_mode: false,
+            mcp_activity_effects: true,
             language: default_language(),
         }
     }

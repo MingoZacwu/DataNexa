@@ -29,6 +29,7 @@ use crate::{hide_main_window_to_tray, refresh_tray_menu};
 pub struct AppSnapshot {
     pub config: AppConfig,
     pub server_status: ServerStatus,
+    pub emergency_disconnect: bool,
     pub audit_events: Vec<crate::audit::AuditEvent>,
     pub tools: Vec<McpToolInfo>,
     pub updater_enabled: bool,
@@ -551,29 +552,19 @@ pub async fn set_connection_enabled(
 pub async fn disable_all_connections(
     state: State<'_, Arc<AppState>>,
 ) -> Result<AppSnapshot, String> {
-    let _transaction = state.config_transaction.write().await;
-    let mut candidate = state.config.read().await.clone();
-    let connection_ids = candidate
-        .connections
-        .iter()
-        .map(|connection| connection.id.clone())
-        .collect::<Vec<_>>();
-    for connection in &mut candidate.connections {
-        connection.enabled = false;
+    let _lifecycle = state.mcp_lifecycle.lock().await;
+    if state.is_emergency_disabled() {
+        state.exit_emergency_mode().await;
+        return snapshot(state.inner()).await.map_err(to_client_error);
     }
-    candidate
-        .normalize_and_validate()
-        .map_err(to_client_error)?;
-    persist_invalidating_candidate(
-        &state.store,
-        &state.config,
-        &state.db,
-        candidate,
-        &connection_ids,
-    )
-    .await
-    .map_err(to_client_error)?;
-    drop(_transaction);
+    if !state.mcp.read().await.running {
+        return Err(
+            "MCP server must be running before emergency disconnect can be enabled".to_string(),
+        );
+    }
+
+    state.enter_emergency_mode().await;
+    state.db.close_all().await;
 
     snapshot(state.inner()).await.map_err(to_client_error)
 }
@@ -630,67 +621,19 @@ pub async fn test_connection(
     state: State<'_, Arc<AppState>>,
     id: String,
 ) -> Result<String, String> {
-    if !state.audit.is_ready().await {
-        return Err("audit migration is not ready".to_string());
-    }
     let _config_transaction = state.config_transaction.read().await;
     let text = text_for_state(state.inner()).await;
     let connection = find_connection(state.inner(), &id)
         .await
         .map_err(to_client_error)?;
     state.db.close(&id).await;
-    let started = Instant::now();
-    let max_events = audit_limit(state.inner()).await;
     match state
         .db
         .test_connection(&connection, &state.vault, &text)
         .await
     {
-        Ok(duration) => {
-            state
-                .audit
-                .record_with_limit(
-                    Some(id),
-                    Some(connection.name.clone()),
-                    "test_connection",
-                    AuditStatus::Allowed,
-                    None,
-                    Some(duration.as_millis().try_into().unwrap_or(u64::MAX)),
-                    None,
-                    None,
-                    max_events,
-                )
-                .await
-                .map_err(|error| {
-                    format!(
-                        "Connection test succeeded, but audit storage is unavailable: {}",
-                        to_client_error(error)
-                    )
-                })?;
-            Ok(text.connection_test_ok(duration.as_millis()))
-        }
+        Ok(duration) => Ok(text.connection_test_ok(duration.as_millis())),
         Err(error) => {
-            state
-                .audit
-                .record_with_limit(
-                    Some(id),
-                    Some(connection.name.clone()),
-                    "test_connection",
-                    AuditStatus::Error,
-                    Some(sanitize_error(&error)),
-                    Some(started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)),
-                    None,
-                    None,
-                    max_events,
-                )
-                .await
-                .map_err(|audit_error| {
-                    format!(
-                        "Connection test failed and audit storage is unavailable: {}; original result: {}",
-                        to_client_error(audit_error),
-                        to_client_error(&error)
-                    )
-                })?;
             let diagnostics = state.db.diagnostics(&connection, &state.vault, &text);
             Err(format!(
                 "{}\n{}",
@@ -706,9 +649,6 @@ pub async fn test_connection_input(
     state: State<'_, Arc<AppState>>,
     input: ConnectionInput,
 ) -> Result<String, String> {
-    if !state.audit.is_ready().await {
-        return Err("audit migration is not ready".to_string());
-    }
     let _config_transaction = state.config_transaction.read().await;
     let text = text_for_state(state.inner()).await;
     validate_connection(&input.connection, &text).map_err(to_client_error)?;
@@ -720,9 +660,6 @@ pub async fn test_connection_input(
         connection.credential_ref = None;
     }
 
-    let started = Instant::now();
-    let max_events = audit_limit(state.inner()).await;
-    let connection_id = connection.id.clone();
     let password_override = if clear_password {
         None
     } else {
@@ -734,53 +671,8 @@ pub async fn test_connection_input(
         .test_connection_once(&connection, &state.vault, password_override, &text)
         .await
     {
-        Ok(duration) => {
-            state
-                .audit
-                .record_with_limit(
-                    Some(connection_id),
-                    Some(connection.name.clone()),
-                    "test_connection",
-                    AuditStatus::Allowed,
-                    None,
-                    Some(duration.as_millis().try_into().unwrap_or(u64::MAX)),
-                    None,
-                    None,
-                    max_events,
-                )
-                .await
-                .map_err(|error| {
-                    format!(
-                        "Connection test succeeded, but audit storage is unavailable: {}",
-                        to_client_error(error)
-                    )
-                })?;
-            Ok(text.connection_test_ok(duration.as_millis()))
-        }
-        Err(error) => {
-            state
-                .audit
-                .record_with_limit(
-                    Some(connection_id),
-                    Some(connection.name.clone()),
-                    "test_connection",
-                    AuditStatus::Error,
-                    Some(sanitize_error(&error)),
-                    Some(started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)),
-                    None,
-                    None,
-                    max_events,
-                )
-                .await
-                .map_err(|audit_error| {
-                    format!(
-                        "Connection test failed and audit storage is unavailable: {}; original result: {}",
-                        to_client_error(audit_error),
-                        to_client_error(&error)
-                    )
-                })?;
-            Err(to_client_error(&error))
-        }
+        Ok(duration) => Ok(text.connection_test_ok(duration.as_millis())),
+        Err(error) => Err(to_client_error(&error)),
     }
 }
 
@@ -874,6 +766,26 @@ pub fn start_window_drag(window: WebviewWindow) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn set_window_material_theme(
+    window: WebviewWindow,
+    dark: Option<bool>,
+) -> Result<(bool, bool), String> {
+    let theme = dark.map(|is_dark| {
+        if is_dark {
+            tauri::Theme::Dark
+        } else {
+            tauri::Theme::Light
+        }
+    });
+    window.set_theme(theme).map_err(to_client_error)?;
+    let mica_enabled = crate::apply_system_material(&window, dark)?;
+    window
+        .theme()
+        .map(|effective_theme| (effective_theme == tauri::Theme::Dark, mica_enabled))
+        .map_err(to_client_error)
+}
+
+#[tauri::command]
 pub async fn open_project_homepage() -> Result<(), String> {
     tauri_plugin_opener::open_url("https://github.com/MingoZacwu/DataNexa", None::<&str>)
         .map_err(to_client_error)
@@ -914,7 +826,13 @@ pub fn open_project_releases() -> Result<(), String> {
 }
 
 async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
-    let config = state.config.read().await.clone();
+    let emergency_disconnect = state.is_emergency_disabled();
+    let mut config = state.config.read().await.clone();
+    if emergency_disconnect {
+        for connection in &mut config.connections {
+            connection.enabled = false;
+        }
+    }
     let audit_ready = state.audit.is_ready().await;
     if audit_ready {
         state.audit.trim(config.settings.audit_max_events).await?;
@@ -926,6 +844,7 @@ async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
     };
     Ok(AppSnapshot {
         server_status: mcp::status(state).await,
+        emergency_disconnect,
         audit_events,
         tools: mcp::tool_infos(&config.tools),
         updater_enabled: cfg!(feature = "updater"),
@@ -1138,20 +1057,12 @@ fn normalize_settings(mut settings: SettingsConfig) -> SettingsConfig {
     settings
 }
 
-async fn audit_limit(state: &Arc<AppState>) -> usize {
-    state.config.read().await.settings.audit_max_events
-}
-
 async fn text_for_state(state: &Arc<AppState>) -> BackendText {
     let language = state.config.read().await.settings.language.clone();
     backend_text(&language)
 }
 
 fn to_client_error(error: impl std::fmt::Display) -> String {
-    sanitize_text(&error.to_string())
-}
-
-fn sanitize_error(error: &anyhow::Error) -> String {
     sanitize_text(&error.to_string())
 }
 
