@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
+use crate::access_control::AccessControlStore;
 use crate::audit::AuditLogger;
 use crate::config::{AppConfig, ConfigStore};
 use crate::db::DatabaseManager;
@@ -16,6 +17,7 @@ pub struct AppState {
     pub config_transaction: RwLock<()>,
     pub vault: CredentialVault,
     pub audit: AuditLogger,
+    pub access: AccessControlStore,
     pub db: DatabaseManager,
     pub mcp: RwLock<McpRuntime>,
     pub mcp_lifecycle: Mutex<()>,
@@ -24,10 +26,12 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(app: tauri::AppHandle) -> anyhow::Result<Self> {
+    pub async fn new(app: tauri::AppHandle) -> anyhow::Result<Self> {
         let store = ConfigStore::new(&app)?;
-        let config = store.load()?;
+        let mut config = store.load()?;
         let audit = AuditLogger::new(&app, config.settings.audit_max_events)?;
+        let access = AccessControlStore::new(&app)?;
+        access.initialize(&store, &mut config).await?;
 
         Ok(Self {
             app_handle: Some(app),
@@ -36,6 +40,7 @@ impl AppState {
             config_transaction: RwLock::new(()),
             vault: CredentialVault::new(),
             audit,
+            access,
             db: DatabaseManager::default(),
             mcp: RwLock::new(McpRuntime::default()),
             mcp_lifecycle: Mutex::new(()),

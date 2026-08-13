@@ -1,4 +1,4 @@
-export type View = "overview" | "connections" | "server" | "tools" | "audit" | "settings";
+export type View = "overview" | "connections" | "access" | "tools" | "audit" | "settings";
 export type SettingsTab = "general" | "about";
 export type ThemeMode = "system" | "light" | "dark";
 export type EffectiveTheme = "light" | "dark";
@@ -10,6 +10,7 @@ export type AuditFilters = {
   tool: string;
   connection: string;
   status: string;
+  token: string;
 };
 
 export interface ToastMessage {

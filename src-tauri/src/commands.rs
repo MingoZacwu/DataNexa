@@ -36,6 +36,13 @@ pub struct AppSnapshot {
     pub startup_error: Option<String>,
     pub auto_start_status: startup::AutoStartStatus,
     pub audit_migration: crate::audit::AuditMigrationState,
+    pub access_tokens: Vec<crate::access_control::AccessTokenInfo>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AccessTokenSecretResult {
+    pub token_id: String,
+    pub secret: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -101,6 +108,135 @@ const MAX_CONNECTION_IMPORT_COUNT: usize = 1000;
 #[tauri::command]
 pub async fn get_app_snapshot(state: State<'_, Arc<AppState>>) -> Result<AppSnapshot, String> {
     snapshot(state.inner()).await.map_err(to_client_error)
+}
+
+#[tauri::command]
+pub async fn create_access_token(
+    state: State<'_, Arc<AppState>>,
+    name: String,
+) -> Result<AccessTokenSecretResult, String> {
+    ensure_token_management_enabled(state.inner()).await?;
+    let (token, secret) = state.access.create(&name).await.map_err(to_client_error)?;
+    Ok(AccessTokenSecretResult {
+        token_id: token.id,
+        secret,
+    })
+}
+
+#[tauri::command]
+pub async fn rename_access_token(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+    name: String,
+) -> Result<AppSnapshot, String> {
+    ensure_token_management_enabled(state.inner()).await?;
+    state
+        .access
+        .rename(&id, &name)
+        .await
+        .map_err(to_client_error)?;
+    snapshot(state.inner()).await.map_err(to_client_error)
+}
+
+#[tauri::command]
+pub async fn set_access_token_enabled(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+    enabled: bool,
+) -> Result<AppSnapshot, String> {
+    ensure_token_management_enabled(state.inner()).await?;
+    state
+        .access
+        .set_enabled(&id, enabled)
+        .await
+        .map_err(to_client_error)?;
+    snapshot(state.inner()).await.map_err(to_client_error)
+}
+
+#[tauri::command]
+pub async fn rotate_access_token(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<AccessTokenSecretResult, String> {
+    ensure_token_management_enabled(state.inner()).await?;
+    let secret = state.access.rotate(&id).await.map_err(to_client_error)?;
+    Ok(AccessTokenSecretResult {
+        token_id: id,
+        secret,
+    })
+}
+
+#[tauri::command]
+pub async fn delete_access_token(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<AppSnapshot, String> {
+    ensure_token_management_enabled(state.inner()).await?;
+    state.access.delete(&id).await.map_err(to_client_error)?;
+    snapshot(state.inner()).await.map_err(to_client_error)
+}
+
+#[tauri::command]
+pub async fn get_access_token_secret(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<AccessTokenSecretResult, String> {
+    ensure_token_management_enabled(state.inner()).await?;
+    let secret = state.access.secret(&id).await.map_err(to_client_error)?;
+    Ok(AccessTokenSecretResult {
+        token_id: id,
+        secret,
+    })
+}
+
+#[tauri::command]
+pub async fn set_token_connection_allowed(
+    state: State<'_, Arc<AppState>>,
+    token_id: String,
+    connection_id: String,
+    allowed: bool,
+) -> Result<AppSnapshot, String> {
+    ensure_token_management_enabled(state.inner()).await?;
+    if !state
+        .config
+        .read()
+        .await
+        .connections
+        .iter()
+        .any(|connection| connection.id == connection_id)
+    {
+        return Err("Connection not found".to_string());
+    }
+    state
+        .access
+        .set_connection_allowed(&token_id, &connection_id, allowed)
+        .await
+        .map_err(to_client_error)?;
+    snapshot(state.inner()).await.map_err(to_client_error)
+}
+
+#[tauri::command]
+pub async fn set_token_tool_allowed(
+    state: State<'_, Arc<AppState>>,
+    token_id: String,
+    tool_name: String,
+    allowed: bool,
+) -> Result<AppSnapshot, String> {
+    ensure_token_management_enabled(state.inner()).await?;
+    state
+        .access
+        .set_tool_allowed(&token_id, &tool_name, allowed)
+        .await
+        .map_err(to_client_error)?;
+    snapshot(state.inner()).await.map_err(to_client_error)
+}
+
+async fn ensure_token_management_enabled(state: &Arc<AppState>) -> Result<(), String> {
+    if state.config.read().await.server.require_token {
+        Ok(())
+    } else {
+        Err("Bearer authentication must be enabled before managing access tokens.".to_string())
+    }
 }
 
 #[tauri::command]
@@ -727,14 +863,6 @@ pub async fn stop_mcp_server(
 }
 
 #[tauri::command]
-pub async fn rotate_server_token(state: State<'_, Arc<AppState>>) -> Result<AppSnapshot, String> {
-    mcp::rotate_token(state.inner())
-        .await
-        .map_err(to_client_error)?;
-    snapshot(state.inner()).await.map_err(to_client_error)
-}
-
-#[tauri::command]
 pub async fn policy_check(
     state: State<'_, Arc<AppState>>,
     kind: DbKind,
@@ -833,15 +961,29 @@ async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
             connection.enabled = false;
         }
     }
+    config.server.token = None;
     let audit_ready = state.audit.is_ready().await;
     if audit_ready {
         state.audit.trim(config.settings.audit_max_events).await?;
     }
-    let audit_events = if audit_ready {
+    let mut audit_events = if audit_ready {
         state.audit.list().await?
     } else {
         Vec::new()
     };
+    let audit_tokens = state.access.list_audit_info().await?;
+    for event in &mut audit_events {
+        if let Some(info) = event
+            .token_id
+            .as_ref()
+            .and_then(|id| audit_tokens.iter().find(|token| token.id == *id))
+        {
+            event.token_name = Some(info.name.clone());
+            event.token_deleted = info.deleted;
+            event.token_enabled = info.enabled;
+        }
+    }
+    let access_tokens = state.access.list().await?;
     Ok(AppSnapshot {
         server_status: mcp::status(state).await,
         emergency_disconnect,
@@ -851,6 +993,7 @@ async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
         startup_error: state.mcp.read().await.startup_error.clone(),
         auto_start_status: startup::status(),
         audit_migration: state.audit.migration_state().await,
+        access_tokens,
         config,
     })
 }

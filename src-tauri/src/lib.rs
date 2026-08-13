@@ -1,3 +1,4 @@
+mod access_control;
 mod audit;
 mod commands;
 mod config;
@@ -17,12 +18,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use commands::{
-    check_updates_if_due, clear_audit_events, clear_legacy_audit_log, delete_connection,
-    diagnose_connection, disable_all_connections, export_connections, get_app_snapshot,
-    hide_main_window, import_connections, minimize_main_window, open_project_homepage,
-    open_project_releases, open_project_site, policy_check, retry_audit_migration,
-    rotate_server_token, save_server_config, save_settings_config, set_connection_enabled,
-    set_mcp_tool_enabled, set_window_material_theme, start_mcp_server, start_window_drag,
+    check_updates_if_due, clear_audit_events, clear_legacy_audit_log, create_access_token,
+    delete_access_token, delete_connection, diagnose_connection, disable_all_connections,
+    export_connections, get_access_token_secret, get_app_snapshot, hide_main_window,
+    import_connections, minimize_main_window, open_project_homepage, open_project_releases,
+    open_project_site, policy_check, rename_access_token, retry_audit_migration,
+    rotate_access_token, save_server_config, save_settings_config, set_access_token_enabled,
+    set_connection_enabled, set_mcp_tool_enabled, set_token_connection_allowed,
+    set_token_tool_allowed, set_window_material_theme, start_mcp_server, start_window_drag,
     stop_mcp_server, test_connection, test_connection_input, upsert_connection,
 };
 use i18n::{backend_text, BackendText};
@@ -33,6 +36,7 @@ use tauri::{AppHandle, Manager, WebviewWindow, WebviewWindowBuilder, WindowEvent
 
 const LIGHTWEIGHT_MODE_DELAY: Duration = Duration::from_secs(5 * 60);
 
+#[allow(clippy::needless_return)]
 pub(crate) fn apply_system_material(
     window: &WebviewWindow,
     dark: Option<bool>,
@@ -103,6 +107,7 @@ fn tray_status_text(text: BackendText, status: TrayMcpStatus) -> &'static str {
     }
 }
 
+#[allow(clippy::needless_return)]
 fn status_tray_icon(status: TrayMcpStatus) -> tauri::image::Image<'static> {
     #[cfg(target_os = "windows")]
     {
@@ -461,8 +466,7 @@ pub fn run() {
                 }
             }
 
-            let mut state =
-                tauri::async_runtime::block_on(async { AppState::new(app.handle().clone()) })?;
+            let mut state = tauri::async_runtime::block_on(AppState::new(app.handle().clone()))?;
             let tray_text = backend_text(&state.config.get_mut().settings.language);
             let state = Arc::new(state);
             app.manage(state);
@@ -633,6 +637,14 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_app_snapshot,
+            create_access_token,
+            rename_access_token,
+            set_access_token_enabled,
+            rotate_access_token,
+            delete_access_token,
+            get_access_token_secret,
+            set_token_connection_allowed,
+            set_token_tool_allowed,
             save_server_config,
             save_settings_config,
             export_connections,
@@ -651,7 +663,6 @@ pub fn run() {
             diagnose_connection,
             start_mcp_server,
             stop_mcp_server,
-            rotate_server_token,
             minimize_main_window,
             hide_main_window,
             start_window_drag,

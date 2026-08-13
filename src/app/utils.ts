@@ -17,8 +17,8 @@ export function viewTitle(t: I18nMessages, view: View) {
       return t.nav.overview;
     case "connections":
       return t.nav.connections;
-    case "server":
-      return t.nav.server;
+    case "access":
+      return t.access.title;
     case "tools":
       return t.nav.tools;
     case "audit":
@@ -126,4 +126,3 @@ export function relativeDuration(t: I18nMessages, timestamp: string) {
   if (minutes > 0) return `${minutes}m`;
   return t.common.justNow;
 }
-
