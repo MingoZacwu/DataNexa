@@ -4,7 +4,7 @@ import { CalendarDays, ChevronLeft, ChevronRight, Clipboard, X } from "lucide-re
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { formatMessage, type I18nMessages } from "../../i18n";
-import type { AuditEvent, ConnectionConfig, McpToolInfo } from "../../types";
+import type { AccessTokenInfo, AuditEvent, ConnectionConfig, McpToolInfo } from "../../types";
 import type { AuditFilters } from "../../app/types";
 import { statusLabel, statusTone, toolDisplayName } from "../../app/utils";
 import { StatusPill } from "../../components/ui";
@@ -76,7 +76,7 @@ export function AuditDateField({ t, value, minDate, maxDate, onChange }: { t: I1
   );
 }
 
-export function AuditView({ t, events, tools, connections, filters, onFiltersChange, filterOpen, onFilterOpenChange, onSelect }: { t: I18nMessages; events: AuditEvent[]; tools: McpToolInfo[]; connections: ConnectionConfig[]; filters: AuditFilters; onFiltersChange: (filters: AuditFilters) => void; filterOpen: boolean; onFilterOpenChange: (open: boolean) => void; onSelect: (event: AuditEvent) => void }) {
+export function AuditView({ t, events, tokens, tools, connections, filters, onFiltersChange, filterOpen, onFilterOpenChange, onSelect }: { t: I18nMessages; events: AuditEvent[]; tokens: AccessTokenInfo[]; tools: McpToolInfo[]; connections: ConnectionConfig[]; filters: AuditFilters; onFiltersChange: (filters: AuditFilters) => void; filterOpen: boolean; onFilterOpenChange: (open: boolean) => void; onSelect: (event: AuditEvent) => void }) {
   const [page, setPage] = useState(1);
   const [draftFilters, setDraftFilters] = useState(filters);
   const auditBodyRef = useRef<HTMLDivElement>(null);
@@ -87,7 +87,8 @@ export function AuditView({ t, events, tools, connections, filters, onFiltersCha
     const date = new Date(event.timestamp);
     const from = filters.from ? parseAuditDate(filters.from) : null;
     const to = filters.to ? parseAuditDate(filters.to, true) : null;
-    return (!from || date >= from) && (!to || date <= to) && (!filters.tool || event.tool === filters.tool) && (!filters.connection || (event.connection_id ?? "") === filters.connection) && (!filters.status || event.status === filters.status);
+    const tokenKey = event.token_id ?? event.access_source;
+    return (!from || date >= from) && (!to || date <= to) && (!filters.tool || event.tool === filters.tool) && (!filters.connection || (event.connection_id ?? "") === filters.connection) && (!filters.status || event.status === filters.status) && (!filters.token || tokenKey === filters.token);
   });
   const totalPages = Math.max(1, Math.ceil(filteredEvents.length / AUDIT_PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -117,6 +118,7 @@ export function AuditView({ t, events, tools, connections, filters, onFiltersCha
       <div className="audit-table">
         <div className="audit-row header">
           <span>{t.audit.time}</span>
+          <span>{t.access.tokens}</span>
           <span>{t.audit.tool}</span>
           <span>{t.audit.connection}</span>
           <span>{t.audit.status}</span>
@@ -129,6 +131,7 @@ export function AuditView({ t, events, tools, connections, filters, onFiltersCha
             pageEvents.map((event) => (
               <button type="button" className="audit-row audit-button" key={event.id} onClick={() => onSelect(event)}>
                 <span>{new Date(event.timestamp).toLocaleString()}</span>
+                <span>{auditTokenListLabel(t, event)}</span>
                 <span>{toolDisplayName(t, event.tool)}</span>
                 <span>{event.connection_name ?? event.connection_id ?? "—"}</span>
                 <span>
@@ -172,6 +175,7 @@ export function AuditView({ t, events, tools, connections, filters, onFiltersCha
               <label><span>{t.audit.tool}</span><select value={draftFilters.tool} onChange={(event) => setDraftFilters({ ...draftFilters, tool: event.target.value })}><option value="">{t.audit.all}</option>{tools.map((tool) => <option key={tool.name} value={tool.name}>{toolDisplayName(t, tool.name)}</option>)}</select></label>
               <label><span>{t.audit.connection}</span><select value={draftFilters.connection} onChange={(event) => setDraftFilters({ ...draftFilters, connection: event.target.value })}><option value="">{t.audit.all}</option>{connections.map((connection) => <option key={connection.id} value={connection.id}>{connection.name}</option>)}</select></label>
               <label><span>{t.audit.status}</span><select value={draftFilters.status} onChange={(event) => setDraftFilters({ ...draftFilters, status: event.target.value })}><option value="">{t.audit.all}</option>{(["allowed", "denied", "error", "timeout", "truncated"] as AuditEvent["status"][]).map((status) => <option key={status} value={status}>{statusLabel(t, status)}</option>)}</select></label>
+              <label><span>{t.access.tokens}</span><select value={draftFilters.token} onChange={(event) => setDraftFilters({ ...draftFilters, token: event.target.value })}><option value="">{t.audit.all}</option>{auditTokenOptions(t, tokens, events).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
             </div>
             {invalidDateRange && <p className="audit-filter-error">{t.audit.invalidDateRange}</p>}
             <div className="dialog-actions"><button type="button" className="button ghost" onClick={() => onFilterOpenChange(false)}>{t.common.cancel}</button><button type="button" className="button primary" disabled={invalidDateRange} onClick={() => { onFiltersChange(draftFilters); setPage(1); onFilterOpenChange(false); }}>{t.audit.applyFilter}</button></div>
@@ -203,6 +207,7 @@ export function AuditDetailDialog({ t, event, onClose }: { t: I18nMessages; even
               </div>
 
               <dl className="detail-grid">
+                <div><dt>{t.access.tokens}</dt><dd>{auditTokenLabel(t, event)}</dd></div>
                 <div>
                   <dt>{t.audit.tool}</dt>
                   <dd>{toolDisplayName(t, event.tool)}</dd>
@@ -215,7 +220,7 @@ export function AuditDetailDialog({ t, event, onClose }: { t: I18nMessages; even
                   <dt>{t.audit.status}</dt>
                   <dd><StatusPill tone={statusTone(event.status)} label={statusLabel(t, event.status)} /></dd>
                 </div>
-                <div>
+                <div className="detail-grid-wide">
                   <dt>{t.audit.elapsedRows}</dt>
                   <dd>{formatMessage(t.audit.elapsedRowsValue, { elapsed: event.elapsed_ms ?? 0, rows: event.row_count ?? 0 })}</dd>
                 </div>
@@ -228,7 +233,7 @@ export function AuditDetailDialog({ t, event, onClose }: { t: I18nMessages; even
                 </div>
               )}
 
-              <div className="detail-section">
+              <div className="detail-section audit-sql-section">
                 <div className="detail-section-title">
                   <h3>SQL</h3>
                   {event.sql && (
@@ -248,4 +253,37 @@ export function AuditDetailDialog({ t, event, onClose }: { t: I18nMessages; even
   );
 }
 
+function accessSourceLabel(t: I18nMessages, source: string) {
+  if (source === "legacy") return t.access.legacyRequest;
+  if (source === "unauthenticated") return t.access.unauthenticatedRequest;
+  if (source === "system") return t.access.systemRequest;
+  return source;
+}
 
+function auditTokenLabel(t: I18nMessages, event: AuditEvent) {
+  if (!event.token_id) return accessSourceLabel(t, event.access_source);
+  const shortId = event.token_id.replace(/-/g, "").slice(0, 8).toUpperCase();
+  const name = event.token_name ?? shortId;
+  const identity = name === shortId ? name : `${name} (${shortId})`;
+  return event.token_deleted ? `${identity} (${t.access.deletedSuffix})` : identity;
+}
+
+function auditTokenListLabel(t: I18nMessages, event: AuditEvent) {
+  if (!event.token_id) return accessSourceLabel(t, event.access_source);
+  const name = event.token_name ?? event.token_id.replace(/-/g, "").slice(0, 8).toUpperCase();
+  return event.token_deleted ? `${name} (${t.access.deletedSuffix})` : name;
+}
+
+function auditTokenOptions(t: I18nMessages, tokens: AccessTokenInfo[], events: AuditEvent[]) {
+  const options = new Map<string, string>();
+  for (const token of tokens) {
+    const shortId = token.id.replace(/-/g, "").slice(0, 8).toUpperCase();
+    options.set(token.id, `${token.name} (${shortId})`);
+  }
+  for (const event of events) {
+    const value = event.token_id ?? event.access_source;
+    const label = event.token_id ? auditTokenLabel(t, event) : accessSourceLabel(t, event.access_source);
+    if (!options.has(value)) options.set(value, label);
+  }
+  return [...options].map(([value, label]) => ({ value, label }));
+}

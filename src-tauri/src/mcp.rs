@@ -15,9 +15,8 @@ use serde_json::{json, Value};
 use tauri::Emitter;
 use tokio::sync::{oneshot, Mutex, Semaphore};
 use tokio::task::JoinHandle;
-use uuid::Uuid;
 
-use crate::audit::{AuditSql, AuditStatus};
+use crate::audit::{AuditActor, AuditSql, AuditStatus};
 use crate::config::{
     is_tool_enabled, ConnectionConfig, DbKind, ServerConfig, ToolConfig, MCP_TOOL_NAMES,
 };
@@ -27,7 +26,6 @@ use crate::state::AppState;
 #[derive(Default)]
 pub struct McpRuntime {
     pub running: bool,
-    pub token: Option<String>,
     pub started_at: Option<DateTime<Utc>>,
     pub bound_endpoint: Option<String>,
     pub shutdown: Option<oneshot::Sender<()>>,
@@ -40,7 +38,6 @@ pub struct McpRuntime {
 pub struct ServerStatus {
     pub running: bool,
     pub endpoint: String,
-    pub token: Option<String>,
     pub started_at: Option<DateTime<Utc>>,
 }
 
@@ -146,6 +143,12 @@ pub async fn start(app: Arc<AppState>) -> anyhow::Result<ServerStatus> {
             "Audit log migration must finish before the MCP server can start."
         ));
     }
+    if app.config.read().await.server.require_token {
+        app.access
+            .ensure_available()
+            .await
+            .map_err(|error| anyhow::anyhow!("Access control storage is unavailable: {error}"))?;
+    }
     let _lifecycle = app.mcp_lifecycle.lock().await;
     let result = start_locked(app.clone()).await;
     if result.is_ok() {
@@ -155,7 +158,7 @@ pub async fn start(app: Arc<AppState>) -> anyhow::Result<ServerStatus> {
 }
 
 async fn start_locked(app: Arc<AppState>) -> anyhow::Result<ServerStatus> {
-    let config = ensure_server_token(&app).await?;
+    let config = app.config.read().await.server.clone();
     if !is_local_host(&config.host) {
         return Err(anyhow::anyhow!(
             "The MCP listen address must be 127.0.0.1 or localhost."
@@ -204,7 +207,6 @@ async fn activate_listener(
         }
     });
 
-    runtime.token = config.token.clone();
     runtime.running = true;
     runtime.started_at = Some(Utc::now());
     runtime.bound_endpoint = Some(format!("http://{}:{}/mcp", config.host, local_addr.port()));
@@ -259,24 +261,6 @@ async fn stop_locked(app: &Arc<AppState>) {
     let _ = config;
 }
 
-pub async fn rotate_token(app: &Arc<AppState>) -> anyhow::Result<ServerStatus> {
-    let _lifecycle = app.mcp_lifecycle.lock().await;
-    let token = Uuid::new_v4().to_string();
-    let config = {
-        let _transaction = app.config_transaction.write().await;
-        let mut candidate = app.config.read().await.clone();
-        candidate.server.token = Some(token.clone());
-        candidate.normalize_and_validate()?;
-        app.store.save(&candidate)?;
-        let server = candidate.server.clone();
-        *app.config.write().await = candidate;
-        server
-    };
-    let mut runtime = app.mcp.write().await;
-    runtime.token = Some(token);
-    Ok(status_from(&config, &runtime))
-}
-
 pub async fn reconfigure(
     app: Arc<AppState>,
     mut server: ServerConfig,
@@ -295,9 +279,6 @@ pub async fn reconfigure(
     let address_changed = old_config.host != server.host || old_config.port != server.port;
     if !running || !address_changed {
         persist_server_config(&app, server.clone()).await?;
-        if running {
-            app.mcp.write().await.token = server.token.clone();
-        }
         return Ok(status(&app).await);
     }
 
@@ -369,26 +350,13 @@ fn status_from(config: &ServerConfig, runtime: &McpRuntime) -> ServerStatus {
             .bound_endpoint
             .clone()
             .unwrap_or_else(|| format!("http://{}:{}/mcp", config.host, config.port)),
-        token: runtime.token.clone().or_else(|| config.token.clone()),
         started_at: runtime.started_at,
     }
 }
 
-async fn ensure_server_token(app: &Arc<AppState>) -> anyhow::Result<ServerConfig> {
-    let _transaction = app.config_transaction.write().await;
-    let mut candidate = app.config.read().await.clone();
-    if candidate.server.token.is_none() {
-        candidate.server.token = Some(Uuid::new_v4().to_string());
-        candidate.normalize_and_validate()?;
-        app.store.save(&candidate)?;
-        *app.config.write().await = candidate.clone();
-    }
-    Ok(candidate.server)
-}
-
 async fn handle_mcp_get(State(state): State<McpHttpState>, headers: HeaderMap) -> Response {
     match validate_request(state.app.clone(), &headers).await {
-        Ok(()) => (
+        Ok(_) => (
             StatusCode::METHOD_NOT_ALLOWED,
             "MCP GET streaming is not enabled",
         )
@@ -402,9 +370,10 @@ async fn handle_mcp_post(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if let Err(response) = validate_request(state.app.clone(), &headers).await {
-        return response;
-    }
+    let actor = match validate_request(state.app.clone(), &headers).await {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
     if let Err(response) = validate_transport_headers(&headers) {
         return response;
     }
@@ -449,9 +418,9 @@ async fn handle_mcp_post(
         "ping" => Ok(json!({})),
         "tools/list" => {
             let config = state.app.config.read().await;
-            Ok(json!({ "tools": tools(&config.tools) }))
+            Ok(json!({ "tools": tools_for_actor(&config.tools, &actor) }))
         }
-        "tools/call" => handle_tool_call(&state, request.params).await,
+        "tools/call" => handle_tool_call(&state, actor, request.params).await,
         _ => Err((-32601, "Method not found".to_string())),
     };
 
@@ -547,7 +516,7 @@ fn validate_protocol_header(headers: &HeaderMap) -> Result<(), Response> {
     Ok(())
 }
 
-async fn validate_request(app: Arc<AppState>, headers: &HeaderMap) -> Result<(), Response> {
+async fn validate_request(app: Arc<AppState>, headers: &HeaderMap) -> Result<AuditActor, Response> {
     let config = {
         let config = app.config.read().await;
         config.server.clone()
@@ -567,30 +536,33 @@ async fn validate_request(app: Arc<AppState>, headers: &HeaderMap) -> Result<(),
     }
 
     if config.require_token {
-        let runtime_token = {
-            let runtime = app.mcp.read().await;
-            runtime.token.clone()
-        };
-        let expected = runtime_token
-            .or_else(|| config.token.clone())
-            .unwrap_or_default();
         let provided = headers
             .get("authorization")
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.strip_prefix("Bearer "))
             .unwrap_or_default();
-        if expected.is_empty() || provided != expected {
-            return Err(
-                (StatusCode::UNAUTHORIZED, "Missing or invalid bearer token").into_response(),
-            );
+        let identity = app.access.authenticate(provided).await.map_err(|_| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Access control storage is unavailable",
+            )
+                .into_response()
+        })?;
+        if let Some(identity) = identity {
+            return Ok(AuditActor::token_with_permissions(
+                identity.token_id,
+                identity.denied_connections,
+                identity.denied_tools,
+            ));
         }
+        return Err((StatusCode::UNAUTHORIZED, "Missing or invalid bearer token").into_response());
     }
-
-    Ok(())
+    Ok(AuditActor::unauthenticated())
 }
 
 async fn handle_tool_call(
     state: &McpHttpState,
+    actor: AuditActor,
     params: Option<Value>,
 ) -> Result<Value, (i32, String)> {
     if state.app.is_emergency_disabled() {
@@ -601,12 +573,13 @@ async fn handle_tool_call(
         _ = cancellation.cancelled() => {
             Err((-32001, "MCP request cancelled by emergency disconnect".to_string()))
         }
-        result = handle_active_tool_call(state, params) => result,
+        result = handle_active_tool_call(state, actor, params) => result,
     }
 }
 
 async fn handle_active_tool_call(
     state: &McpHttpState,
+    actor: AuditActor,
     params: Option<Value>,
 ) -> Result<Value, (i32, String)> {
     let params = params.unwrap_or_else(|| json!({}));
@@ -690,7 +663,7 @@ async fn handle_active_tool_call(
         None
     };
 
-    let call_result = call_tool_audited(state.app.clone(), params).await;
+    let call_result = call_tool_audited(state.app.clone(), actor, params).await;
     drop(connection_permit);
     drop(global_permit);
     let call_failed = match &call_result {
@@ -799,6 +772,17 @@ fn tools(tool_configs: &[ToolConfig]) -> Vec<Value> {
         .collect()
 }
 
+fn tools_for_actor(tool_configs: &[ToolConfig], actor: &AuditActor) -> Vec<Value> {
+    let mut visible = Vec::new();
+    for tool in tools(tool_configs) {
+        let name = tool.get("name").and_then(Value::as_str).unwrap_or_default();
+        if actor.allows_tool(name) {
+            visible.push(tool);
+        }
+    }
+    visible
+}
+
 fn tool_description(name: &str) -> &'static str {
     match name {
         "datanexa_list_connections" => "List enabled local readonly database connections.",
@@ -894,7 +878,11 @@ fn policy_check_schema() -> Value {
     })
 }
 
-async fn call_tool_audited(app: Arc<AppState>, params: Value) -> anyhow::Result<McpToolCallResult> {
+async fn call_tool_audited(
+    app: Arc<AppState>,
+    actor: AuditActor,
+    params: Value,
+) -> anyhow::Result<McpToolCallResult> {
     let _config_transaction = app.config_transaction.read().await;
     let started = Instant::now();
     let name = params
@@ -909,14 +897,17 @@ async fn call_tool_audited(app: Arc<AppState>, params: Value) -> anyhow::Result<
     let audit_connection_id = optional_string(&args, "connection_id");
     let audit_connection_name = connection_name(&app, audit_connection_id.as_deref()).await;
     let audit_sql = audit_sql_for_args(&app, &args).await;
-    let result = call_tool(app.clone(), params).await;
+    let result = call_tool(app.clone(), actor.clone(), params).await;
     if let Err(error) = &result {
         let max_events = audit_limit(&app).await;
-        let disabled = error.to_string().contains("disabled in DataNexa");
+        let denied = error.to_string().contains("disabled in DataNexa")
+            || error
+                .to_string()
+                .contains("not allowed for this access token");
         let timeout = error
             .chain()
             .any(|source| source.is::<tokio::time::error::Elapsed>());
-        let status = if disabled {
+        let status = if denied {
             AuditStatus::Denied
         } else if timeout {
             AuditStatus::Timeout
@@ -924,7 +915,8 @@ async fn call_tool_audited(app: Arc<AppState>, params: Value) -> anyhow::Result<
             AuditStatus::Error
         };
         app.audit
-            .record_with_limit(
+            .record_with_actor(
+                actor,
                 audit_connection_id,
                 audit_connection_name,
                 name,
@@ -967,7 +959,11 @@ async fn audit_sql_for_args(app: &Arc<AppState>, args: &Value) -> Option<AuditSq
     Some(AuditSql::redacted())
 }
 
-async fn call_tool(app: Arc<AppState>, params: Value) -> anyhow::Result<McpToolCallResult> {
+async fn call_tool(
+    app: Arc<AppState>,
+    actor: AuditActor,
+    params: Value,
+) -> anyhow::Result<McpToolCallResult> {
     let name = params
         .get("name")
         .and_then(Value::as_str)
@@ -979,6 +975,20 @@ async fn call_tool(app: Arc<AppState>, params: Value) -> anyhow::Result<McpToolC
         .unwrap_or_else(|| json!({}));
     if !tool_enabled(&app, &name).await {
         return Err(anyhow::anyhow!("MCP tool is disabled in DataNexa: {name}"));
+    }
+    if actor.token_id.is_some() {
+        if !actor.allows_tool(&name) {
+            return Err(anyhow::anyhow!(
+                "MCP tool is not allowed for this access token: {name}"
+            ));
+        }
+        if let Some(connection_id) = optional_string(&args, "connection_id") {
+            if !actor.allows_connection(&connection_id) {
+                return Err(anyhow::anyhow!(
+                    "Database connection is not allowed for this access token"
+                ));
+            }
+        }
     }
     let max_events = audit_limit(&app).await;
     let text = text_for_app(&app).await;
@@ -995,8 +1005,22 @@ async fn call_tool(app: Arc<AppState>, params: Value) -> anyhow::Result<McpToolC
                     .map(public_connection)
                     .collect::<Vec<Value>>()
             };
+            let connections = if actor.token_id.is_some() {
+                connections
+                    .into_iter()
+                    .filter(|connection| {
+                        connection
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .is_some_and(|id| actor.allows_connection(id))
+                    })
+                    .collect()
+            } else {
+                connections
+            };
             app.audit
-                .record_with_limit(
+                .record_with_actor(
+                    actor.clone(),
                     None,
                     None,
                     name,
@@ -1015,7 +1039,8 @@ async fn call_tool(app: Arc<AppState>, params: Value) -> anyhow::Result<McpToolC
             let connection = connection(app.clone(), connection_id.clone()).await?;
             let schema = app.db.list_schema(&connection, &app.vault, &text).await?;
             app.audit
-                .record_with_limit(
+                .record_with_actor(
+                    actor.clone(),
                     Some(connection_id),
                     Some(connection.name.clone()),
                     name,
@@ -1039,7 +1064,8 @@ async fn call_tool(app: Arc<AppState>, params: Value) -> anyhow::Result<McpToolC
                 .describe_table(&connection, &app.vault, schema.as_deref(), &table, &text)
                 .await?;
             app.audit
-                .record_with_limit(
+                .record_with_actor(
+                    actor.clone(),
                     Some(connection_id),
                     Some(connection.name.clone()),
                     name,
@@ -1074,7 +1100,8 @@ async fn call_tool(app: Arc<AppState>, params: Value) -> anyhow::Result<McpToolC
                 )
                 .await?;
             app.audit
-                .record_with_limit(
+                .record_with_actor(
+                    actor.clone(),
                     Some(connection_id),
                     Some(connection.name.clone()),
                     name,
@@ -1103,7 +1130,8 @@ async fn call_tool(app: Arc<AppState>, params: Value) -> anyhow::Result<McpToolC
             if !policy.allowed {
                 denied = true;
                 app.audit
-                    .record_with_limit(
+                    .record_with_actor(
+                        actor.clone(),
                         Some(connection_id),
                         Some(connection.name.clone()),
                         name,
@@ -1119,7 +1147,8 @@ async fn call_tool(app: Arc<AppState>, params: Value) -> anyhow::Result<McpToolC
             } else {
                 let result = result.ok_or_else(|| anyhow::anyhow!("missing query result"))?;
                 app.audit
-                    .record_with_limit(
+                    .record_with_actor(
+                        actor.clone(),
                         Some(connection_id),
                         Some(connection.name.clone()),
                         name,
@@ -1149,7 +1178,8 @@ async fn call_tool(app: Arc<AppState>, params: Value) -> anyhow::Result<McpToolC
             if !policy.allowed {
                 denied = true;
                 app.audit
-                    .record_with_limit(
+                    .record_with_actor(
+                        actor.clone(),
                         Some(connection_id),
                         Some(connection.name.clone()),
                         name,
@@ -1165,7 +1195,8 @@ async fn call_tool(app: Arc<AppState>, params: Value) -> anyhow::Result<McpToolC
             } else {
                 let result = result.ok_or_else(|| anyhow::anyhow!("missing query result"))?;
                 app.audit
-                    .record_with_limit(
+                    .record_with_actor(
+                        actor.clone(),
                         Some(connection_id),
                         Some(connection.name.clone()),
                         name,
@@ -1204,7 +1235,8 @@ async fn call_tool(app: Arc<AppState>, params: Value) -> anyhow::Result<McpToolC
             let policy = crate::policy::PolicyEngine::check_with_text(&kind, &sql, max_rows, &text);
             denied = !policy.allowed;
             app.audit
-                .record_with_limit(
+                .record_with_actor(
+                    actor.clone(),
                     audit_connection_id,
                     audit_connection_name,
                     name,
@@ -1370,18 +1402,24 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
+    use crate::access_control::AccessControlStore;
     use crate::audit::AuditLogger;
     use crate::config::{AppConfig, ConfigStore};
     use crate::db::DatabaseManager;
     use crate::state::AppState;
     use crate::vault::CredentialVault;
 
-    fn test_state(root: &Path, port: u16, audit_path: &Path) -> Arc<AppState> {
+    async fn test_state(root: &Path, port: u16, audit_path: &Path) -> Arc<AppState> {
         let mut config = AppConfig::default();
         config.server.port = port;
         config.server.token = Some("TEST_TOKEN".to_string());
         let store = ConfigStore::for_test(root.join("config.toml"));
         store.save(&config).expect("test config saves");
+        let access = AccessControlStore::for_test(root.join("access-control.db"));
+        access
+            .initialize(&store, &mut config)
+            .await
+            .expect("test access-control store initializes");
         Arc::new(AppState {
             app_handle: None,
             store,
@@ -1389,6 +1427,7 @@ mod tests {
             config_transaction: tokio::sync::RwLock::new(()),
             vault: CredentialVault::new(),
             audit: AuditLogger::for_test(audit_path.to_path_buf()),
+            access,
             db: DatabaseManager::default(),
             mcp: tokio::sync::RwLock::new(McpRuntime::default()),
             mcp_lifecycle: tokio::sync::Mutex::new(()),
@@ -1409,6 +1448,7 @@ mod tests {
             config_transaction: tokio::sync::RwLock::new(()),
             vault: CredentialVault::new(),
             audit: AuditLogger::for_test(root.join("audit.json")),
+            access: AccessControlStore::for_test(root.join("access-control.db")),
             db: DatabaseManager::default(),
             mcp: tokio::sync::RwLock::new(McpRuntime::default()),
             mcp_lifecycle: tokio::sync::Mutex::new(()),
@@ -1493,10 +1533,12 @@ mod tests {
             directory.path(),
             17321,
             &directory.path().join("audit.json"),
-        );
+        )
+        .await;
 
         let allowed = call_tool(
             state.clone(),
+            AuditActor::unauthenticated(),
             json!({
                 "name": "datanexa_policy_check",
                 "arguments": { "kind": "sqlite", "sql": "SELECT 1" }
@@ -1509,6 +1551,7 @@ mod tests {
 
         let denied = call_tool(
             state,
+            AuditActor::unauthenticated(),
             json!({
                 "name": "datanexa_policy_check",
                 "arguments": { "kind": "sqlite", "sql": "DELETE FROM users" }
@@ -1527,7 +1570,8 @@ mod tests {
             directory.path(),
             17321,
             &directory.path().join("audit.json"),
-        );
+        )
+        .await;
         let router = mcp_router(state);
 
         let notification = router
@@ -1609,7 +1653,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary directory");
         let invalid_audit_target = directory.path().join("audit-target");
         std::fs::create_dir(&invalid_audit_target).expect("audit directory target");
-        let state = test_state(directory.path(), 17321, &invalid_audit_target);
+        let state = test_state(directory.path(), 17321, &invalid_audit_target).await;
         let response = mcp_router(state)
             .oneshot(mcp_request(json!({
                 "jsonrpc": "2.0",
@@ -1637,7 +1681,8 @@ mod tests {
             directory.path(),
             17321,
             &directory.path().join("audit.json"),
-        );
+        )
+        .await;
         let router = mcp_router(state.clone());
         let body = json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}).to_string();
 
@@ -1751,13 +1796,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_auth_and_token_saves_do_not_change_runtime() {
+    async fn failed_server_config_save_does_not_change_runtime() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let state = test_state_with_failing_store(directory.path());
         {
             let mut runtime = state.mcp.write().await;
             runtime.running = true;
-            runtime.token = Some("TEST_TOKEN".to_string());
             runtime.bound_endpoint = Some("http://127.0.0.1:17321/mcp".to_string());
         }
 
@@ -1765,14 +1809,7 @@ mod tests {
         server.require_token = false;
         assert!(reconfigure(state.clone(), server).await.is_err());
         assert!(state.config.read().await.server.require_token);
-        assert_eq!(state.mcp.read().await.token.as_deref(), Some("TEST_TOKEN"));
-
-        assert!(rotate_token(&state).await.is_err());
-        assert_eq!(
-            state.config.read().await.server.token.as_deref(),
-            Some("TEST_TOKEN")
-        );
-        assert_eq!(state.mcp.read().await.token.as_deref(), Some("TEST_TOKEN"));
+        assert!(state.mcp.read().await.running);
     }
 
     #[tokio::test]
@@ -1783,7 +1820,8 @@ mod tests {
             directory.path(),
             initial_port,
             &directory.path().join("audit.json"),
-        );
+        )
+        .await;
 
         let started = start(state.clone()).await.expect("server starts");
         assert!(started.running);

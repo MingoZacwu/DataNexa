@@ -56,6 +56,66 @@ pub struct AuditEvent {
     pub elapsed_ms: Option<u64>,
     pub row_count: Option<usize>,
     pub sql: Option<String>,
+    #[serde(default)]
+    pub token_id: Option<String>,
+    #[serde(default = "legacy_access_source")]
+    pub access_source: String,
+    #[serde(default)]
+    pub token_name: Option<String>,
+    #[serde(default)]
+    pub token_deleted: bool,
+    #[serde(default)]
+    pub token_enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuditActor {
+    pub token_id: Option<String>,
+    pub source: &'static str,
+    pub denied_connections: Vec<String>,
+    pub denied_tools: Vec<String>,
+}
+
+impl AuditActor {
+    pub fn token_with_permissions(
+        token_id: String,
+        denied_connections: Vec<String>,
+        denied_tools: Vec<String>,
+    ) -> Self {
+        Self {
+            token_id: Some(token_id),
+            source: "token",
+            denied_connections,
+            denied_tools,
+        }
+    }
+    pub fn unauthenticated() -> Self {
+        Self {
+            token_id: None,
+            source: "unauthenticated",
+            denied_connections: Vec::new(),
+            denied_tools: Vec::new(),
+        }
+    }
+    pub fn system() -> Self {
+        Self {
+            token_id: None,
+            source: "system",
+            denied_connections: Vec::new(),
+            denied_tools: Vec::new(),
+        }
+    }
+
+    pub fn allows_tool(&self, tool: &str) -> bool {
+        !self.denied_tools.iter().any(|denied| denied == tool)
+    }
+
+    pub fn allows_connection(&self, connection_id: &str) -> bool {
+        !self
+            .denied_connections
+            .iter()
+            .any(|denied| denied == connection_id)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,7 +220,23 @@ impl AuditLogger {
         sqlx::query("PRAGMA journal_mode=WAL")
             .execute(&self.pool)
             .await?;
-        sqlx::query("CREATE TABLE IF NOT EXISTS audit_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL UNIQUE, timestamp_ms INTEGER NOT NULL, connection_id TEXT, connection_name TEXT, tool TEXT NOT NULL, status TEXT NOT NULL, reason TEXT, elapsed_ms INTEGER, row_count INTEGER, sql TEXT)").execute(&self.pool).await?;
+        sqlx::query("CREATE TABLE IF NOT EXISTS audit_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL UNIQUE, timestamp_ms INTEGER NOT NULL, connection_id TEXT, connection_name TEXT, tool TEXT NOT NULL, status TEXT NOT NULL, reason TEXT, elapsed_ms INTEGER, row_count INTEGER, sql TEXT, token_id TEXT, access_source TEXT NOT NULL DEFAULT 'legacy')").execute(&self.pool).await?;
+        let columns =
+            sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info('audit_events')")
+                .fetch_all(&self.pool)
+                .await?;
+        if !columns.iter().any(|column| column == "token_id") {
+            sqlx::query("ALTER TABLE audit_events ADD COLUMN token_id TEXT")
+                .execute(&self.pool)
+                .await?;
+        }
+        if !columns.iter().any(|column| column == "access_source") {
+            sqlx::query(
+                "ALTER TABLE audit_events ADD COLUMN access_source TEXT NOT NULL DEFAULT 'legacy'",
+            )
+            .execute(&self.pool)
+            .await?;
+        }
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp ON audit_events(timestamp_ms DESC)").execute(&self.pool).await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_audit_events_connection ON audit_events(connection_id, seq DESC)").execute(&self.pool).await?;
         sqlx::query(
@@ -170,6 +246,11 @@ impl AuditLogger {
         .await?;
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_audit_events_status ON audit_events(status, seq DESC)",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_audit_events_token ON audit_events(token_id, seq DESC)",
         )
         .execute(&self.pool)
         .await?;
@@ -324,6 +405,35 @@ impl AuditLogger {
         sql: Option<AuditSql>,
         max_events: usize,
     ) -> anyhow::Result<()> {
+        self.record_with_actor(
+            AuditActor::system(),
+            connection_id,
+            connection_name,
+            tool,
+            status,
+            reason,
+            elapsed_ms,
+            row_count,
+            sql,
+            max_events,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn record_with_actor(
+        &self,
+        actor: AuditActor,
+        connection_id: Option<String>,
+        connection_name: Option<String>,
+        tool: impl Into<String>,
+        status: AuditStatus,
+        reason: Option<String>,
+        elapsed_ms: Option<u64>,
+        row_count: Option<usize>,
+        sql: Option<AuditSql>,
+        max_events: usize,
+    ) -> anyhow::Result<()> {
         let result = async {
             if !self.is_ready().await {
                 return Err(anyhow::anyhow!("audit migration is not ready"));
@@ -331,9 +441,9 @@ impl AuditLogger {
             let _guard = self.persist_lock.lock().await;
             self.ensure_initialized().await?;
             let mut tx = self.pool.begin().await?;
-            sqlx::query("INSERT INTO audit_events (event_id,timestamp_ms,connection_id,connection_name,tool,status,reason,elapsed_ms,row_count,sql) VALUES (?,?,?,?,?,?,?,?,?,?)")
+            sqlx::query("INSERT INTO audit_events (event_id,timestamp_ms,connection_id,connection_name,tool,status,reason,elapsed_ms,row_count,sql,token_id,access_source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
                 .bind(Uuid::new_v4().to_string()).bind(Utc::now().timestamp_millis()).bind(connection_id).bind(connection_name).bind(tool.into())
-                .bind(status_text(&status)).bind(reason).bind(elapsed_ms.map(|v| v as i64)).bind(row_count.map(|v| v as i64)).bind(sql.map(|v| truncate_sql(v.0))).execute(&mut *tx).await?;
+                .bind(status_text(&status)).bind(reason).bind(elapsed_ms.map(|v| v as i64)).bind(row_count.map(|v| v as i64)).bind(sql.map(|v| truncate_sql(v.0))).bind(actor.token_id).bind(actor.source).execute(&mut *tx).await?;
             let limit = normalize_limit(max_events) as i64;
             sqlx::query("DELETE FROM audit_events WHERE seq NOT IN (SELECT seq FROM audit_events ORDER BY seq DESC LIMIT ?)").bind(limit).execute(&mut *tx).await?;
             tx.commit().await?;
@@ -352,7 +462,7 @@ impl AuditLogger {
     }
     pub async fn list(&self) -> anyhow::Result<Vec<AuditEvent>> {
         self.ensure_initialized().await?;
-        let rows = sqlx::query_as::<_, (String, i64, Option<String>, Option<String>, String, String, Option<String>, Option<i64>, Option<i64>, Option<String>)>("SELECT event_id,timestamp_ms,connection_id,connection_name,tool,status,reason,elapsed_ms,row_count,sql FROM audit_events ORDER BY seq DESC LIMIT 5000").fetch_all(&self.pool).await?;
+        let rows = sqlx::query_as::<_, (String, i64, Option<String>, Option<String>, String, String, Option<String>, Option<i64>, Option<i64>, Option<String>, Option<String>, String)>("SELECT event_id,timestamp_ms,connection_id,connection_name,tool,status,reason,elapsed_ms,row_count,sql,token_id,access_source FROM audit_events ORDER BY seq DESC LIMIT 5000").fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
             .filter_map(|r| {
@@ -367,6 +477,11 @@ impl AuditLogger {
                     elapsed_ms: r.7.map(|v| v as u64),
                     row_count: r.8.map(|v| v as usize),
                     sql: r.9,
+                    token_id: r.10,
+                    access_source: r.11,
+                    token_name: None,
+                    token_deleted: false,
+                    token_enabled: false,
                 })
             })
             .collect())
@@ -378,6 +493,10 @@ impl AuditLogger {
             .await?;
         Ok(())
     }
+}
+
+fn legacy_access_source() -> String {
+    "legacy".to_string()
 }
 
 fn normalize_limit(max_events: usize) -> usize {

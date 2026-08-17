@@ -1,7 +1,7 @@
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import clsx from "clsx";
-import { AlertTriangle, Database, Filter, Home, Logs, Plus, RefreshCw, Server, Settings, Trash2, Wrench, X } from "lucide-react";
+import { AlertTriangle, Database, Filter, Home, Logs, Plus, RefreshCw, Settings, ShieldCheck, Trash2, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import brandLogoUrl from "../resources/datanexa.png";
@@ -17,7 +17,7 @@ import { AuditMigrationDialog, AuditMigrationReminder, NavButton, SidebarFooter,
 import { IconTooltip, ToastViewport } from "./components/ui";
 import { OverviewView } from "./features/overview/OverviewView";
 import { ConnectionDialog, ConnectionsView } from "./features/connections/ConnectionsView";
-import { ServerView } from "./features/server/ServerView";
+import { AccessControlView, PromptTokenDialog } from "./features/access/AccessControlView";
 import { ToolsView } from "./features/tools/ToolsView";
 import { AuditDetailDialog, AuditView } from "./features/audit/AuditView";
 import { SettingsView } from "./features/settings/SettingsView";
@@ -59,7 +59,10 @@ function App() {
   const [policyResult, setPolicyResult] = useState<PolicyCheckResult | null>(null);
   const [selectedAudit, setSelectedAudit] = useState<AuditEvent | null>(null);
   const [auditFilterOpen, setAuditFilterOpen] = useState(false);
-  const [auditFilters, setAuditFilters] = useState<AuditFilters>({ from: "", to: "", tool: "", connection: "", status: "" });
+  const [auditFilters, setAuditFilters] = useState<AuditFilters>({ from: "", to: "", tool: "", connection: "", status: "", token: "" });
+  const [selectedTokenId, setSelectedTokenId] = useState("");
+  const [createTokenRequest, setCreateTokenRequest] = useState(0);
+  const [promptTokenDialogOpen, setPromptTokenDialogOpen] = useState(false);
   const [showAuditClear, setShowAuditClear] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   const [locale, setLocale] = useState<Locale>(detectLocale);
@@ -447,17 +450,69 @@ function App() {
     }
   }
 
-  async function rotateToken() {
+  async function createAccessToken(name: string): Promise<boolean> {
     setBusy(true);
     try {
-      setSnapshot(await api.rotateToken());
-      pushToast(t.toast.tokenRotated);
+      const result = await api.createAccessToken(name);
+      setSelectedTokenId(result.token_id);
+      await refresh({ quiet: true });
+      try {
+        await navigator.clipboard.writeText(result.secret);
+        pushToast(t.access.tokenCreated);
+      } catch (error) {
+        showError(error);
+      }
+      return true;
     } catch (error) {
       showError(error);
+      return false;
     } finally {
       setBusy(false);
     }
   }
+
+  async function updateAccess(action: () => Promise<AppSnapshot>, message: string): Promise<boolean> {
+    setBusy(true);
+    try {
+      setSnapshot(await action());
+      pushToast(message, "info");
+      return true;
+    } catch (error) {
+      showError(error);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function renameAccessToken(id: string, name: string) {
+    return updateAccess(() => api.renameAccessToken(id, name), t.access.tokenRenamed);
+  }
+
+  async function rotateAccessToken(id: string): Promise<boolean> {
+    setBusy(true);
+    try {
+      const result = await api.rotateAccessToken(id);
+      await refresh({ quiet: true });
+      try {
+        await navigator.clipboard.writeText(result.secret);
+        pushToast(t.access.tokenRotated);
+      } catch (error) {
+        showError(error);
+      }
+      return true;
+    } catch (error) {
+      showError(error);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteAccessToken(id: string) {
+    return updateAccess(() => api.deleteAccessToken(id), t.access.tokenDeleted);
+  }
+  async function copyPromptForToken(id: string) { try { const result = await api.getAccessTokenSecret(id); await navigator.clipboard.writeText(buildAgentPrompt(t, serverEndpoint, true, result.secret)); setPromptTokenDialogOpen(false); pushToast(t.toast.agentCopied, "info"); } catch (error) { showError(error); } }
 
   async function saveServer(server: ServerConfig): Promise<boolean> {
     setBusy(true);
@@ -551,8 +606,14 @@ function App() {
     }
   }
 
-  function copyAgentPrompt(endpoint: string, requireToken: boolean, token?: string | null) {
-    const prompt = buildAgentPrompt(t, endpoint, requireToken, token);
+  function copyAgentPrompt() {
+    if (requireToken) {
+      const activeTokens = snapshot?.access_tokens.filter((token) => token.enabled) ?? [];
+      if (activeTokens.length === 0) { setActiveView("access"); return; }
+      if (activeTokens.length === 1) { void copyPromptForToken(activeTokens[0].id); return; }
+      setPromptTokenDialogOpen(true); return;
+    }
+    const prompt = buildAgentPrompt(t, serverEndpoint, false);
     void navigator.clipboard
       .writeText(prompt)
       .then(() => pushToast(t.toast.agentCopied, "info"))
@@ -563,7 +624,6 @@ function App() {
   const enabledConnections = connections.filter((connection) => connection.enabled).length;
   const serverEndpoint = snapshot?.server_status.endpoint ?? "http://127.0.0.1:17321/mcp";
   const requireToken = snapshot?.config.server.require_token ?? true;
-  const serverToken = snapshot?.server_status.token ?? null;
   const recentEvents = snapshot?.audit_events.slice(0, 8) ?? [];
   const availableUpdateVersion = updater.state.kind === "available" ? updater.state.version : null;
   const showUpdateReminder = availableUpdateVersion !== null && dismissedUpdateVersion !== availableUpdateVersion;
@@ -590,8 +650,8 @@ function App() {
             <nav className="nav-list">
               <NavButton icon={<Home />} label={t.nav.overview} active={activeView === "overview"} onClick={() => setActiveView("overview")} />
               <NavButton icon={<Database />} label={t.nav.connections} active={activeView === "connections"} onClick={() => setActiveView("connections")} />
-              <NavButton icon={<Server />} label={t.nav.server} active={activeView === "server"} onClick={() => setActiveView("server")} />
               <NavButton icon={<Wrench />} label={t.nav.tools} active={activeView === "tools"} onClick={() => setActiveView("tools")} />
+              <NavButton icon={<ShieldCheck />} label={t.access.title} active={activeView === "access"} onClick={() => setActiveView("access")} />
               <NavButton icon={<Logs />} label={t.nav.audit} active={activeView === "audit"} onClick={() => setActiveView("audit")} />
               <NavButton icon={<Settings />} label={t.nav.settings} active={activeView === "settings"} onClick={() => setActiveView("settings")} />
             </nav>
@@ -638,7 +698,7 @@ function App() {
                     {showAuditClear && (
                       <span className={clsx("audit-clear-action", !hasAuditFilters && "leaving")}>
                         <IconTooltip label={t.audit.clearFilter}>
-                          <button type="button" className="icon-button" onClick={() => setAuditFilters({ from: "", to: "", tool: "", connection: "", status: "" })} aria-label={t.audit.clearFilter}>
+                          <button type="button" className="icon-button" onClick={() => setAuditFilters({ from: "", to: "", tool: "", connection: "", status: "", token: "" })} aria-label={t.audit.clearFilter}>
                             <X size={17} />
                           </button>
                         </IconTooltip>
@@ -678,6 +738,9 @@ function App() {
                     {t.overview.newConnection}
                   </button>
                 )}
+                {snapshot && activeView === "access" && requireToken && (
+                  <button type="button" className="button primary" onClick={() => setCreateTokenRequest((value) => value + 1)} disabled={busy}><Plus size={16} />{t.access.create}</button>
+                )}
               </div>
             </header>
 
@@ -695,7 +758,7 @@ function App() {
                     onOpenConnections={() => setActiveView("connections")}
                     onOpenAudit={() => setActiveView("audit")}
                     onSelectAudit={setSelectedAudit}
-                    onCopyAgentPrompt={() => copyAgentPrompt(serverEndpoint, requireToken, serverToken)}
+                    onCopyAgentPrompt={copyAgentPrompt}
                     onToggleServer={toggleServer}
                     onToggleEmergency={disableAllConnections}
                     busy={busy}
@@ -717,20 +780,9 @@ function App() {
                     migrationReady={migrationReady}
                   />
                 )}
-                {activeView === "server" && (
-                  <ServerView
-                    t={t}
-                    snapshot={snapshot}
-                    busy={busy}
-                    endpoint={serverEndpoint}
-                    onCopyAgentPrompt={() => copyAgentPrompt(serverEndpoint, snapshot.config.server.require_token, snapshot.server_status.token)}
-                    onToggle={toggleServer}
-                    startDisabled={!snapshot.server_status.running && !migrationReady}
-                    onRotate={rotateToken}
-                  />
-                )}
+                {activeView === "access" && <AccessControlView t={t} tokens={snapshot.access_tokens} connections={connections} tools={snapshot.tools} requireToken={requireToken} busy={busy} selectedId={selectedTokenId} onSelectedIdChange={setSelectedTokenId} createRequest={createTokenRequest} onCreateRequestHandled={() => setCreateTokenRequest(0)} onEnableAuthentication={() => void saveServer({ ...snapshot.config.server, require_token: true })} onCreate={createAccessToken} onRename={renameAccessToken} onToggle={(id, enabled) => void updateAccess(() => api.setAccessTokenEnabled(id, enabled), enabled ? t.access.tokenEnabled : t.access.tokenDisabled)} onRotate={rotateAccessToken} onDelete={deleteAccessToken} onCopyPrompt={(id) => void copyPromptForToken(id)} onConnectionAllowed={(tokenId, connectionId, allowed) => void updateAccess(() => api.setTokenConnectionAllowed(tokenId, connectionId, allowed), t.access.permissionUpdated)} onToolAllowed={(tokenId, toolName, allowed) => void updateAccess(() => api.setTokenToolAllowed(tokenId, toolName, allowed), t.access.permissionUpdated)} />}
                 {activeView === "tools" && <ToolsView t={t} tools={snapshot.tools} busy={busy} onToggle={setToolEnabled} />}
-                {activeView === "audit" && <AuditView t={t} events={snapshot.audit_events} tools={snapshot.tools} connections={snapshot.config.connections} filters={auditFilters} onFiltersChange={setAuditFilters} filterOpen={auditFilterOpen} onFilterOpenChange={setAuditFilterOpen} onSelect={setSelectedAudit} />}
+                {activeView === "audit" && <AuditView t={t} events={snapshot.audit_events} tokens={snapshot.access_tokens} tools={snapshot.tools} connections={snapshot.config.connections} filters={auditFilters} onFiltersChange={setAuditFilters} filterOpen={auditFilterOpen} onFilterOpenChange={setAuditFilterOpen} onSelect={setSelectedAudit} />}
                 {activeView === "settings" && (
                   <SettingsView
                     t={t}
@@ -788,6 +840,7 @@ function App() {
           onClose={() => setEditing(null)}
         />
         <AuditDetailDialog t={t} event={selectedAudit} onClose={() => setSelectedAudit(null)} />
+        {snapshot && <PromptTokenDialog t={t} open={promptTokenDialogOpen} tokens={snapshot.access_tokens} connections={connections} tools={snapshot.tools} busy={busy} onClose={() => setPromptTokenDialogOpen(false)} onSelect={(id) => void copyPromptForToken(id)} />}
         {snapshot && snapshot.audit_migration.status === "failed" && (
           <AuditMigrationDialog
             t={t}

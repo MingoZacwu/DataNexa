@@ -2245,6 +2245,175 @@ textarea:focus {
   .settings-page { grid-template-columns: 140px minmax(0, 1fr); }
 }
 
+/* Access control follows the database connection workbench geometry. */
+.access-workbench {
+  grid-template-columns: minmax(520px, 1.35fr) minmax(310px, 0.65fr);
+}
+
+.access-browser,
+.access-inspector {
+  padding: 0;
+}
+
+.access-prerequisite {
+  width: 100%;
+  max-width: none;
+  min-height: 100%;
+  margin: 0;
+}
+
+.access-token-list {
+  gap: 0;
+}
+
+.access-token-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 7px 10px 7px 12px;
+}
+
+.access-token-select {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.access-token-copy,
+.access-token-identity > div,
+.permission-copy {
+  gap: 2px;
+}
+
+.access-token-row .row-actions {
+  gap: 4px;
+  opacity: 0.64;
+  transition: opacity 160ms ease;
+}
+
+.access-token-row:hover .row-actions,
+.access-token-row.selected .row-actions {
+  opacity: 1;
+}
+
+.access-token-row .row-actions .icon-button {
+  width: 29px;
+  height: 29px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.access-inspector-heading {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.access-primary-actions {
+  justify-content: flex-end;
+}
+
+.access-token-meta {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.access-dialog.compact {
+  width: min(500px, calc(100vw - 40px));
+}
+
+.access-dialog .dialog-titlebar > .icon-button {
+  flex: 0 0 32px;
+}
+
+.access-permission-accordion {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.access-permission-section-button {
+  flex: 0 0 auto;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-left: 2px solid transparent;
+  color: var(--muted);
+  background: transparent;
+  font-weight: 650;
+  text-align: left;
+}
+
+.access-permission-section-button > span:last-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.access-permission-section-button small {
+  min-width: 30px;
+  padding: 2px 5px;
+  border-radius: 5px;
+  color: inherit;
+  background: color-mix(in srgb, currentColor 9%, transparent);
+  font-size: 10px;
+  text-align: center;
+}
+
+.access-permission-section-button svg {
+  transition: transform 160ms ease;
+}
+
+.access-permission-section-button.active {
+  border-left-color: var(--blue);
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 5%, transparent);
+}
+
+.access-permission-section-button.active svg {
+  transform: rotate(180deg);
+}
+
+.access-permission-accordion .access-permission-list {
+  min-height: 120px;
+  flex: 1 1 auto;
+}
+
+.detail-grid .detail-grid-wide {
+  grid-column: 1 / -1;
+}
+
+.audit-sql-section {
+  gap: 2px;
+}
+
+@media (max-width: 1240px) {
+  .access-workbench {
+    grid-template-columns: minmax(470px, 1.25fr) minmax(285px, 0.75fr);
+  }
+}
+
+@media (max-width: 1080px) {
+  .access-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .access-inspector {
+    min-height: 420px;
+  }
+}
+
 @media (max-width: 920px) {
   body { min-width: 640px; }
   .app-body { grid-template-columns: 70px minmax(0, 1fr); }

@@ -1,26 +1,26 @@
-# DataNexa v0.6.0
+# DataNexa v0.7.0
 
-[中文发布说明](https://github.com/MingoZacwu/DataNexa/blob/v0.6.0/RELEASE_NOTES.md)
+[中文发布说明](https://github.com/MingoZacwu/DataNexa/blob/v0.7.0/RELEASE_NOTES.md)
 
 ## Highlights
 
-- Upgraded emergency disconnect to immediately cancel in-flight requests, block new tool calls, and close active database pools.
-- Added a lightweight mode that releases window UI resources while keeping background services running.
-- On Windows 11 and macOS, the navigation bar now uses the native system material and follows the app theme, with the existing interface style retained when native material is unavailable.
-- Improved MySQL schema selection and result-type handling for more accurate cross-schema queries and boolean, string, and binary values.
+- Added fine-grained token-based access control with separate tokens and least-privilege permissions for individual agents.
+- Audit logs now identify the request source and support filtering by access token, making data access easier to trace and manage.
 
 ## Added
 
-- The overview now clearly indicates when emergency disconnect is active.
-- The overview now shows MCP call volume for the last 24 hours and indicates when the audit-retention limit may make the count incomplete.
-- Added an “Energy Pulse” interface effect that provides dynamic feedback on the overview when an MCP tool is called.
-- Added an automatic lightweight-mode setting that releases window UI resources five minutes after the main window is closed. Lightweight mode can also be entered or exited manually from the system tray.
+- Added access-token creation, enable/disable, rename, rotation, and deletion, with separate database-connection and MCP-tool permissions for each token.
+- Added Agent connection configuration generation for a selected token from the access-control interface. New tokens can use all currently enabled database connections and MCP tools by default.
+- Audit logs now show the token name or other request source and retain historical attribution for deleted tokens.
+- Access-token permissions are enforced by the backend, so unauthorized tool calls or database access are rejected.
 
 ## Changes and Improvements
 
-- MySQL metadata lookups and table queries now use the requested schema, falling back to the database configured for the connection when no schema is provided.
-- Improved MySQL cell decoding so ordinary numeric values are not mistaken for booleans, text types are handled as strings first, and byte data is returned as binary values.
-- Connection tests no longer write audit-log entries and are no longer blocked while audit-log migration is pending.
+- Replaced the former server-token page with the access-control interface and added an access-token filter to the audit log.
+
+### Upgrade Notes
+
+- Existing server access secrets are migrated to a default access token during upgrade, allowing existing authenticated setups to continue working.
 
 ## Installation Notes
 

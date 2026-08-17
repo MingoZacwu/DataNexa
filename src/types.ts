@@ -60,13 +60,33 @@ export interface AuditEvent {
   elapsed_ms?: number | null;
   row_count?: number | null;
   sql?: string | null;
+  token_id?: string | null;
+  access_source: "token" | "unauthenticated" | "legacy" | "system";
+  token_name?: string | null;
+  token_deleted: boolean;
+  token_enabled: boolean;
 }
 
 export interface ServerStatus {
   running: boolean;
   endpoint: string;
-  token?: string | null;
   started_at?: string | null;
+}
+
+export interface AccessTokenInfo {
+  id: string;
+  name: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  last_used_at?: string | null;
+  denied_connections: string[];
+  denied_tools: string[];
+}
+
+export interface AccessTokenSecretResult {
+  token_id: string;
+  secret: string;
 }
 
 export interface AppSnapshot {
@@ -79,6 +99,7 @@ export interface AppSnapshot {
   startup_error?: string | null;
   auto_start_status: "enabled" | "disabled" | "requires_approval" | "unknown";
   audit_migration: AuditMigrationState;
+  access_tokens: AccessTokenInfo[];
 }
 
 export type AuditMigrationPhase = "reading_legacy_file" | "preparing_database" | "importing_events" | "committing" | "finalizing";

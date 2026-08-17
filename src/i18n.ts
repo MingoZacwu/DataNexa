@@ -10,6 +10,19 @@ export const languageOptions: Array<{ value: Locale; label: string; nativeLabel:
 ];
 
 const zhCN = {
+  access: {
+    title: "访问控制", tokens: "访问令牌", empty: "暂无访问令牌，创建一个令牌后即可为 Agent 配置独立权限。",
+    enabled: "启用", disabled: "停用", enable: "启用令牌", disable: "停用令牌", neverUsed: "尚未使用",
+    authenticationRequired: "需要开启 Bearer 密钥", authenticationRequiredText: "访问控制依赖 Bearer 鉴权。开启后即可创建多个命名令牌，并分别限制数据库连接和工具权限。", enableAuthentication: "开启 Bearer 密钥",
+    copySecret: "复制密钥", copyPrompt: "复制 Agent Prompt", rename: "重命名", rotate: "轮换密钥", delete: "删除令牌",
+    createdAt: "创建时间", updatedAt: "最近修改", lastUsed: "最近使用", databasePermissions: "数据库权限", toolPermissions: "工具权限", globallyDisabled: "已在全局关闭", allowConnection: "允许访问数据库", allowTool: "允许使用工具",
+    tokenName: "令牌名称", create: "创建令牌", save: "保存名称", confirmRotate: "确认轮换", confirmDelete: "确认删除",
+    dialogTitles: { create: "创建访问令牌", rename: "修改令牌名称", rotate: "轮换令牌密钥", delete: "删除访问令牌" },
+    dialogDescriptions: { create: "新令牌默认允许使用所有已启用的数据库连接和 MCP 工具。", rename: "名称用于区分请求来源，修改后历史审计日志也会显示新名称。", rotate: "旧密钥会立即失效。使用该令牌的 Agent 必须更新为新密钥后才能继续访问。", delete: "令牌将立即失效且无法恢复。历史审计日志仍会保留该令牌的名称。" },
+    chooseToken: "选择访问令牌", chooseTokenText: "选择用于生成 Agent 接入配置的令牌。", allowedSummary: "{connections} 个数据库 · {tools} 个工具",
+    secretCopied: "令牌密钥已复制。", tokenCreated: "访问令牌已创建，新密钥已复制。", tokenRenamed: "令牌名称已更新。", tokenEnabled: "访问令牌已启用。", tokenDisabled: "访问令牌已停用。", tokenRotated: "令牌密钥已轮换，新密钥已复制。", tokenDeleted: "访问令牌已删除。", permissionUpdated: "令牌权限已更新。",
+    legacyRequest: "旧版请求", unauthenticatedRequest: "未鉴权请求", systemRequest: "系统", deletedSuffix: "已删除"
+  },
   common: {
     refresh: "刷新",
     minimize: "最小化",
@@ -363,6 +376,19 @@ type MessageShape<T> = {
 export type I18nMessages = MessageShape<typeof zhCN>;
 
 const en: I18nMessages = {
+  access: {
+    title: "Access Control", tokens: "Access tokens", empty: "No access tokens yet. Create one to give an agent its own permissions.",
+    enabled: "Enabled", disabled: "Disabled", enable: "Enable token", disable: "Disable token", neverUsed: "Never used",
+    authenticationRequired: "Bearer authentication is required", authenticationRequiredText: "Access control depends on Bearer authentication. Enable it to create named tokens with separate database and tool permissions.", enableAuthentication: "Enable Bearer authentication",
+    copySecret: "Copy secret", copyPrompt: "Copy Agent Prompt", rename: "Rename", rotate: "Rotate secret", delete: "Delete token",
+    createdAt: "Created", updatedAt: "Updated", lastUsed: "Last used", databasePermissions: "Database permissions", toolPermissions: "Tool permissions", globallyDisabled: "Globally disabled", allowConnection: "Allow database access", allowTool: "Allow tool use",
+    tokenName: "Token name", create: "Create token", save: "Save name", confirmRotate: "Rotate secret", confirmDelete: "Delete token",
+    dialogTitles: { create: "Create access token", rename: "Rename token", rotate: "Rotate token secret", delete: "Delete access token" },
+    dialogDescriptions: { create: "New tokens can use every globally enabled database connection and MCP tool by default.", rename: "The name identifies the request source. Historical audit entries will also show the new name.", rotate: "The old secret stops working immediately. Agents using this token must be updated with the new secret.", delete: "The token stops working immediately and cannot be restored. Historical audit attribution is retained." },
+    chooseToken: "Choose access token", chooseTokenText: "Choose the token to include in the Agent connection configuration.", allowedSummary: "{connections} databases · {tools} tools",
+    secretCopied: "Token secret copied.", tokenCreated: "Access token created and its new secret copied.", tokenRenamed: "Token name updated.", tokenEnabled: "Access token enabled.", tokenDisabled: "Access token disabled.", tokenRotated: "Token secret rotated and copied.", tokenDeleted: "Access token deleted.", permissionUpdated: "Token permissions updated.",
+    legacyRequest: "Legacy request", unauthenticatedRequest: "Unauthenticated request", systemRequest: "System", deletedSuffix: "Deleted"
+  },
   common: {
     refresh: "Refresh",
     minimize: "Minimize",

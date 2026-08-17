@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type {
+  AccessTokenSecretResult,
   AppSnapshot,
   ConnectionDiagnostics,
   ConnectionInput,
@@ -61,13 +62,14 @@ const mockSnapshot: AppSnapshot = {
   startup_error: null,
   auto_start_status: "disabled",
   audit_migration: { status: "ready" },
+  access_tokens: [{ id: "preview-token", name: "Codex", enabled: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), last_used_at: new Date().toISOString(), denied_connections: [], denied_tools: [] }],
   config: {
     version: 1,
     server: {
       host: "127.0.0.1",
       port: 17321,
       require_token: true,
-      token: "local-preview-token"
+      token: null
     },
     settings: {
       audit_max_events: 300,
@@ -118,7 +120,6 @@ const mockSnapshot: AppSnapshot = {
   server_status: {
     running: false,
     endpoint: "http://127.0.0.1:17321/mcp",
-    token: "local-preview-token",
     started_at: null
   },
   audit_events: [
@@ -132,7 +133,12 @@ const mockSnapshot: AppSnapshot = {
       reason: null,
       elapsed_ms: 12,
       row_count: 10,
-      sql: "SELECT id, name FROM accounts LIMIT 10"
+      sql: "SELECT id, name FROM accounts LIMIT 10",
+      access_source: "token",
+      token_id: "preview-token",
+      token_name: "Codex",
+      token_deleted: false,
+      token_enabled: true
     }
   ]
 };
@@ -215,6 +221,14 @@ function connectionTransferFileName() {
 
 export const api = {
   snapshot: () => command<AppSnapshot>("get_app_snapshot", undefined, mockSnapshot),
+  createAccessToken: (name: string) => command<AccessTokenSecretResult>("create_access_token", { name }, { token_id: "preview-new-token", secret: "preview-new-secret" }),
+  renameAccessToken: (id: string, name: string) => command<AppSnapshot>("rename_access_token", { id, name }, mockSnapshot),
+  setAccessTokenEnabled: (id: string, enabled: boolean) => command<AppSnapshot>("set_access_token_enabled", { id, enabled }, mockSnapshot),
+  rotateAccessToken: (id: string) => command<AccessTokenSecretResult>("rotate_access_token", { id }, { token_id: id, secret: "preview-rotated-secret" }),
+  deleteAccessToken: (id: string) => command<AppSnapshot>("delete_access_token", { id }, mockSnapshot),
+  getAccessTokenSecret: (id: string) => command<AccessTokenSecretResult>("get_access_token_secret", { id }, { token_id: id, secret: "preview-token-secret" }),
+  setTokenConnectionAllowed: (tokenId: string, connectionId: string, allowed: boolean) => command<AppSnapshot>("set_token_connection_allowed", { tokenId, connectionId, allowed }, mockSnapshot),
+  setTokenToolAllowed: (tokenId: string, toolName: string, allowed: boolean) => command<AppSnapshot>("set_token_tool_allowed", { tokenId, toolName, allowed }, mockSnapshot),
   saveServerConfig: (server: ServerConfig) =>
     command<AppSnapshot>("save_server_config", { server }, mockSnapshot),
   saveSettingsConfig: (settings: SettingsConfig, applyAutoStart = false) =>
@@ -286,10 +300,6 @@ export const api = {
     mockEmergencyDisconnect = false;
     return command<AppSnapshot>("stop_mcp_server", undefined, mockSnapshot);
   },
-  rotateToken: () => command<AppSnapshot>("rotate_server_token", undefined, {
-    ...mockSnapshot,
-    server_status: { ...mockSnapshot.server_status, token: "rotated-preview-token" }
-  }),
   policyCheck: (kind: DatabaseType, sql: string, maxRows = 500) =>
     command<PolicyCheckResult>(
       "policy_check",
