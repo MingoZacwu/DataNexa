@@ -1409,12 +1409,17 @@ mod tests {
     use crate::state::AppState;
     use crate::vault::CredentialVault;
 
-    fn test_state(root: &Path, port: u16, audit_path: &Path) -> Arc<AppState> {
+    async fn test_state(root: &Path, port: u16, audit_path: &Path) -> Arc<AppState> {
         let mut config = AppConfig::default();
         config.server.port = port;
         config.server.token = Some("TEST_TOKEN".to_string());
         let store = ConfigStore::for_test(root.join("config.toml"));
         store.save(&config).expect("test config saves");
+        let access = AccessControlStore::for_test(root.join("access-control.db"));
+        access
+            .initialize(&store, &mut config)
+            .await
+            .expect("test access-control store initializes");
         Arc::new(AppState {
             app_handle: None,
             store,
@@ -1422,7 +1427,7 @@ mod tests {
             config_transaction: tokio::sync::RwLock::new(()),
             vault: CredentialVault::new(),
             audit: AuditLogger::for_test(audit_path.to_path_buf()),
-            access: AccessControlStore::for_test(root.join("access-control.db")),
+            access,
             db: DatabaseManager::default(),
             mcp: tokio::sync::RwLock::new(McpRuntime::default()),
             mcp_lifecycle: tokio::sync::Mutex::new(()),
@@ -1528,7 +1533,8 @@ mod tests {
             directory.path(),
             17321,
             &directory.path().join("audit.json"),
-        );
+        )
+        .await;
 
         let allowed = call_tool(
             state.clone(),
@@ -1564,7 +1570,8 @@ mod tests {
             directory.path(),
             17321,
             &directory.path().join("audit.json"),
-        );
+        )
+        .await;
         let router = mcp_router(state);
 
         let notification = router
@@ -1646,7 +1653,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary directory");
         let invalid_audit_target = directory.path().join("audit-target");
         std::fs::create_dir(&invalid_audit_target).expect("audit directory target");
-        let state = test_state(directory.path(), 17321, &invalid_audit_target);
+        let state = test_state(directory.path(), 17321, &invalid_audit_target).await;
         let response = mcp_router(state)
             .oneshot(mcp_request(json!({
                 "jsonrpc": "2.0",
@@ -1674,7 +1681,8 @@ mod tests {
             directory.path(),
             17321,
             &directory.path().join("audit.json"),
-        );
+        )
+        .await;
         let router = mcp_router(state.clone());
         let body = json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}).to_string();
 
@@ -1812,7 +1820,8 @@ mod tests {
             directory.path(),
             initial_port,
             &directory.path().join("audit.json"),
-        );
+        )
+        .await;
 
         let started = start(state.clone()).await.expect("server starts");
         assert!(started.running);
