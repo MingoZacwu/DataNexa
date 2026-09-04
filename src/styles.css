@@ -1157,46 +1157,19 @@ p {
 }
 
 .storage-usage-segment.runtime,
-.storage-breakdown-dot.runtime { background: var(--amber); }
+.storage-breakdown-dot.runtime { background: var(--red); }
 .storage-usage-segment.drivers,
 .storage-breakdown-dot.drivers { background: var(--amber); }
+.storage-usage-segment.maven,
+.storage-breakdown-dot.maven { background: var(--violet); }
 .storage-usage-segment.audit,
 .storage-breakdown-dot.audit { background: var(--blue); }
 .storage-usage-segment.access,
 .storage-breakdown-dot.access { background: var(--green); }
 .storage-usage-segment.config,
-.storage-breakdown-dot.config { background: var(--muted); }
-
-.storage-breakdown {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px 20px;
-  flex-wrap: wrap;
-  margin-top: 12px;
-  margin-bottom: 18px;
-}
-
-.storage-breakdown-row {
-  min-width: 0;
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 7px;
-}
-
-.storage-breakdown-label {
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.storage-breakdown-dot.config { background: var(--blue-2); }
+.storage-usage-segment.other,
+.storage-breakdown-dot.other { background: var(--muted); }
 
 .storage-breakdown-dot {
   flex: 0 0 7px;
@@ -1205,16 +1178,9 @@ p {
   border-radius: 50%;
 }
 
-.storage-breakdown-row strong {
-  flex: 0 0 auto;
-  margin-left: 1px;
-  color: var(--ink);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
 .storage-details-panel > .storage-usage-bar {
   margin-top: 0;
+  margin-bottom: 14px;
 }
 
 .runtime-cpu-overview {
@@ -1299,7 +1265,7 @@ p {
 .storage-detail-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: 150px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(190px, 0.42fr) minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   min-height: 44px;
@@ -1309,9 +1275,49 @@ p {
   background: var(--surface-strong);
 }
 
-.storage-detail-row strong { font-size: 12px; }
+.storage-detail-label {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.storage-detail-label strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.storage-percent-badge {
+  flex: 0 0 auto;
+  min-height: 20px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--surface-strong) 84%, var(--line));
+  font-size: 10px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
 .storage-detail-row code { min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .storage-detail-row > span { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+.jdbc-cache-dialog {
+  width: min(480px, calc(100vw - 40px));
+}
+
+.jdbc-cache-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
 
 .runtime-driver-list { display: grid; gap: 8px; }
 .runtime-driver-row {
@@ -1335,7 +1341,6 @@ p {
 
 @media (max-width: 720px) {
   .storage-overview-grid { grid-template-columns: 1fr; }
-  .storage-breakdown { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .storage-management .driver-section-heading { align-items: flex-start; }
   .storage-detail-row { grid-template-columns: 1fr auto; gap: 4px 10px; }
   .storage-detail-row code { grid-column: 1 / -1; grid-row: 2; }
@@ -1568,6 +1573,28 @@ p {
 .jdbc-install-form {
   display: grid;
   gap: 12px;
+}
+
+.jdbc-install-progress {
+  display: grid;
+  gap: 7px;
+  padding: 10px 12px;
+  border: 1px solid rgba(37, 99, 235, 0.2);
+  border-radius: var(--card-radius);
+  background: rgba(37, 99, 235, 0.06);
+}
+
+.jdbc-install-progress-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.jdbc-install-progress .update-progress {
+  width: 100%;
 }
 
 .jdbc-install-form footer {

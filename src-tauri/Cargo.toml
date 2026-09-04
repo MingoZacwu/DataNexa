@@ -29,7 +29,7 @@ sha2 = "0.10"
 sqlparser = { version = "0.59", features = ["visitor"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "postgres", "mysql", "chrono", "uuid", "json", "rust_decimal"] }
 sysinfo = { version = "0.32", features = ["system"] }
-tauri = { version = "2", features = [ "tray-icon"] }
+tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-process = "2"

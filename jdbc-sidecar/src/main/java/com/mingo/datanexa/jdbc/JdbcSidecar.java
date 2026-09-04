@@ -101,6 +101,13 @@ public final class JdbcSidecar {
                 response.put("_datanexa_close", true);
                 return response;
             }
+            if ("resolve_maven".equals(action)) {
+                try {
+                    return MavenDependencyResolver.resolve(requestId, request);
+                } catch (Throwable error) {
+                    throw new SidecarException("maven_resolution_failed", message(error));
+                }
+            }
             if ("inspect".equals(action)) {
                 return inspect(requestId, request);
             }

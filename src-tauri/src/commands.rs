@@ -170,6 +170,16 @@ pub async fn get_jdbc_storage_status(
 }
 
 #[tauri::command]
+pub async fn clear_maven_cache(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    let _lifecycle = state.jdbc_lifecycle.lock().await;
+    let text = text_for_state(state.inner()).await;
+    state
+        .jdbc
+        .clear_maven_cache()
+        .map_err(|error| to_jdbc_client_error(error, &text))
+}
+
+#[tauri::command]
 pub async fn delete_jdbc_driver(
     state: State<'_, Arc<AppState>>,
     bundle_id: String,

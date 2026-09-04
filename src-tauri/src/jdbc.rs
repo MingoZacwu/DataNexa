@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
@@ -68,6 +68,15 @@ pub struct JdbcRuntimeStatus {
 pub struct JdbcStatus {
     pub runtime: JdbcRuntimeStatus,
     pub drivers: Vec<JdbcDriverBundle>,
+}
+
+pub const JDBC_INSTALL_PROGRESS_EVENT: &str = "jdbc://driver-install-progress";
+
+#[derive(Debug, Clone, Serialize)]
+pub struct JdbcInstallProgress {
+    pub operation: String,
+    pub phase: String,
+    pub progress: Option<u8>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -133,6 +142,14 @@ struct SidecarRequest<'a> {
     max_result_bytes: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     query_timeout_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    maven_coordinate: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    maven_repository: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    maven_local_repository: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    maven_output_directory: Option<&'a str>,
 }
 
 #[derive(Debug, Default)]
@@ -143,6 +160,10 @@ struct SidecarQuery<'a> {
     max_rows: Option<u32>,
     max_result_bytes: Option<usize>,
     query_timeout_ms: Option<u64>,
+    maven_coordinate: Option<&'a str>,
+    maven_repository: Option<&'a str>,
+    maven_local_repository: Option<&'a str>,
+    maven_output_directory: Option<&'a str>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -177,7 +198,16 @@ struct SidecarResponse {
     #[serde(default)]
     returned_bytes: usize,
     #[serde(default)]
+    artifacts: Vec<SidecarArtifact>,
+    #[serde(default)]
     error: Option<SidecarError>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SidecarArtifact {
+    name: String,
+    size: u64,
+    sha256: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -240,6 +270,22 @@ impl JdbcManager {
         }
     }
 
+    fn emit_install_progress(&self, operation: &str, phase: &str, progress: Option<u8>) {
+        let Some(app) = &self.app else {
+            return;
+        };
+        if let Err(error) = app.emit(
+            JDBC_INSTALL_PROGRESS_EVENT,
+            JdbcInstallProgress {
+                operation: operation.to_string(),
+                phase: phase.to_string(),
+                progress,
+            },
+        ) {
+            eprintln!("failed to emit JDBC install progress: {error}");
+        }
+    }
+
     pub fn list_drivers(&self) -> anyhow::Result<Vec<JdbcDriverBundle>> {
         let root = self.drivers_root()?;
         fs::create_dir_all(&root)?;
@@ -267,6 +313,7 @@ impl JdbcManager {
         &self,
         input: InstallJdbcDriverInput,
     ) -> anyhow::Result<JdbcDriverBundle> {
+        self.emit_install_progress("install", "preparing", Some(0));
         let display_name = validate_display_name(&input.display_name)?;
         let coordinate = input.maven_coordinate.trim();
         if !valid_maven_coordinate(coordinate) {
@@ -283,10 +330,40 @@ impl JdbcManager {
             .tempdir_in(&root)?;
         let jars = staging.path().join("jars");
         fs::create_dir_all(&jars)?;
-        let pom = staging.path().join("pom.xml");
-        fs::write(&pom, dependency_pom(coordinate, &repository_url)?)?;
-
-        run_maven_copy(&pom, &jars).await?;
+        let local_repository = self
+            .app
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("JDBC manager is unavailable in this test context"))?
+            .path()
+            .app_data_dir()?
+            .join("maven-repository");
+        let local_repository = local_repository.to_string_lossy().to_string();
+        let output_directory = jars.to_string_lossy().to_string();
+        self.emit_install_progress("install", "downloading", None);
+        let resolution = self
+            .run_sidecar_once(
+                "resolve_maven",
+                staging.path(),
+                "",
+                "",
+                "",
+                "",
+                &SidecarQuery {
+                    maven_coordinate: Some(coordinate),
+                    maven_repository: Some(&repository_url),
+                    maven_local_repository: Some(&local_repository),
+                    maven_output_directory: Some(&output_directory),
+                    ..SidecarQuery::default()
+                },
+                MAVEN_INSTALL_TIMEOUT,
+            )
+            .await?;
+        if resolution.artifacts.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Maven completed without producing JDBC driver JAR files"
+            ));
+        }
+        self.emit_install_progress("install", "verifying", Some(65));
         let mut jar_paths = fs::read_dir(&jars)?
             .filter_map(Result::ok)
             .filter_map(|entry| {
@@ -308,7 +385,33 @@ impl JdbcManager {
                 "Maven completed without producing JDBC driver JAR files"
             ));
         }
+        let resolved_artifacts = resolution
+            .artifacts
+            .iter()
+            .map(|artifact| (artifact.name.as_str(), artifact))
+            .collect::<HashMap<_, _>>();
+        if resolved_artifacts.len() != jar_paths.len() {
+            return Err(anyhow::anyhow!(
+                "Maven resolver returned an unexpected set of JAR files"
+            ));
+        }
+        for path in &jar_paths {
+            let name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| anyhow::anyhow!("Maven resolver returned an invalid file name"))?;
+            let artifact = resolved_artifacts.get(name).ok_or_else(|| {
+                anyhow::anyhow!("Maven resolver output is missing artifact {name}")
+            })?;
+            let metadata = fs::metadata(path)?;
+            if metadata.len() != artifact.size || sha256_file(path)? != artifact.sha256 {
+                return Err(anyhow::anyhow!(
+                    "Maven resolver output failed integrity verification for {name}"
+                ));
+            }
+        }
 
+        self.emit_install_progress("install", "inspecting", Some(80));
         let inspection = self
             .run_sidecar_once(
                 "inspect",
@@ -358,9 +461,8 @@ impl JdbcManager {
         };
         let mut manifest = serde_json::to_vec_pretty(&bundle)?;
         manifest.push(b'\n');
+        self.emit_install_progress("install", "finalizing", Some(92));
         fs::write(staging.path().join("manifest.json"), manifest)?;
-        fs::remove_file(&pom)?;
-
         let final_path = root.join(&bundle_id);
         fs::rename(staging.path(), &final_path)?;
         Ok(bundle)
@@ -370,6 +472,7 @@ impl JdbcManager {
         &self,
         input: ImportJdbcDriverInput,
     ) -> anyhow::Result<JdbcDriverBundle> {
+        self.emit_install_progress("import", "preparing", Some(0));
         let display_name = validate_display_name(&input.display_name)?;
         if input.paths.is_empty() {
             return Err(anyhow::anyhow!(
@@ -394,6 +497,7 @@ impl JdbcManager {
 
         let mut names = HashSet::new();
         let mut total_size = 0_u64;
+        self.emit_install_progress("import", "copying", Some(30));
         for path in &jar_paths {
             let metadata = fs::metadata(path)?;
             total_size = total_size.saturating_add(metadata.len());
@@ -414,6 +518,7 @@ impl JdbcManager {
             fs::copy(path, jars.join(name))?;
         }
 
+        self.emit_install_progress("import", "inspecting", Some(65));
         let inspection = self
             .run_sidecar_once(
                 "inspect",
@@ -449,6 +554,7 @@ impl JdbcManager {
             });
         }
         files.sort_by(|left, right| left.name.cmp(&right.name));
+        self.emit_install_progress("import", "verifying", Some(84));
 
         let bundle_id = Uuid::new_v4().to_string();
         let bundle = JdbcDriverBundle {
@@ -468,6 +574,7 @@ impl JdbcManager {
         fs::write(staging.path().join("manifest.json"), manifest)?;
 
         let final_path = root.join(&bundle_id);
+        self.emit_install_progress("import", "finalizing", Some(92));
         fs::rename(staging.path(), &final_path)?;
         Ok(bundle)
     }
@@ -490,6 +597,11 @@ impl JdbcManager {
             .unwrap_or(0);
         let items = vec![
             ("drivers", "JDBC drivers", drivers_root.clone()),
+            (
+                "maven",
+                "Maven repository",
+                storage_root.join("maven-repository"),
+            ),
             ("audit", "Audit database", storage_root.join("audit.db")),
             (
                 "access",
@@ -498,7 +610,7 @@ impl JdbcManager {
             ),
             ("config", "Configuration", storage_root.join("config.toml")),
         ];
-        let items = items
+        let mut items = items
             .into_iter()
             .map(|(id, label, path)| JdbcStorageItem {
                 id: id.to_string(),
@@ -512,6 +624,16 @@ impl JdbcManager {
             .is_some_and(|path| path.starts_with(&storage_root));
         let total_bytes = path_size_bytes(&storage_root)
             .saturating_sub(runtime_inside_storage.then_some(runtime_bytes).unwrap_or(0));
+        let known_bytes = items.iter().map(|item| item.bytes).sum::<u64>();
+        let other_bytes = total_bytes.saturating_sub(known_bytes);
+        if other_bytes > 0 {
+            items.push(JdbcStorageItem {
+                id: "other".to_string(),
+                label: "Other files".to_string(),
+                path: storage_root.to_string_lossy().to_string(),
+                bytes: other_bytes,
+            });
+        }
         let drivers = self.list_drivers()?;
         let runtimes = self.collect_driver_runtime_info(&drivers).await;
         Ok(JdbcStorageStatus {
@@ -520,6 +642,30 @@ impl JdbcManager {
             items,
             runtimes,
         })
+    }
+
+    pub fn clear_maven_cache(&self) -> anyhow::Result<()> {
+        let app = self
+            .app
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("JDBC manager is unavailable in this test context"))?;
+        let cache_path = app.path().app_data_dir()?.join("maven-repository");
+        let metadata = match fs::symlink_metadata(&cache_path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+        if metadata.file_type().is_symlink() {
+            return Err(anyhow::anyhow!(
+                "Maven repository path must not be a symbolic link"
+            ));
+        }
+        if !metadata.is_dir() {
+            return Err(anyhow::anyhow!("Maven repository path is not a directory"));
+        }
+        fs::remove_dir_all(&cache_path)?;
+        fs::create_dir_all(cache_path)?;
+        Ok(())
     }
 
     pub fn delete_driver(
@@ -889,6 +1035,10 @@ impl JdbcManager {
             max_rows: query.max_rows,
             max_result_bytes: query.max_result_bytes,
             query_timeout_ms: query.query_timeout_ms,
+            maven_coordinate: query.maven_coordinate,
+            maven_repository: query.maven_repository,
+            maven_local_repository: query.maven_local_repository,
+            maven_output_directory: query.maven_output_directory,
         };
         session.invoke(request, operation_timeout).await
     }
@@ -1064,6 +1214,10 @@ impl JdbcManager {
             max_rows: query.max_rows,
             max_result_bytes: query.max_result_bytes,
             query_timeout_ms: query.query_timeout_ms,
+            maven_coordinate: query.maven_coordinate,
+            maven_repository: query.maven_repository,
+            maven_local_repository: query.maven_local_repository,
+            maven_output_directory: query.maven_output_directory,
         };
         let mut payload = Zeroizing::new(serde_json::to_vec(&request)?);
         payload.push(b'\n');
@@ -1344,42 +1498,6 @@ fn runtime_roots(app: &AppHandle) -> Vec<PathBuf> {
     roots
 }
 
-async fn run_maven_copy(pom: &Path, output_directory: &Path) -> anyhow::Result<()> {
-    let executable = if cfg!(windows) { "mvn.cmd" } else { "mvn" };
-    let mut command = Command::new(executable);
-    command
-        .arg("-q")
-        .arg("-f")
-        .arg(pom)
-        .arg("dependency:copy-dependencies")
-        .arg("-DincludeScope=runtime")
-        .arg(format!(
-            "-DoutputDirectory={}",
-            output_directory.to_string_lossy()
-        ))
-        .arg("-Dmdep.prependGroupId=true")
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-    configure_hidden_process(&mut command);
-    command.kill_on_drop(true);
-    let output = timeout(MAVEN_INSTALL_TIMEOUT, command.output())
-        .await
-        .map_err(|_| anyhow::anyhow!("Maven driver installation timed out"))?
-        .map_err(|error| {
-            anyhow::anyhow!(
-                "Maven is required for this JDBC technical preview: {}",
-                sanitize_error(&error.to_string())
-            )
-        })?;
-    if !output.status.success() {
-        return Err(anyhow::anyhow!(
-            "Maven could not resolve the JDBC driver: {}",
-            sanitize_error(&String::from_utf8_lossy(&output.stderr))
-        ));
-    }
-    Ok(())
-}
-
 fn resolve_java_path(path: PathBuf, executable: &str) -> PathBuf {
     if path.is_file() {
         return path;
@@ -1404,38 +1522,12 @@ fn normalize_java_path(path: PathBuf) -> PathBuf {
     path
 }
 
-fn configure_hidden_process(command: &mut Command) {
+fn configure_hidden_process(_command: &mut Command) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        command.as_std_mut().creation_flags(0x08000000);
+        _command.as_std_mut().creation_flags(0x08000000);
     }
-}
-
-fn dependency_pom(coordinate: &str, repository_url: &str) -> anyhow::Result<String> {
-    let parts = coordinate.split(':').collect::<Vec<_>>();
-    if parts.len() != 3 {
-        return Err(anyhow::anyhow!("Invalid Maven coordinate"));
-    }
-    Ok(format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0">
-  <modelVersion>4.0.0</modelVersion>
-  <groupId>com.mingo.datanexa.runtime</groupId>
-  <artifactId>jdbc-driver-install</artifactId>
-  <version>1</version>
-  <repositories>
-    <repository><id>selected</id><url>{repository_url}</url></repository>
-  </repositories>
-  <dependencies>
-    <dependency>
-      <groupId>{}</groupId><artifactId>{}</artifactId><version>{}</version>
-    </dependency>
-  </dependencies>
-</project>
-"#,
-        parts[0], parts[1], parts[2]
-    ))
 }
 
 fn read_manifest(bundle_path: &Path) -> anyhow::Result<JdbcDriverBundle> {

@@ -32,7 +32,7 @@ import type { FormEvent, ReactNode } from "react";
 import appConfig from "../../../app.config.json";
 import appIconUrl from "../../../resources/icon.png";
 import { formatMessage, languageOptions, normalizeLocale, type I18nMessages, type Locale } from "../../i18n";
-import type { AppSnapshot, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcDriverRuntimeInfo, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "../../types";
+import type { AppSnapshot, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcDriverRuntimeInfo, JdbcInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "../../types";
 import type { UpdateState } from "../../lib/updater";
 import type { EffectiveTheme, SettingsTab, ThemeMode } from "../../app/types";
 import { updateScrollFade } from "../../app/utils";
@@ -53,6 +53,7 @@ export function SettingsView({
   tab,
   jdbcStatus,
   jdbcStorageStatus,
+  jdbcInstallProgress,
   policySql,
   policyKind,
   policyResult,
@@ -64,6 +65,7 @@ export function SettingsView({
   onTabChange,
   onRefreshJdbcStatus,
   onRefreshJdbcStorageStatus,
+  onClearMavenCache,
   onInstallJdbcDriver,
   onImportJdbcDriver,
   onDeleteJdbcDriver,
@@ -89,6 +91,7 @@ export function SettingsView({
   tab: SettingsTab;
   jdbcStatus: JdbcStatus | null;
   jdbcStorageStatus: JdbcStorageStatus | null;
+  jdbcInstallProgress: JdbcInstallProgress | null;
   policySql: string;
   policyKind: DatabaseType;
   policyResult: PolicyCheckResult | null;
@@ -100,6 +103,7 @@ export function SettingsView({
   onTabChange: (tab: SettingsTab) => void;
   onRefreshJdbcStatus: () => void;
   onRefreshJdbcStorageStatus: () => void;
+  onClearMavenCache: () => Promise<boolean>;
   onInstallJdbcDriver: (input: InstallJdbcDriverInput) => Promise<boolean>;
   onImportJdbcDriver: (input: ImportJdbcDriverInput) => Promise<boolean>;
   onDeleteJdbcDriver: (bundleId: string) => void;
@@ -543,6 +547,7 @@ export function SettingsView({
         <DriverManagement
           t={t}
           status={jdbcStatus}
+          installProgress={jdbcInstallProgress}
           settings={settings}
           busy={busy}
           onRefresh={onRefreshJdbcStatus}
@@ -552,7 +557,7 @@ export function SettingsView({
           onSaveSettings={onSaveSettings}
         />
       ) : tab === "storage" ? (
-        <StorageManagement status={jdbcStorageStatus} busy={busy} onRefresh={onRefreshJdbcStorageStatus} t={t} />
+        <StorageManagement status={jdbcStorageStatus} busy={busy} onRefresh={onRefreshJdbcStorageStatus} onClearMavenCache={onClearMavenCache} t={t} />
       ) : (
         <div className="settings-stack" onScroll={updateScrollFade}>
           <section className="panel about-panel">
@@ -615,6 +620,7 @@ export function SettingsView({
 function DriverManagement({
   t,
   status,
+  installProgress,
   settings,
   busy,
   onRefresh,
@@ -625,6 +631,7 @@ function DriverManagement({
 }: {
   t: I18nMessages;
   status: JdbcStatus | null;
+  installProgress: JdbcInstallProgress | null;
   settings: SettingsConfig;
   busy: boolean;
   onRefresh: () => void;
@@ -831,6 +838,7 @@ function DriverManagement({
               </Dialog.Close>
             </div>
             <form className="jdbc-install-form" onSubmit={submit}>
+              {installProgress?.operation === "install" && <JdbcInstallProgressView t={t} progress={installProgress} />}
               <Field label={t.settings.driverDisplayName}>
                 <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={80} required />
               </Field>
@@ -869,6 +877,7 @@ function DriverManagement({
               <Dialog.Close asChild><button type="button" className="icon-button" disabled={busy} aria-label={t.common.close}><X size={18} /></button></Dialog.Close>
             </div>
             <form className="jdbc-install-form" onSubmit={submitLocal}>
+              {installProgress?.operation === "import" && <JdbcInstallProgressView t={t} progress={installProgress} />}
               <Field label={t.settings.driverDisplayName}><input value={localDisplayName} onChange={(event) => setLocalDisplayName(event.target.value)} maxLength={80} required /></Field>
               <div className="local-driver-picker"><button type="button" className="button ghost" onClick={() => void chooseLocalJars()} disabled={busy}><FolderOpen size={16} />{t.settings.selectJdbcJars}</button><span>{localPaths.length ? `${localPaths.length} ${t.settings.jdbcFilesSelected}` : t.settings.noJdbcFilesSelected}</span></div>
               <Field label={t.settings.jdbcDriverPathPlaceholder}><input value={localPaths.join("; ")} onChange={(event) => setLocalPaths(event.target.value.split(";").map((path) => path.trim()).filter(Boolean))} placeholder="C:\\drivers\\postgresql.jar;C:\\drivers\\lib" /></Field>
@@ -881,8 +890,32 @@ function DriverManagement({
   );
 }
 
-function StorageManagement({ t, status, busy, onRefresh }: { t: I18nMessages; status: JdbcStorageStatus | null; busy: boolean; onRefresh: () => void }) {
+function JdbcInstallProgressView({ t, progress }: { t: I18nMessages; progress: JdbcInstallProgress }) {
+  const percent = progress.progress;
+  const label = {
+    preparing: t.settings.jdbcInstallPreparing,
+    downloading: t.settings.jdbcInstallDownloading,
+    copying: t.settings.jdbcInstallCopying,
+    verifying: t.settings.jdbcInstallVerifying,
+    inspecting: t.settings.jdbcInstallInspecting,
+    finalizing: t.settings.jdbcInstallFinalizing
+  }[progress.phase];
+  return (
+    <div className="jdbc-install-progress" aria-live="polite">
+      <div className="jdbc-install-progress-heading">
+        <span>{label}</span>
+        <span>{percent === null ? t.settings.jdbcInstallInProgress : `${percent}%`}</span>
+      </div>
+      <div className={clsx("update-progress", percent === null && "indeterminate")} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? undefined}>
+        <span style={{ width: percent === null ? "22%" : `${percent}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function StorageManagement({ t, status, busy, onRefresh, onClearMavenCache }: { t: I18nMessages; status: JdbcStorageStatus | null; busy: boolean; onRefresh: () => void; onClearMavenCache: () => Promise<boolean> }) {
   const [selectedStorageView, setSelectedStorageView] = useState<"storage" | "drivers">("storage");
+  const [mavenCacheDialogOpen, setMavenCacheDialogOpen] = useState(false);
   const [cpuHistory, setCpuHistory] = useState<number[]>([]);
   const refreshRef = useRef(onRefresh);
   useEffect(() => {
@@ -905,6 +938,7 @@ function StorageManagement({ t, status, busy, onRefresh }: { t: I18nMessages; st
     tone: storageItemTone(item.id),
     ratio: status.total_bytes > 0 ? item.bytes / status.total_bytes : 0
   })) ?? [];
+  const storageBreakdownById = new Map(storageBreakdown.map((item) => [item.id, item]));
   const cpuHistoryMax = Math.max(1, ...cpuHistory);
 
   return (
@@ -934,11 +968,53 @@ function StorageManagement({ t, status, busy, onRefresh }: { t: I18nMessages; st
       </section>
       {selectedStorageView === "storage" ? (
         <section className="panel storage-details-panel">
-          <div className="driver-section-heading"><div><h2>{t.settings.storageDetails}</h2></div></div>
+          <div className="driver-section-heading">
+            <div><h2>{t.settings.storageDetails}</h2></div>
+            <div className="runtime-heading-actions">
+              <IconTooltip label={t.settings.clearMavenCache}>
+                <button type="button" className="icon-button danger" onClick={() => setMavenCacheDialogOpen(true)} disabled={busy || !status} aria-label={t.settings.clearMavenCache}>
+                  <Trash2 size={17} />
+                </button>
+              </IconTooltip>
+            </div>
+          </div>
           {!status ? <div className="empty-state">{t.settings.runtimeChecking}</div> : <>
             <div className="storage-usage-bar" role="img" aria-label={t.settings.storageBreakdownLabel}>{storageBreakdown.map((item) => <span key={item.id} className={clsx("storage-usage-segment", item.tone)} style={{ width: `${item.ratio * 100}%` }} />)}</div>
-            <div className="storage-breakdown">{storageBreakdown.map((item) => <div className="storage-breakdown-row" key={item.id}><div className="storage-breakdown-label"><span className={clsx("storage-breakdown-dot", item.tone)} />{item.label}</div><strong>{formatPercent(item.ratio)}</strong></div>)}</div>
-            <div className="storage-detail-list">{status.items.map((item) => <div className="storage-detail-row" key={item.id}><strong>{storageItemLabel(t, item.id)}</strong><code title={item.path}>{item.path}</code><span>{formatBytes(item.bytes)}</span></div>)}</div>
+            <div className="storage-detail-list">{status.items.map((item) => {
+              const breakdown = storageBreakdownById.get(item.id);
+              return <div className="storage-detail-row" key={item.id}>
+                <div className="storage-detail-label">
+                  <span className={clsx("storage-breakdown-dot", breakdown?.tone ?? storageItemTone(item.id))} />
+                  <strong>{storageItemLabel(t, item.id)}</strong>
+                  {breakdown && <span className="storage-percent-badge">{formatPercent(breakdown.ratio)}</span>}
+                </div>
+                <code title={item.path}>{item.path}</code>
+                <span>{formatBytes(item.bytes)}</span>
+              </div>;
+            })}</div>
+            <Dialog.Root open={mavenCacheDialogOpen} onOpenChange={(open) => !busy && setMavenCacheDialogOpen(open)}>
+              <Dialog.Portal>
+                <Dialog.Overlay className="dialog-overlay" />
+                <Dialog.Content className="policy-dialog jdbc-cache-dialog">
+                  <div className="dialog-titlebar">
+                    <div>
+                      <Dialog.Title>{t.settings.clearMavenCacheConfirmTitle}</Dialog.Title>
+                      <Dialog.Description>{t.settings.clearMavenCacheConfirmDescription}</Dialog.Description>
+                    </div>
+                    <Dialog.Close asChild>
+                      <button type="button" className="icon-button" disabled={busy} aria-label={t.common.close}><X size={18} /></button>
+                    </Dialog.Close>
+                  </div>
+                  <footer>
+                    <Dialog.Close asChild><button type="button" className="button ghost" disabled={busy}>{t.common.cancel}</button></Dialog.Close>
+                    <button type="button" className="button stop" disabled={busy} onClick={() => void onClearMavenCache().then((cleared) => cleared && setMavenCacheDialogOpen(false))}>
+                      <Trash2 size={16} />
+                      {t.settings.confirmClearMavenCache}
+                    </button>
+                  </footer>
+                </Dialog.Content>
+              </Dialog.Portal>
+            </Dialog.Root>
           </>}
         </section>
       ) : (
@@ -977,21 +1053,26 @@ function runtimeSourceLabel(t: I18nMessages, source: string) {
 function storageItemLabel(t: I18nMessages, id: string) {
   if (id === "runtime") return t.settings.storageCategoryRuntime;
   if (id === "drivers") return t.settings.storageCategoryDrivers;
+  if (id === "maven") return t.settings.storageCategoryMaven;
   if (id === "audit") return t.settings.storageCategoryAudit;
   if (id === "access") return t.settings.storageCategoryAccess;
   if (id === "config") return t.settings.storageCategoryConfig;
+  if (id === "other") return t.settings.storageCategoryOther;
   return id;
 }
 
 function storageItemTone(id: string) {
   if (id === "runtime") return "runtime";
   if (id === "drivers") return "drivers";
+  if (id === "maven") return "maven";
   if (id === "audit") return "audit";
   if (id === "access") return "access";
+  if (id === "other") return "other";
   return "config";
 }
 
 function formatBytes(bytes: number) {
+  if (bytes === 0) return "0 KiB";
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KiB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 }

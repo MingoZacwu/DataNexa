@@ -40,7 +40,7 @@ $buildRuntime = Join-Path $buildParent "runtime"
 New-Item -ItemType Directory -Path $buildParent -Force | Out-Null
 try {
   & $jlink `
-    --add-modules java.base,java.sql,java.naming,java.logging,java.xml,java.management,java.desktop,java.security.jgss,jdk.crypto.ec,jdk.unsupported `
+    --add-modules java.base,java.sql,java.naming,java.logging,java.xml,java.management,java.desktop,java.net.http,java.security.jgss,jdk.crypto.ec,jdk.unsupported `
     --strip-debug `
     --no-header-files `
     --no-man-pages `

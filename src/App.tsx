@@ -9,7 +9,7 @@ import { detectLocale, formatMessage, messages, normalizeLocale, persistLocale }
 import type { Locale } from "./i18n";
 import { api } from "./lib/tauri";
 import { useAppUpdater } from "./lib/updater";
-import type { AppSnapshot, AuditEvent, ConnectionConfig, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "./types";
+import type { AppSnapshot, AuditEvent, ConnectionConfig, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "./types";
 import { detectThemeMode, persistThemeMode, resolveTheme, systemTheme } from "./app/theme";
 import type { AuditFilters, EffectiveTheme, SettingsTab, ThemeMode, ToastMessage, ToastTone, View } from "./app/types";
 import { buildAgentPrompt, compactConnectionError, formatConnectionTest, formatDiagnostics, toolDisplayName, updateScrollFade, viewTitle } from "./app/utils";
@@ -70,6 +70,7 @@ function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   const [jdbcStatus, setJdbcStatus] = useState<JdbcStatus | null>(null);
   const [jdbcStorageStatus, setJdbcStorageStatus] = useState<JdbcStorageStatus | null>(null);
+  const [jdbcInstallProgress, setJdbcInstallProgress] = useState<JdbcInstallProgress | null>(null);
   const [locale, setLocale] = useState<Locale>(detectLocale);
   const [theme, setTheme] = useState<ThemeMode>(detectThemeMode);
   const [systemThemeMode, setSystemThemeMode] = useState<EffectiveTheme>(systemTheme);
@@ -115,6 +116,28 @@ function App() {
   useEffect(() => {
     void refresh();
     void refreshJdbcStatus();
+  }, []);
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    let cancelled = false;
+    void (async () => {
+      try {
+        unlisten = await listen<JdbcInstallProgress>("jdbc://driver-install-progress", (event) => {
+          setJdbcInstallProgress(event.payload);
+        });
+        if (cancelled) {
+          unlisten();
+          unlisten = undefined;
+        }
+      } catch {
+        // Preview mode and older runtimes may not provide event delivery.
+      }
+    })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -500,8 +523,24 @@ function App() {
     }
   }
 
+  async function clearMavenCache(): Promise<boolean> {
+    setBusy(true);
+    try {
+      await api.clearMavenCache();
+      await refreshJdbcStorageStatus();
+      pushToast(t.toast.mavenCacheCleared, "info");
+      return true;
+    } catch (error) {
+      showError(error);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function installJdbcDriver(input: InstallJdbcDriverInput): Promise<boolean> {
     setBusy(true);
+    setJdbcInstallProgress({ operation: "install", phase: "preparing", progress: 0 });
     try {
       await api.installJdbcDriver(input);
       setJdbcStatus(await api.jdbcStatus());
@@ -512,11 +551,13 @@ function App() {
       return false;
     } finally {
       setBusy(false);
+      setJdbcInstallProgress(null);
     }
   }
 
   async function importJdbcDriver(input: ImportJdbcDriverInput): Promise<boolean> {
     setBusy(true);
+    setJdbcInstallProgress({ operation: "import", phase: "preparing", progress: 0 });
     try {
       await api.importJdbcDriver(input);
       setJdbcStatus(await api.jdbcStatus());
@@ -527,6 +568,7 @@ function App() {
       return false;
     } finally {
       setBusy(false);
+      setJdbcInstallProgress(null);
     }
   }
 
@@ -867,6 +909,7 @@ function App() {
                     tab={settingsTab}
                     jdbcStatus={jdbcStatus}
                     jdbcStorageStatus={jdbcStorageStatus}
+                    jdbcInstallProgress={jdbcInstallProgress}
                     policySql={policySql}
                     policyKind={policyKind}
                     policyResult={policyResult}
@@ -878,6 +921,7 @@ function App() {
                     onTabChange={setSettingsTab}
                     onRefreshJdbcStatus={() => void refreshJdbcStatus()}
                     onRefreshJdbcStorageStatus={() => void refreshJdbcStorageStatus()}
+                    onClearMavenCache={clearMavenCache}
                     onInstallJdbcDriver={installJdbcDriver}
                     onImportJdbcDriver={importJdbcDriver}
                     onDeleteJdbcDriver={(bundleId) => void deleteJdbcDriver(bundleId)}

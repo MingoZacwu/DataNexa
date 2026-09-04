@@ -208,6 +208,7 @@ const mockJdbcStorageStatus: JdbcStorageStatus = {
   total_bytes: 6.6 * 1024 * 1024 + 892 * 1024 + 44 * 1024 + 3 * 1024,
   items: [
     { id: "drivers", label: "JDBC drivers", path: "Preview/jdbc-drivers", bytes: 6.6 * 1024 * 1024 },
+    { id: "maven", label: "Maven repository", path: "Preview/maven-repository", bytes: 0 },
     { id: "audit", label: "Audit database", path: "Preview/audit.db", bytes: 892 * 1024 },
     { id: "access", label: "Access control", path: "Preview/access-control.db", bytes: 44 * 1024 },
     { id: "config", label: "Configuration", path: "Preview/config.toml", bytes: 3 * 1024 }
@@ -312,6 +313,7 @@ export const api = {
   snapshot: () => command<AppSnapshot>("get_app_snapshot", undefined, mockSnapshot),
   jdbcStatus: () => command<JdbcStatus>("get_jdbc_status", undefined, mockJdbcStatus),
   jdbcStorageStatus: () => command<JdbcStorageStatus>("get_jdbc_storage_status", undefined, getMockJdbcStorageStatus()),
+  clearMavenCache: () => command<boolean>("clear_maven_cache", undefined, true),
   installJdbcDriver: (input: InstallJdbcDriverInput) =>
     command<JdbcDriverBundle>("install_jdbc_driver", { input }, {
       schema_version: 1,

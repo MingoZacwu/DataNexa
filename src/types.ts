@@ -160,6 +160,15 @@ export interface JdbcStatus {
   drivers: JdbcDriverBundle[];
 }
 
+export type JdbcInstallOperation = "install" | "import";
+export type JdbcInstallPhase = "preparing" | "downloading" | "copying" | "verifying" | "inspecting" | "finalizing";
+
+export interface JdbcInstallProgress {
+  operation: JdbcInstallOperation;
+  phase: JdbcInstallPhase;
+  progress: number | null;
+}
+
 export interface InstallJdbcDriverInput {
   display_name: string;
   maven_coordinate: string;

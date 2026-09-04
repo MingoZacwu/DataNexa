@@ -330,6 +330,8 @@ impl BackendText {
             "Maven coordinate must use groupId:artifactId:version" => "Maven 坐标必须使用 groupId:artifactId:version 格式。",
             "Driver display name must contain between 1 and 80 characters" => "驱动显示名称长度必须在 1 到 80 个字符之间。",
             "Maven completed without producing JDBC driver JAR files" => "Maven 完成后没有生成 JDBC 驱动 JAR 文件。",
+            "Maven repository path must not be a symbolic link" => "Maven 仓库路径不能是符号链接。",
+            "Maven repository path is not a directory" => "Maven 仓库路径不是目录。",
             "The installed bundle does not expose any JDBC Driver implementations" => "已安装的 Bundle 未提供任何 JDBC Driver 实现。",
             "Select at least one JDBC driver JAR or directory" => "请至少选择一个 JDBC 驱动 JAR 文件或目录。",
             "Local JDBC driver files exceed the 1 GiB limit" => "本地 JDBC 驱动文件超过 1 GiB 限制。",
@@ -358,8 +360,6 @@ impl BackendText {
             "The selected external Java Runtime is unavailable" => "选定的外部 Java Runtime 不可用。",
             "JDBC sidecar is unavailable. Build jdbc-sidecar/pom.xml or prepare the bundled runtime." => "JDBC sidecar 不可用。请构建 jdbc-sidecar/pom.xml，或准备内置 Runtime。",
             "Bundled Java Runtime is unavailable. Prepare the bundled runtime or select an external Java Runtime." => "内置 Java Runtime 不可用。请准备内置 Runtime，或选择外部 Java Runtime。",
-            "Maven driver installation timed out" => "Maven JDBC 驱动安装超时。",
-            "Invalid Maven coordinate" => "Maven 坐标无效。",
             "Unsupported JDBC driver bundle manifest" => "不支持的 JDBC 驱动 Bundle 清单。",
             "Maven repository must be an HTTPS URL" => "Maven 仓库必须使用 HTTPS URL。",
             "No .jar files were found in the selected paths" => "所选路径中没有找到 .jar 文件。",
@@ -381,14 +381,6 @@ impl BackendText {
         }
 
         for (prefix, label) in [
-            (
-                "Maven is required for this JDBC technical preview: ",
-                "JDBC 技术预览需要 Maven：",
-            ),
-            (
-                "Maven could not resolve the JDBC driver: ",
-                "Maven 无法解析 JDBC 驱动：",
-            ),
             (
                 "JDBC driver JAR has an invalid file name",
                 "JDBC 驱动 JAR 文件名无效",
@@ -451,6 +443,7 @@ impl BackendText {
                 "invalid_sql" => "SQL 无效",
                 "protocol_mismatch" => "JDBC sidecar 协议版本不兼容",
                 "unsupported_action" => "JDBC sidecar 不支持此操作",
+                "maven_resolution_failed" => "Maven 依赖解析失败",
                 _ => "JDBC 操作失败",
             };
             let detail = match detail {

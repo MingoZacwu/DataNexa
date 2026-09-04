@@ -19,6 +19,7 @@ resources/jdbc-runtime/conf/
 resources/jdbc-runtime/include/
 resources/jdbc-runtime/legal/
 resources/jdbc-runtime/lib/
+resources/jdbc-runtime/jdk-legal-notices.tar.gz
 resources/jdbc-runtime/release
 
 # Generated Tauri schema cache
