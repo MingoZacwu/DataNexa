@@ -89,6 +89,25 @@ const mockSnapshot: AppSnapshot = {
     tools: mockTools.map(({ name, enabled }) => ({ name, enabled })),
     connections: [
       {
+        id: "oracle_reporting_jdbc",
+        name: "Oracle Reporting (JDBC)",
+        type: "jdbc",
+        enabled: true,
+        database: "",
+        host: null,
+        port: null,
+        username: "readonly_user",
+        credential_ref: "vault://oracle_reporting_jdbc",
+        ssl_mode: null,
+        jdbc_bundle_id: "00000000-0000-4000-8000-000000000021",
+        jdbc_url: "jdbc:oracle:thin:@//analytics-db.example.test:1521/analytics?ssl_server_dn_match=true&oracle.net.keepAlive=true",
+        jdbc_driver_class: "oracle.jdbc.OracleDriver",
+        max_rows: 300,
+        query_timeout_ms: 8000,
+        max_connections: 1,
+        max_result_bytes: 1048576
+      },
+      {
         id: "local_mysql",
         name: "MySQL Local",
         type: "mysql",
@@ -186,13 +205,12 @@ const mockJdbcStatus: JdbcStatus = {
 
 const mockJdbcStorageStatus: JdbcStorageStatus = {
   storage_root: "Preview",
-  total_bytes: 95.3 * 1024 * 1024,
+  total_bytes: 6.6 * 1024 * 1024 + 892 * 1024 + 44 * 1024 + 3 * 1024,
   items: [
     { id: "drivers", label: "JDBC drivers", path: "Preview/jdbc-drivers", bytes: 6.6 * 1024 * 1024 },
     { id: "audit", label: "Audit database", path: "Preview/audit.db", bytes: 892 * 1024 },
     { id: "access", label: "Access control", path: "Preview/access-control.db", bytes: 44 * 1024 },
-    { id: "config", label: "Configuration", path: "Preview/config.toml", bytes: 3 * 1024 },
-    { id: "runtime", label: "JDBC Runtime", path: "Preview/jdbc-runtime", bytes: 87.7 * 1024 * 1024 }
+    { id: "config", label: "Configuration", path: "Preview/config.toml", bytes: 3 * 1024 }
   ],
   runtimes: [
     { bundle_id: "00000000-0000-4000-8000-000000000021", display_name: "Oracle JDBC", status: "running", health: "healthy", process_count: 1, memory_bytes: 87.9 * 1024 * 1024, cpu_percent: 0.4 },

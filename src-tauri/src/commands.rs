@@ -121,7 +121,12 @@ pub async fn get_app_snapshot(state: State<'_, Arc<AppState>>) -> Result<AppSnap
 
 #[tauri::command]
 pub async fn get_jdbc_status(state: State<'_, Arc<AppState>>) -> Result<JdbcStatus, String> {
-    state.jdbc.status().await.map_err(to_client_error)
+    let text = text_for_state(state.inner()).await;
+    state
+        .jdbc
+        .status()
+        .await
+        .map_err(|error| to_jdbc_client_error(error, &text))
 }
 
 #[tauri::command]
@@ -130,11 +135,12 @@ pub async fn install_jdbc_driver(
     input: InstallJdbcDriverInput,
 ) -> Result<JdbcDriverBundle, String> {
     let _lifecycle = state.jdbc_lifecycle.lock().await;
+    let text = text_for_state(state.inner()).await;
     state
         .jdbc
         .install_driver(input)
         .await
-        .map_err(to_client_error)
+        .map_err(|error| to_jdbc_client_error(error, &text))
 }
 
 #[tauri::command]
@@ -143,18 +149,24 @@ pub async fn import_jdbc_driver(
     input: ImportJdbcDriverInput,
 ) -> Result<JdbcDriverBundle, String> {
     let _lifecycle = state.jdbc_lifecycle.lock().await;
+    let text = text_for_state(state.inner()).await;
     state
         .jdbc
         .import_driver(input)
         .await
-        .map_err(to_client_error)
+        .map_err(|error| to_jdbc_client_error(error, &text))
 }
 
 #[tauri::command]
 pub async fn get_jdbc_storage_status(
     state: State<'_, Arc<AppState>>,
 ) -> Result<JdbcStorageStatus, String> {
-    state.jdbc.storage_status().await.map_err(to_client_error)
+    let text = text_for_state(state.inner()).await;
+    state
+        .jdbc
+        .storage_status()
+        .await
+        .map_err(|error| to_jdbc_client_error(error, &text))
 }
 
 #[tauri::command]
@@ -163,13 +175,18 @@ pub async fn delete_jdbc_driver(
     bundle_id: String,
 ) -> Result<JdbcStatus, String> {
     let _lifecycle = state.jdbc_lifecycle.lock().await;
+    let text = text_for_state(state.inner()).await;
     let connections = state.config.read().await.connections.clone();
     state.jdbc.shutdown_sessions().await;
     state
         .jdbc
         .delete_driver(&bundle_id, &connections)
-        .map_err(to_client_error)?;
-    state.jdbc.status().await.map_err(to_client_error)
+        .map_err(|error| to_jdbc_client_error(error, &text))?;
+    state
+        .jdbc
+        .status()
+        .await
+        .map_err(|error| to_jdbc_client_error(error, &text))
 }
 
 #[tauri::command]
@@ -513,9 +530,9 @@ pub async fn import_connections(
                     connection
                         .jdbc_bundle_id
                         .as_deref()
-                        .ok_or_else(|| "JDBC driver bundle is required".to_string())?,
+                        .ok_or_else(|| text.jdbc_driver_required().to_string())?,
                 )
-                .map_err(to_client_error)?;
+                .map_err(|error| to_jdbc_client_error(error, &text))?;
         }
         candidate.connections.push(normalize_connection(connection));
         if let (Some(credential_ref), Some(password)) = (credential_ref, password) {
@@ -524,7 +541,7 @@ pub async fn import_connections(
     }
     candidate
         .normalize_and_validate()
-        .map_err(to_client_error)?;
+        .map_err(|error| to_jdbc_client_error(error, &text))?;
 
     let mut saved_credential_refs = Vec::with_capacity(credentials.len());
     for (credential_ref, password) in credentials {
@@ -595,9 +612,9 @@ pub async fn upsert_connection(
                     .connection
                     .jdbc_bundle_id
                     .as_deref()
-                    .ok_or_else(|| "JDBC driver bundle is required".to_string())?,
+                    .ok_or_else(|| text.jdbc_driver_required().to_string())?,
             )
-            .map_err(to_client_error)?;
+            .map_err(|error| to_jdbc_client_error(error, &text))?;
     }
     let clear_password = input.clear_password;
     let mut connection = normalize_connection(input.connection);
@@ -643,7 +660,7 @@ pub async fn upsert_connection(
         }
         candidate
             .normalize_and_validate()
-            .map_err(to_client_error)?;
+            .map_err(|error| to_jdbc_client_error(error, &text))?;
         let credential_to_delete = candidate
             .connections
             .iter()
@@ -860,7 +877,7 @@ pub async fn test_connection(
             .await
         {
             Ok(duration) => Ok(text.connection_test_ok(duration.as_millis())),
-            Err(error) => Err(to_client_error(error)),
+            Err(error) => Err(to_jdbc_client_error(error, &text)),
         };
     }
     state.db.close(&id).await;
@@ -910,7 +927,7 @@ pub async fn test_connection_input(
             .await
         {
             Ok(duration) => Ok(text.connection_test_ok(duration.as_millis())),
-            Err(error) => Err(to_client_error(error)),
+            Err(error) => Err(to_jdbc_client_error(error, &text)),
         };
     }
 
@@ -1272,16 +1289,14 @@ fn validate_connection(connection: &ConnectionConfig, text: &BackendText) -> any
             .trim()
             .is_empty()
         {
-            return Err(anyhow::anyhow!("JDBC driver bundle is required"));
+            return Err(anyhow::anyhow!(text.jdbc_driver_required()));
         }
         if !connection
             .jdbc_url
             .as_deref()
             .is_some_and(|value| value.trim().starts_with("jdbc:"))
         {
-            return Err(anyhow::anyhow!(
-                "A JDBC URL beginning with jdbc: is required"
-            ));
+            return Err(anyhow::anyhow!(text.jdbc_url_required()));
         }
     }
     Ok(())
@@ -1372,6 +1387,10 @@ async fn text_for_state(state: &Arc<AppState>) -> BackendText {
 
 fn to_client_error(error: impl std::fmt::Display) -> String {
     sanitize_text(&error.to_string())
+}
+
+fn to_jdbc_client_error(error: impl std::fmt::Display, text: &BackendText) -> String {
+    text.jdbc_error(&sanitize_text(&error.to_string()))
 }
 
 fn sanitize_text(text: &str) -> String {

@@ -75,7 +75,7 @@ const zhCN = {
     confirmClear: "隔离旧日志并继续"
   },
   toast: {
-    connectionSaved: "连接已保存。密码只会写入本机凭证库，不会进入 TOML 配置。",
+    connectionSaved: "连接配置已保存。",
     connectionDeleted: "连接已删除。",
     tokenRotated: "本地 MCP 访问密钥已手动轮换。",
     serverSaved: "服务设置已自动保存。",
@@ -135,8 +135,7 @@ const zhCN = {
     delete: "删除连接",
     enabled: "启用",
     paused: "暂停",
-    noDatabaseFile: "未选择数据库文件",
-    jdbcPreview: "JDBC 技术预览 · MCP 只读"
+    noDatabaseFile: "未选择数据库文件"
   },
   tools: {
     summary: "{enabled} / {total} 个工具已启用",
@@ -221,7 +220,8 @@ const zhCN = {
   },
   settings: {
     general: "通用",
-    driverManagement: "驱动管理",
+    driverManagement: "JDBC 支持",
+    preview: "预览",
     storagePerformance: "存储与性能",
     storagePerformanceDescription: "查看驱动存储路径、空间占用，以及第三方驱动运行时资源状态。",
     totalStorage: "总占用",
@@ -400,7 +400,6 @@ const zhCN = {
     jdbcDriver: "JDBC 驱动",
     jdbcDriverPlaceholder: "选择已安装的 Driver Bundle",
     jdbcUrl: "JDBC URL",
-    jdbcUrlConfigured: "JDBC URL 已配置",
     jdbcDriverClass: "Driver Class（可选）",
     jdbcDriverClassPlaceholder: "自动发现失败时填写",
       jdbcPreviewNotice: "JDBC 技术预览支持通过 MCP 执行受控只读查询；未知方言或无法确认安全的语句会被拒绝。",
@@ -527,7 +526,7 @@ const en: I18nMessages = {
     confirmClear: "Quarantine logs and continue"
   },
   toast: {
-    connectionSaved: "Connection saved. Passwords are stored only in the local credential vault, not in TOML config.",
+    connectionSaved: "Connection config saved.",
     connectionDeleted: "Connection deleted.",
     tokenRotated: "Local MCP access token rotated manually.",
     serverSaved: "Server settings saved automatically.",
@@ -587,8 +586,7 @@ const en: I18nMessages = {
     delete: "Delete connection",
     enabled: "Enabled",
     paused: "Paused",
-    noDatabaseFile: "No database file selected",
-    jdbcPreview: "JDBC technical preview · MCP read-only"
+    noDatabaseFile: "No database file selected"
   },
   tools: {
     summary: "{enabled} / {total} tools enabled",
@@ -673,8 +671,9 @@ const en: I18nMessages = {
   },
   settings: {
     general: "General",
-    driverManagement: "Driver management",
-    storagePerformance: "Storage & performance",
+    driverManagement: "JDBC Support",
+    preview: "Beta",
+    storagePerformance: "Resources",
     storagePerformanceDescription: "Review driver storage paths, disk usage, and third-party runtime health.",
     totalStorage: "Total usage",
     jdbcDriverStorage: "JDBC driver usage",
@@ -852,7 +851,6 @@ const en: I18nMessages = {
     jdbcDriver: "JDBC driver",
     jdbcDriverPlaceholder: "Select an installed Driver Bundle",
     jdbcUrl: "JDBC URL",
-    jdbcUrlConfigured: "JDBC URL configured",
     jdbcDriverClass: "Driver Class (optional)",
     jdbcDriverClassPlaceholder: "Enter when automatic discovery fails",
     jdbcPreviewNotice: "The JDBC technical preview supports controlled read-only MCP queries. Unknown or unsafe SQL dialects may be rejected.",

@@ -1073,6 +1073,29 @@ p {
   box-shadow: var(--soft-shadow);
 }
 
+.settings-tabs .jdbc-support-tab {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.settings-tab-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--blue) 20%, transparent);
+  border-radius: 999px;
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 8%, transparent);
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 700;
+}
+
 .settings-stack {
   display: grid;
   gap: 12px;
@@ -1136,7 +1159,7 @@ p {
 .storage-usage-segment.runtime,
 .storage-breakdown-dot.runtime { background: var(--amber); }
 .storage-usage-segment.drivers,
-.storage-breakdown-dot.drivers { background: var(--violet); }
+.storage-breakdown-dot.drivers { background: var(--amber); }
 .storage-usage-segment.audit,
 .storage-breakdown-dot.audit { background: var(--blue); }
 .storage-usage-segment.access,
@@ -1145,19 +1168,21 @@ p {
 .storage-breakdown-dot.config { background: var(--muted); }
 
 .storage-breakdown {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 8px 18px;
+  gap: 12px 20px;
+  flex-wrap: wrap;
   margin-top: 12px;
   margin-bottom: 18px;
 }
 
 .storage-breakdown-row {
   min-width: 0;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 7px;
 }
 
@@ -1310,7 +1335,7 @@ p {
 
 @media (max-width: 720px) {
   .storage-overview-grid { grid-template-columns: 1fr; }
-  .storage-breakdown { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .storage-breakdown { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .storage-management .driver-section-heading { align-items: flex-start; }
   .storage-detail-row { grid-template-columns: 1fr auto; gap: 4px 10px; }
   .storage-detail-row code { grid-column: 1 / -1; grid-row: 2; }

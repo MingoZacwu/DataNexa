@@ -479,7 +479,16 @@ impl JdbcManager {
             .ok_or_else(|| anyhow::anyhow!("JDBC manager is unavailable in this test context"))?;
         let storage_root = app.path().app_data_dir()?;
         let drivers_root = self.drivers_root()?;
-        let mut items = vec![
+        let runtime_path = self.java_executable().ok().and_then(|(java, _)| {
+            java.parent()
+                .and_then(|path| path.parent())
+                .map(|path| path.to_path_buf())
+        });
+        let runtime_bytes = runtime_path
+            .as_ref()
+            .map(|path| path_size_bytes(path))
+            .unwrap_or(0);
+        let items = vec![
             ("drivers", "JDBC drivers", drivers_root.clone()),
             ("audit", "Audit database", storage_root.join("audit.db")),
             (
@@ -489,20 +498,6 @@ impl JdbcManager {
             ),
             ("config", "Configuration", storage_root.join("config.toml")),
         ];
-        if let Ok((java, _)) = self.java_executable() {
-            if let Some(runtime_root) = java.parent().and_then(|path| path.parent()) {
-                items.push(("runtime", "JDBC Runtime", runtime_root.to_path_buf()));
-            }
-        }
-        let runtime_bytes = items
-            .iter()
-            .find(|(id, _, _)| *id == "runtime")
-            .map(|(_, _, path)| path_size_bytes(path))
-            .unwrap_or(0);
-        let runtime_is_external = items
-            .iter()
-            .find(|(id, _, _)| *id == "runtime")
-            .is_some_and(|(_, _, path)| !path.starts_with(&storage_root));
         let items = items
             .into_iter()
             .map(|(id, label, path)| JdbcStorageItem {
@@ -512,8 +507,11 @@ impl JdbcManager {
                 path: path.to_string_lossy().to_string(),
             })
             .collect::<Vec<_>>();
+        let runtime_inside_storage = runtime_path
+            .as_ref()
+            .is_some_and(|path| path.starts_with(&storage_root));
         let total_bytes = path_size_bytes(&storage_root)
-            .saturating_add(runtime_is_external.then_some(runtime_bytes).unwrap_or(0));
+            .saturating_sub(runtime_inside_storage.then_some(runtime_bytes).unwrap_or(0));
         let drivers = self.list_drivers()?;
         let runtimes = self.collect_driver_runtime_info(&drivers).await;
         Ok(JdbcStorageStatus {

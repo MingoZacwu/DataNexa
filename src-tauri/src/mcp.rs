@@ -897,7 +897,23 @@ async fn call_tool_audited(
     let audit_connection_id = optional_string(&args, "connection_id");
     let audit_connection_name = connection_name(&app, audit_connection_id.as_deref()).await;
     let audit_sql = audit_sql_for_args(&app, &args).await;
+    let text = text_for_app(&app).await;
+    let is_jdbc = if let Some(connection_id) = audit_connection_id.as_deref() {
+        app.config
+            .read()
+            .await
+            .connections
+            .iter()
+            .any(|connection| connection.id == connection_id && connection.kind == DbKind::Jdbc)
+    } else {
+        false
+    };
     let result = call_tool(app.clone(), actor.clone(), params).await;
+    let result = if is_jdbc {
+        result.map_err(|error| anyhow::anyhow!(text.jdbc_error(&sanitize_error(&error))))
+    } else {
+        result
+    };
     if let Err(error) = &result {
         let max_events = audit_limit(&app).await;
         let denied = error.to_string().contains("disabled in DataNexa")
@@ -1002,7 +1018,7 @@ async fn call_tool(
                     .connections
                     .iter()
                     .filter(|connection| connection.enabled)
-                    .map(public_connection)
+                    .map(|connection| public_connection(connection, &text))
                     .collect::<Vec<Value>>()
             };
             let connections = if actor.token_id.is_some() {
@@ -1098,7 +1114,7 @@ async fn call_tool(
                 .map(|value| value as u32);
             let connection = connection(app.clone(), connection_id.clone()).await?;
             if connection.kind == DbKind::Jdbc {
-                let reason = "Sample rows are unsupported for the generic JDBC profile because DataNexa cannot guarantee portable sampling SQL.";
+                let reason = text.jdbc_sample_rows_unsupported();
                 app.audit
                     .record_with_actor(
                         actor.clone(),
@@ -1210,7 +1226,7 @@ async fn call_tool(
             let sql = required_string(&args, "sql")?;
             let connection = connection(app.clone(), connection_id.clone()).await?;
             if connection.kind == DbKind::Jdbc {
-                let reason = "Explain SQL is unsupported for the generic JDBC profile because Explain syntax and plan retrieval are database-specific.";
+                let reason = text.jdbc_explain_unsupported();
                 app.audit
                     .record_with_actor(
                         actor.clone(),
@@ -1380,7 +1396,7 @@ async fn connection(app: Arc<AppState>, connection_id: String) -> anyhow::Result
     Ok(connection)
 }
 
-fn public_connection(connection: &ConnectionConfig) -> Value {
+fn public_connection(connection: &ConnectionConfig, text: &BackendText) -> Value {
     json!({
         "id": connection.id,
         "name": connection.name,
@@ -1389,11 +1405,11 @@ fn public_connection(connection: &ConnectionConfig) -> Value {
         "max_rows": connection.max_rows,
         "query_timeout_ms": connection.query_timeout_ms,
         "max_result_bytes": connection.max_result_bytes,
-        "capabilities": connection_capabilities(&connection.kind)
+        "capabilities": connection_capabilities(&connection.kind, text)
     })
 }
 
-fn connection_capabilities(kind: &DbKind) -> Value {
+fn connection_capabilities(kind: &DbKind, text: &BackendText) -> Value {
     let mut supported_tools = vec![
         Value::from("datanexa_get_schema"),
         Value::from("datanexa_describe_table"),
@@ -1404,11 +1420,11 @@ fn connection_capabilities(kind: &DbKind) -> Value {
     if matches!(kind, DbKind::Jdbc) {
         unsupported_tools.push(json!({
             "name": "datanexa_sample_rows",
-            "reason": "unsupported for generic JDBC connections"
+            "reason": text.jdbc_sample_rows_unsupported()
         }));
         unsupported_tools.push(json!({
             "name": "datanexa_explain_sql",
-            "reason": "unsupported for generic JDBC connections"
+            "reason": text.jdbc_explain_unsupported()
         }));
     } else {
         supported_tools.push(Value::from("datanexa_sample_rows"));

@@ -164,8 +164,9 @@ export function SettingsView({
         <button type="button" className={clsx(tab === "general" && "active")} onClick={() => onTabChange("general")}>
           {t.settings.general}
         </button>
-        <button type="button" className={clsx(tab === "drivers" && "active")} onClick={() => onTabChange("drivers")}>
-          {t.settings.driverManagement}
+        <button type="button" className={clsx("jdbc-support-tab", tab === "drivers" && "active")} onClick={() => onTabChange("drivers")}>
+          <span>{t.settings.driverManagement}</span>
+          <span className="settings-tab-badge">{t.settings.preview}</span>
         </button>
         <button type="button" className={clsx(tab === "storage" && "active")} onClick={() => onTabChange("storage")}>
           {t.settings.storagePerformance}
@@ -703,7 +704,6 @@ function DriverManagement({
         <div className="driver-section-heading">
           <div>
             <h2>{t.settings.jdbcRuntime}</h2>
-            <p>{t.settings.jdbcRuntimeDescription}</p>
           </div>
           <div className="runtime-heading-actions">
             <IconTooltip label={t.settings.selectJavaRuntime}>
@@ -736,7 +736,6 @@ function DriverManagement({
         <div className="driver-section-heading">
           <div>
             <h2>{t.settings.jdbcDrivers}</h2>
-            <p>{t.settings.jdbcDriversDescription}</p>
           </div>
           <div className="driver-heading-actions">
             <button type="button" className="button ghost" onClick={() => setLocalDialogOpen(true)} disabled={busy || !runtime?.available}>
@@ -911,7 +910,7 @@ function StorageManagement({ t, status, busy, onRefresh }: { t: I18nMessages; st
   return (
     <div className="settings-stack storage-management" onScroll={updateScrollFade}>
       <section className="panel driver-runtime-panel">
-        <div className="driver-section-heading"><div><h2>{t.settings.storagePerformance}</h2><p>{t.settings.storagePerformanceDescription}</p></div><IconTooltip label={t.common.refresh}><button type="button" className="icon-button" onClick={onRefresh} disabled={busy}><RefreshCw size={17} /></button></IconTooltip></div>
+        <div className="driver-section-heading"><div><h2>{t.settings.storagePerformance}</h2></div><IconTooltip label={t.common.refresh}><button type="button" className="icon-button" onClick={onRefresh} disabled={busy}><RefreshCw size={17} /></button></IconTooltip></div>
         <div className="overview-grid storage-overview-grid">
           <button
             type="button"
@@ -935,7 +934,7 @@ function StorageManagement({ t, status, busy, onRefresh }: { t: I18nMessages; st
       </section>
       {selectedStorageView === "storage" ? (
         <section className="panel storage-details-panel">
-          <div className="driver-section-heading"><div><h2>{t.settings.storageDetails}</h2><p>{t.settings.storageDetailsDescription}</p></div></div>
+          <div className="driver-section-heading"><div><h2>{t.settings.storageDetails}</h2></div></div>
           {!status ? <div className="empty-state">{t.settings.runtimeChecking}</div> : <>
             <div className="storage-usage-bar" role="img" aria-label={t.settings.storageBreakdownLabel}>{storageBreakdown.map((item) => <span key={item.id} className={clsx("storage-usage-segment", item.tone)} style={{ width: `${item.ratio * 100}%` }} />)}</div>
             <div className="storage-breakdown">{storageBreakdown.map((item) => <div className="storage-breakdown-row" key={item.id}><div className="storage-breakdown-label"><span className={clsx("storage-breakdown-dot", item.tone)} />{item.label}</div><strong>{formatPercent(item.ratio)}</strong></div>)}</div>
@@ -944,7 +943,7 @@ function StorageManagement({ t, status, busy, onRefresh }: { t: I18nMessages; st
         </section>
       ) : (
         <section className="panel runtime-details-panel">
-          <div className="driver-section-heading"><div><h2>{t.settings.driverRuntimeUsage}</h2><p>{t.settings.driverRuntimeUsageDescription}</p></div></div>
+          <div className="driver-section-heading"><div><h2>{t.settings.driverRuntimeUsage}</h2></div></div>
           {!status ? <div className="empty-state">{t.settings.runtimeChecking}</div> : <>
             <div className="runtime-cpu-overview">
               <div className="runtime-cpu-heading"><div><span>{t.settings.totalCpuUsage}</span><small>{t.settings.cpuUsageLive}</small></div><strong>{totalCpuPercent.toFixed(1)}%</strong></div>

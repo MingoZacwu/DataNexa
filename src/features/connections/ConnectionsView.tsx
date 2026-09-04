@@ -67,19 +67,25 @@ export function ConnectionsView({
         {selected ? (
           <>
             <div className="inspector-heading">
-              <ConnectionListItem t={t} connection={selected} />
+              <ConnectionListItem t={t} connection={selected} showJdbcBadge={false} />
               <button type="button" className="button ghost" disabled={busy} onClick={() => onEdit(selected)}>{t.connections.edit}</button>
             </div>
             <dl className="inspector-grid">
-              <div><dt>{t.connectionDialog.host}</dt><dd><code>{selected.type === "sqlite" ? "LOCAL" : selected.type === "jdbc" ? "SIDECAR" : selected.host || "-"}</code></dd></div>
-              <div><dt>{t.connectionDialog.port}</dt><dd><code>{selected.type === "sqlite" || selected.type === "jdbc" ? "-" : selected.port ?? defaultPort(selected.type)}</code></dd></div>
-              <div><dt>{t.connectionDialog.database}</dt><dd><code>{selected.type === "jdbc" ? t.connectionDialog.jdbcUrlConfigured : selected.database || "-"}</code></dd></div>
+              {selected.type === "jdbc" ? (
+                <div className="inspector-grid-wide"><dt>{t.connectionDialog.jdbcUrl}</dt><dd><code title={selected.jdbc_url ?? undefined}>{selected.jdbc_url || "-"}</code></dd></div>
+              ) : (
+                <>
+                  <div><dt>{t.connectionDialog.host}</dt><dd><code>{selected.type === "sqlite" ? "LOCAL" : selected.host || "-"}</code></dd></div>
+                  <div><dt>{t.connectionDialog.port}</dt><dd><code>{selected.type === "sqlite" ? "-" : selected.port ?? defaultPort(selected.type)}</code></dd></div>
+                  <div><dt>{t.connectionDialog.database}</dt><dd><code>{selected.database || "-"}</code></dd></div>
+                </>
+              )}
               <div><dt>{t.connectionDialog.username}</dt><dd><code>{selected.username || "-"}</code></dd></div>
               <div><dt>{t.connectionDialog.sslMode}</dt><dd>{selected.ssl_mode || "-"}</dd></div>
               <div><dt>{t.connectionDialog.maxRows}</dt><dd>{selected.max_rows}</dd></div>
               <div><dt>{t.connectionDialog.queryTimeoutMs}</dt><dd>{selected.query_timeout_ms} ms</dd></div>
               <div><dt>{t.connectionDialog.maxConnections}</dt><dd>{selected.max_connections}</dd></div>
-              <div className="inspector-grid-wide"><dt>{t.connectionDialog.maxResultBytes}</dt><dd>{Math.round(selected.max_result_bytes / 1024)} KiB</dd></div>
+              <div className={selected.type === "jdbc" ? undefined : "inspector-grid-wide"}><dt>{t.connectionDialog.maxResultBytes}</dt><dd>{Math.round(selected.max_result_bytes / 1024)} KiB</dd></div>
             </dl>
             <div className="inspector-actions">
               <button type="button" className="button soft" disabled={busy || !selected.enabled || !migrationReady} onClick={() => onTest(selected.id)}><Cable size={15} />{t.connections.test}</button>
@@ -360,7 +366,7 @@ function ConnectionRow({
   );
 }
 
-export function ConnectionListItem({ t, connection, compact = false }: { t: I18nMessages; connection: ConnectionConfig; compact?: boolean }) {
+export function ConnectionListItem({ t, connection, compact = false, showJdbcBadge = true }: { t: I18nMessages; connection: ConnectionConfig; compact?: boolean; showJdbcBadge?: boolean }) {
   return (
     <div className={clsx("connection-item", compact && "compact")}>
       <div className={clsx("db-badge", connection.type)}>
@@ -371,14 +377,15 @@ export function ConnectionListItem({ t, connection, compact = false }: { t: I18n
       <div className="connection-info">
         <div>
           <strong>{connection.name}</strong>
+          {showJdbcBadge && connection.type === "jdbc" && <StatusPill tone="blue" label="JDBC" />}
           <StatusPill tone={connection.enabled ? "green" : "slate"} label={connection.enabled ? t.connections.enabled : t.connections.paused} />
         </div>
-        <p>
+        <p title={connection.type === "jdbc" ? connection.jdbc_url ?? undefined : undefined}>
           {connection.type === "sqlite"
             ? connection.database || t.connections.noDatabaseFile
             : connection.type === "jdbc"
-              ? t.connections.jdbcPreview
-            : `${connection.host || "-"}:${connection.port ?? defaultPort(connection.type)}`}
+              ? connection.jdbc_url || "-"
+              : `${connection.host || "-"}:${connection.port ?? defaultPort(connection.type)}`}
         </p>
       </div>
     </div>
