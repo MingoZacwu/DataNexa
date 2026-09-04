@@ -1,4 +1,7 @@
 fn main() {
+    println!("cargo:rerun-if-changed=../jdbc-sidecar/src");
+    println!("cargo:rerun-if-changed=../jdbc-sidecar/pom.xml");
+    println!("cargo:rerun-if-changed=../resources/jdbc-runtime");
     tauri_build::build();
 
     #[cfg(target_os = "macos")]

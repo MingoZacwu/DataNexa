@@ -118,7 +118,7 @@ export function OverviewView({
           )}
         />
         <div className="compact-list">
-          {snapshot.config.connections.slice(0, 5).map((connection) => (
+          {snapshot.config.connections.map((connection) => (
             <ConnectionListItem t={t} key={connection.id} connection={connection} compact />
           ))}
         </div>

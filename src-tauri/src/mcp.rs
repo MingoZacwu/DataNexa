@@ -1037,7 +1037,11 @@ async fn call_tool(
         "datanexa_get_schema" => {
             let connection_id = required_string(&args, "connection_id")?;
             let connection = connection(app.clone(), connection_id.clone()).await?;
-            let schema = app.db.list_schema(&connection, &app.vault, &text).await?;
+            let schema = if connection.kind == DbKind::Jdbc {
+                app.jdbc.list_schema(&connection, &app.vault).await?
+            } else {
+                app.db.list_schema(&connection, &app.vault, &text).await?
+            };
             app.audit
                 .record_with_actor(
                     actor.clone(),
@@ -1059,10 +1063,15 @@ async fn call_tool(
             let table = required_string(&args, "table")?;
             let schema = optional_string(&args, "schema");
             let connection = connection(app.clone(), connection_id.clone()).await?;
-            let columns = app
-                .db
-                .describe_table(&connection, &app.vault, schema.as_deref(), &table, &text)
-                .await?;
+            let columns = if connection.kind == DbKind::Jdbc {
+                app.jdbc
+                    .describe_table(&connection, &app.vault, schema.as_deref(), &table)
+                    .await?
+            } else {
+                app.db
+                    .describe_table(&connection, &app.vault, schema.as_deref(), &table, &text)
+                    .await?
+            };
             app.audit
                 .record_with_actor(
                     actor.clone(),
@@ -1088,45 +1097,74 @@ async fn call_tool(
                 .and_then(Value::as_u64)
                 .map(|value| value as u32);
             let connection = connection(app.clone(), connection_id.clone()).await?;
-            let result = app
-                .db
-                .sample_rows(
-                    &connection,
-                    &app.vault,
-                    schema.as_deref(),
-                    &table,
-                    limit,
-                    &text,
-                )
-                .await?;
-            app.audit
-                .record_with_actor(
-                    actor.clone(),
-                    Some(connection_id),
-                    Some(connection.name.clone()),
-                    name,
-                    if result.truncated {
-                        AuditStatus::Truncated
-                    } else {
-                        AuditStatus::Allowed
-                    },
-                    None,
-                    Some(result.elapsed_ms),
-                    Some(result.row_count),
-                    Some(audit_sql(&app, &connection.kind, &result.rewritten_sql).await),
-                    max_events,
-                )
-                .await?;
-            json!(result)
+            if connection.kind == DbKind::Jdbc {
+                let reason = "Sample rows are unsupported for the generic JDBC profile because DataNexa cannot guarantee portable sampling SQL.";
+                app.audit
+                    .record_with_actor(
+                        actor.clone(),
+                        Some(connection_id.clone()),
+                        Some(connection.name.clone()),
+                        name,
+                        AuditStatus::Error,
+                        Some(reason.to_string()),
+                        None,
+                        None,
+                        None,
+                        max_events,
+                    )
+                    .await?;
+                denied = true;
+                json!(unsupported_tool(
+                    "datanexa_sample_rows",
+                    &connection_id,
+                    reason,
+                ))
+            } else {
+                let result = app
+                    .db
+                    .sample_rows(
+                        &connection,
+                        &app.vault,
+                        schema.as_deref(),
+                        &table,
+                        limit,
+                        &text,
+                    )
+                    .await?;
+                app.audit
+                    .record_with_actor(
+                        actor.clone(),
+                        Some(connection_id),
+                        Some(connection.name.clone()),
+                        name,
+                        if result.truncated {
+                            AuditStatus::Truncated
+                        } else {
+                            AuditStatus::Allowed
+                        },
+                        None,
+                        Some(result.elapsed_ms),
+                        Some(result.row_count),
+                        Some(audit_sql(&app, &connection.kind, &result.rewritten_sql).await),
+                        max_events,
+                    )
+                    .await?;
+                json!(result)
+            }
         }
         "datanexa_execute_readonly_sql" => {
             let connection_id = required_string(&args, "connection_id")?;
             let sql = required_string(&args, "sql")?;
             let connection = connection(app.clone(), connection_id.clone()).await?;
-            let (policy, result) = app
-                .db
-                .execute_readonly(&connection, &app.vault, &sql, &text)
-                .await?;
+            let (policy, result) = if connection.kind == DbKind::Jdbc {
+                app.jdbc
+                    .execute_readonly(&connection, &app.vault, &sql, &text)
+                    .await?
+            } else {
+                app.db
+                    .execute_readonly(&connection, &app.vault, &sql, &text)
+                    .await?
+            };
             if !policy.allowed {
                 denied = true;
                 app.audit
@@ -1171,48 +1209,72 @@ async fn call_tool(
             let connection_id = required_string(&args, "connection_id")?;
             let sql = required_string(&args, "sql")?;
             let connection = connection(app.clone(), connection_id.clone()).await?;
-            let (policy, result) = app
-                .db
-                .explain_sql(&connection, &app.vault, &sql, &text)
-                .await?;
-            if !policy.allowed {
-                denied = true;
+            if connection.kind == DbKind::Jdbc {
+                let reason = "Explain SQL is unsupported for the generic JDBC profile because Explain syntax and plan retrieval are database-specific.";
                 app.audit
                     .record_with_actor(
                         actor.clone(),
-                        Some(connection_id),
+                        Some(connection_id.clone()),
                         Some(connection.name.clone()),
                         name,
-                        AuditStatus::Denied,
-                        Some(policy.reason.clone()),
+                        AuditStatus::Error,
+                        Some(reason.to_string()),
                         None,
                         None,
                         Some(audit_sql(&app, &connection.kind, &sql).await),
                         max_events,
                     )
                     .await?;
-                json!({ "policy": policy, "result": null })
+                denied = true;
+                json!(unsupported_tool(
+                    "datanexa_explain_sql",
+                    &connection_id,
+                    reason,
+                ))
             } else {
-                let result = result.ok_or_else(|| anyhow::anyhow!("missing query result"))?;
-                app.audit
-                    .record_with_actor(
-                        actor.clone(),
-                        Some(connection_id),
-                        Some(connection.name.clone()),
-                        name,
-                        if result.truncated {
-                            AuditStatus::Truncated
-                        } else {
-                            AuditStatus::Allowed
-                        },
-                        None,
-                        Some(result.elapsed_ms),
-                        Some(result.row_count),
-                        Some(audit_sql(&app, &connection.kind, &result.rewritten_sql).await),
-                        max_events,
-                    )
+                let (policy, result) = app
+                    .db
+                    .explain_sql(&connection, &app.vault, &sql, &text)
                     .await?;
-                json!({ "policy": policy, "result": result })
+                if !policy.allowed {
+                    denied = true;
+                    app.audit
+                        .record_with_actor(
+                            actor.clone(),
+                            Some(connection_id),
+                            Some(connection.name.clone()),
+                            name,
+                            AuditStatus::Denied,
+                            Some(policy.reason.clone()),
+                            None,
+                            None,
+                            Some(audit_sql(&app, &connection.kind, &sql).await),
+                            max_events,
+                        )
+                        .await?;
+                    json!({ "policy": policy, "result": null })
+                } else {
+                    let result = result.ok_or_else(|| anyhow::anyhow!("missing query result"))?;
+                    app.audit
+                        .record_with_actor(
+                            actor.clone(),
+                            Some(connection_id),
+                            Some(connection.name.clone()),
+                            name,
+                            if result.truncated {
+                                AuditStatus::Truncated
+                            } else {
+                                AuditStatus::Allowed
+                            },
+                            None,
+                            Some(result.elapsed_ms),
+                            Some(result.row_count),
+                            Some(audit_sql(&app, &connection.kind, &result.rewritten_sql).await),
+                            max_events,
+                        )
+                        .await?;
+                    json!({ "policy": policy, "result": result })
+                }
             }
         }
         "datanexa_policy_check" => {
@@ -1326,7 +1388,51 @@ fn public_connection(connection: &ConnectionConfig) -> Value {
         "enabled": connection.enabled,
         "max_rows": connection.max_rows,
         "query_timeout_ms": connection.query_timeout_ms,
-        "max_result_bytes": connection.max_result_bytes
+        "max_result_bytes": connection.max_result_bytes,
+        "capabilities": connection_capabilities(&connection.kind)
+    })
+}
+
+fn connection_capabilities(kind: &DbKind) -> Value {
+    let mut supported_tools = vec![
+        Value::from("datanexa_get_schema"),
+        Value::from("datanexa_describe_table"),
+        Value::from("datanexa_execute_readonly_sql"),
+        Value::from("datanexa_policy_check"),
+    ];
+    let mut unsupported_tools = Vec::new();
+    if matches!(kind, DbKind::Jdbc) {
+        unsupported_tools.push(json!({
+            "name": "datanexa_sample_rows",
+            "reason": "unsupported for generic JDBC connections"
+        }));
+        unsupported_tools.push(json!({
+            "name": "datanexa_explain_sql",
+            "reason": "unsupported for generic JDBC connections"
+        }));
+    } else {
+        supported_tools.push(Value::from("datanexa_sample_rows"));
+        supported_tools.push(Value::from("datanexa_explain_sql"));
+    }
+    json!({
+        "profile": if matches!(kind, DbKind::Jdbc) {
+            "generic_jdbc"
+        } else {
+            db_kind(kind)
+        },
+        "supported_tools": supported_tools,
+        "unsupported_tools": unsupported_tools
+    })
+}
+
+fn unsupported_tool(tool: &str, connection_id: &str, reason: &str) -> Value {
+    json!({
+        "unsupported": {
+            "tool": tool,
+            "connection_id": connection_id,
+            "profile": "generic_jdbc",
+            "reason": reason
+        }
     })
 }
 
@@ -1335,6 +1441,7 @@ fn db_kind(kind: &DbKind) -> &'static str {
         DbKind::Sqlite => "sqlite",
         DbKind::Mysql => "mysql",
         DbKind::Postgres => "postgres",
+        DbKind::Jdbc => "jdbc",
     }
 }
 
@@ -1358,6 +1465,7 @@ fn parse_db_kind(kind: &str) -> anyhow::Result<DbKind> {
         "sqlite" => Ok(DbKind::Sqlite),
         "mysql" => Ok(DbKind::Mysql),
         "postgres" | "postgresql" => Ok(DbKind::Postgres),
+        "jdbc" => Ok(DbKind::Jdbc),
         _ => Err(anyhow::anyhow!("unsupported database kind: {kind}")),
     }
 }
@@ -1429,6 +1537,8 @@ mod tests {
             audit: AuditLogger::for_test(audit_path.to_path_buf()),
             access,
             db: DatabaseManager::default(),
+            jdbc: crate::jdbc::JdbcManager::for_test(),
+            jdbc_lifecycle: tokio::sync::Mutex::new(()),
             mcp: tokio::sync::RwLock::new(McpRuntime::default()),
             mcp_lifecycle: tokio::sync::Mutex::new(()),
             mcp_cancellation: tokio::sync::RwLock::new(tokio_util::sync::CancellationToken::new()),
@@ -1450,6 +1560,8 @@ mod tests {
             audit: AuditLogger::for_test(root.join("audit.json")),
             access: AccessControlStore::for_test(root.join("access-control.db")),
             db: DatabaseManager::default(),
+            jdbc: crate::jdbc::JdbcManager::for_test(),
+            jdbc_lifecycle: tokio::sync::Mutex::new(()),
             mcp: tokio::sync::RwLock::new(McpRuntime::default()),
             mcp_lifecycle: tokio::sync::Mutex::new(()),
             mcp_cancellation: tokio::sync::RwLock::new(tokio_util::sync::CancellationToken::new()),

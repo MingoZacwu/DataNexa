@@ -4,6 +4,7 @@ mod commands;
 mod config;
 mod db;
 mod i18n;
+mod jdbc;
 mod mcp;
 mod policy;
 mod startup;
@@ -19,14 +20,16 @@ use std::time::Duration;
 
 use commands::{
     check_updates_if_due, clear_audit_events, clear_legacy_audit_log, create_access_token,
-    delete_access_token, delete_connection, diagnose_connection, disable_all_connections,
-    export_connections, get_access_token_secret, get_app_snapshot, hide_main_window,
-    import_connections, minimize_main_window, open_project_homepage, open_project_releases,
-    open_project_site, policy_check, rename_access_token, retry_audit_migration,
-    rotate_access_token, save_server_config, save_settings_config, set_access_token_enabled,
-    set_connection_enabled, set_mcp_tool_enabled, set_token_connection_allowed,
-    set_token_tool_allowed, set_window_material_theme, start_mcp_server, start_window_drag,
-    stop_mcp_server, test_connection, test_connection_input, upsert_connection,
+    delete_access_token, delete_connection, delete_jdbc_driver, diagnose_connection,
+    disable_all_connections, export_connections, get_access_token_secret, get_app_snapshot,
+    get_jdbc_status, get_jdbc_storage_status, hide_main_window, import_connections,
+    import_jdbc_driver, install_jdbc_driver, minimize_main_window, open_project_homepage,
+    open_project_releases, open_project_site, policy_check, rename_access_token,
+    retry_audit_migration, rotate_access_token, save_server_config, save_settings_config,
+    set_access_token_enabled, set_connection_enabled, set_mcp_tool_enabled,
+    set_token_connection_allowed, set_token_tool_allowed, set_window_material_theme,
+    start_mcp_server, start_window_drag, stop_mcp_server, test_connection, test_connection_input,
+    upsert_connection,
 };
 use i18n::{backend_text, BackendText};
 use state::AppState;
@@ -637,6 +640,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_app_snapshot,
+            get_jdbc_status,
+            get_jdbc_storage_status,
+            install_jdbc_driver,
+            import_jdbc_driver,
+            delete_jdbc_driver,
             create_access_token,
             rename_access_token,
             set_access_token_enabled,

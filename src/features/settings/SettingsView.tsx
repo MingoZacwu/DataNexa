@@ -1,5 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Switch from "@radix-ui/react-switch";
+import { open } from "@tauri-apps/plugin-dialog";
 import clsx from "clsx";
 import {
   AlertTriangle,
@@ -9,23 +10,29 @@ import {
   FileDown,
   FileText,
   FileUp,
+  FolderOpen,
+  HardDrive,
+  Activity,
   Github,
   Home,
   KeyRound,
   ListChecks,
   Monitor,
+  PackagePlus,
   RefreshCw,
+  RotateCcw,
   SearchCheck, ShieldAlert,
   ShieldCheck,
   ShieldOff,
+  Trash2,
   X
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { FormEvent, ReactNode } from "react";
 import appConfig from "../../../app.config.json";
 import appIconUrl from "../../../resources/icon.png";
 import { formatMessage, languageOptions, normalizeLocale, type I18nMessages, type Locale } from "../../i18n";
-import type { AppSnapshot, DatabaseType, PolicyCheckResult, ServerConfig, SettingsConfig } from "../../types";
+import type { AppSnapshot, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcDriverRuntimeInfo, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "../../types";
 import type { UpdateState } from "../../lib/updater";
 import type { EffectiveTheme, SettingsTab, ThemeMode } from "../../app/types";
 import { updateScrollFade } from "../../app/utils";
@@ -44,6 +51,8 @@ export function SettingsView({
   autoStartStatus,
   busy,
   tab,
+  jdbcStatus,
+  jdbcStorageStatus,
   policySql,
   policyKind,
   policyResult,
@@ -53,6 +62,11 @@ export function SettingsView({
   onUpdate,
   onOpenProjectReleases,
   onTabChange,
+  onRefreshJdbcStatus,
+  onRefreshJdbcStorageStatus,
+  onInstallJdbcDriver,
+  onImportJdbcDriver,
+  onDeleteJdbcDriver,
   onThemeChange,
   onPolicyKindChange,
   onSqlChange,
@@ -73,6 +87,8 @@ export function SettingsView({
   autoStartStatus: AppSnapshot["auto_start_status"];
   busy: boolean;
   tab: SettingsTab;
+  jdbcStatus: JdbcStatus | null;
+  jdbcStorageStatus: JdbcStorageStatus | null;
   policySql: string;
   policyKind: DatabaseType;
   policyResult: PolicyCheckResult | null;
@@ -82,12 +98,17 @@ export function SettingsView({
   onUpdate: () => void;
   onOpenProjectReleases: () => void;
   onTabChange: (tab: SettingsTab) => void;
+  onRefreshJdbcStatus: () => void;
+  onRefreshJdbcStorageStatus: () => void;
+  onInstallJdbcDriver: (input: InstallJdbcDriverInput) => Promise<boolean>;
+  onImportJdbcDriver: (input: ImportJdbcDriverInput) => Promise<boolean>;
+  onDeleteJdbcDriver: (bundleId: string) => void;
   onThemeChange: (theme: ThemeMode) => void;
   onPolicyKindChange: (kind: DatabaseType) => void;
   onSqlChange: (sql: string) => void;
   onPolicyCheck: () => void;
   onSaveServer: (server: ServerConfig) => Promise<boolean>;
-  onSaveSettings: (settings: SettingsConfig, applyAutoStart?: boolean) => void;
+  onSaveSettings: (settings: SettingsConfig, applyAutoStart?: boolean) => Promise<void>;
   onExportConnections: () => void;
   onImportConnections: () => void;
   onOpenProjectHomepage: () => void;
@@ -125,7 +146,8 @@ export function SettingsView({
         && current.auto_start_mcp === settings.auto_start_mcp
         && current.auto_lightweight_mode === settings.auto_lightweight_mode
         && current.mcp_activity_effects === settings.mcp_activity_effects
-        && current.language === settings.language;
+        && current.language === settings.language
+        && (current.jdbc_java_home ?? null) === (settings.jdbc_java_home ?? null);
       if (saved) settingsDraftDirty.current = false;
       if (saved) setAuditMaxEventsDraft(String(settings.audit_max_events));
       return saved ? settings : current;
@@ -141,6 +163,12 @@ export function SettingsView({
       <div className="settings-tabs">
         <button type="button" className={clsx(tab === "general" && "active")} onClick={() => onTabChange("general")}>
           {t.settings.general}
+        </button>
+        <button type="button" className={clsx(tab === "drivers" && "active")} onClick={() => onTabChange("drivers")}>
+          {t.settings.driverManagement}
+        </button>
+        <button type="button" className={clsx(tab === "storage" && "active")} onClick={() => onTabChange("storage")}>
+          {t.settings.storagePerformance}
         </button>
         <button type="button" className={clsx(tab === "about" && "active")} onClick={() => onTabChange("about")}>
           {t.settings.about}
@@ -510,6 +538,20 @@ export function SettingsView({
             </Dialog.Portal>
           </Dialog.Root>
         </div>
+      ) : tab === "drivers" ? (
+        <DriverManagement
+          t={t}
+          status={jdbcStatus}
+          settings={settings}
+          busy={busy}
+          onRefresh={onRefreshJdbcStatus}
+          onInstall={onInstallJdbcDriver}
+          onImport={onImportJdbcDriver}
+          onDelete={onDeleteJdbcDriver}
+          onSaveSettings={onSaveSettings}
+        />
+      ) : tab === "storage" ? (
+        <StorageManagement status={jdbcStorageStatus} busy={busy} onRefresh={onRefreshJdbcStorageStatus} t={t} />
       ) : (
         <div className="settings-stack" onScroll={updateScrollFade}>
           <section className="panel about-panel">
@@ -567,6 +609,397 @@ export function SettingsView({
       )}
     </section>
   );
+}
+
+function DriverManagement({
+  t,
+  status,
+  settings,
+  busy,
+  onRefresh,
+  onInstall,
+  onImport,
+  onDelete,
+  onSaveSettings
+}: {
+  t: I18nMessages;
+  status: JdbcStatus | null;
+  settings: SettingsConfig;
+  busy: boolean;
+  onRefresh: () => void;
+  onInstall: (input: InstallJdbcDriverInput) => Promise<boolean>;
+  onImport: (input: ImportJdbcDriverInput) => Promise<boolean>;
+  onDelete: (bundleId: string) => void;
+  onSaveSettings: (settings: SettingsConfig, applyAutoStart?: boolean) => Promise<void>;
+}) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [displayName, setDisplayName] = useState("");
+  const [coordinate, setCoordinate] = useState("");
+  const [repositoryUrl, setRepositoryUrl] = useState("https://repo.maven.apache.org/maven2/");
+  const [customRepository, setCustomRepository] = useState("");
+  const [localDialogOpen, setLocalDialogOpen] = useState(false);
+  const [localDisplayName, setLocalDisplayName] = useState("");
+  const [localPaths, setLocalPaths] = useState<string[]>([]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const installed = await onInstall({
+      display_name: displayName,
+      maven_coordinate: coordinate,
+      repository_url: repositoryUrl === "custom" ? customRepository : repositoryUrl
+    });
+    if (installed) {
+      setDialogOpen(false);
+      setDisplayName("");
+      setCoordinate("");
+    }
+  }
+
+  async function chooseLocalJars() {
+    const selected = await open({
+      title: t.settings.selectJdbcJars,
+      multiple: true,
+      filters: [{ name: "JAR", extensions: ["jar"] }]
+    });
+    const paths = Array.isArray(selected) ? selected : typeof selected === "string" ? [selected] : [];
+    if (paths.length) {
+      setLocalPaths(paths);
+      if (!localDisplayName) setLocalDisplayName(paths[0].split(/[\\/]/).pop()?.replace(/\.jar$/i, "") ?? "JDBC driver");
+    }
+  }
+
+  async function submitLocal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const imported = await onImport({ display_name: localDisplayName, paths: localPaths });
+    if (imported) {
+      setLocalDialogOpen(false);
+      setLocalDisplayName("");
+      setLocalPaths([]);
+    }
+  }
+
+  const runtime = status?.runtime;
+
+  async function chooseExternalRuntime() {
+    const selected = await open({
+      title: t.settings.selectJavaRuntime,
+      directory: true,
+      multiple: false
+    });
+    if (typeof selected !== "string") return;
+    await onSaveSettings({ ...settings, jdbc_java_home: selected });
+    onRefresh();
+  }
+
+  async function useBundledRuntime() {
+    await onSaveSettings({ ...settings, jdbc_java_home: null });
+    onRefresh();
+  }
+
+  return (
+    <div className="settings-stack driver-management" onScroll={updateScrollFade}>
+      <section className="panel driver-runtime-panel">
+        <div className="driver-section-heading">
+          <div>
+            <h2>{t.settings.jdbcRuntime}</h2>
+            <p>{t.settings.jdbcRuntimeDescription}</p>
+          </div>
+          <div className="runtime-heading-actions">
+            <IconTooltip label={t.settings.selectJavaRuntime}>
+              <button type="button" className="icon-button" onClick={() => void chooseExternalRuntime()} disabled={busy} aria-label={t.settings.selectJavaRuntime}>
+                <FolderOpen size={17} />
+              </button>
+            </IconTooltip>
+            {settings.jdbc_java_home && (
+              <IconTooltip label={t.settings.useBundledRuntime}>
+                <button type="button" className="icon-button" onClick={() => void useBundledRuntime()} disabled={busy} aria-label={t.settings.useBundledRuntime}>
+                  <RotateCcw size={17} />
+                </button>
+              </IconTooltip>
+            )}
+            <IconTooltip label={t.common.refresh}>
+              <button type="button" className="icon-button" onClick={onRefresh} disabled={busy} aria-label={t.common.refresh}>
+                <RefreshCw size={17} />
+              </button>
+            </IconTooltip>
+          </div>
+        </div>
+        <div className="runtime-status-row">
+          <StatusBadge available={Boolean(runtime?.available)} label={runtime?.available ? t.settings.runtimeAvailable : t.settings.runtimeUnavailable} />
+          <code>{runtime?.java_version ?? t.settings.runtimeNotDetected}</code>
+          <span>{runtime ? formatMessage(t.settings.runtimeSource, { source: runtimeSourceLabel(t, runtime.source) }) : t.settings.runtimeChecking}</span>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="driver-section-heading">
+          <div>
+            <h2>{t.settings.jdbcDrivers}</h2>
+            <p>{t.settings.jdbcDriversDescription}</p>
+          </div>
+          <div className="driver-heading-actions">
+            <button type="button" className="button ghost" onClick={() => setLocalDialogOpen(true)} disabled={busy || !runtime?.available}>
+              <FileUp size={16} />
+              {t.settings.importJdbcDriver}
+            </button>
+            <button type="button" className="button primary" onClick={() => setDialogOpen(true)} disabled={busy || !runtime?.available}>
+            <PackagePlus size={16} />
+            {t.settings.installDriver}
+            </button>
+          </div>
+        </div>
+
+        <div className="driver-list">
+          {!status ? (
+            <div className="empty-state">{t.settings.runtimeChecking}</div>
+          ) : status.drivers.length === 0 ? (
+            <div className="empty-state">{t.settings.noJdbcDrivers}</div>
+          ) : status.drivers.map((driver) => (
+            <div className="driver-row" key={driver.bundle_id}>
+              <div className="driver-row-main">
+                <strong>{driver.display_name}</strong>
+                <code>{driver.source === "local" ? t.settings.localDriver : driver.maven_coordinate}</code>
+                <span>
+                  {driver.driver_classes[0] ?? t.settings.driverClassNotDetected}
+                  {" · "}{formatBytes(driver.total_size)}
+                </span>
+              </div>
+              <IconTooltip label={t.settings.deleteDriver}>
+                <button type="button" className="icon-button danger" onClick={() => onDelete(driver.bundle_id)} disabled={busy}>
+                  <Trash2 size={16} />
+                </button>
+              </IconTooltip>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="jdbc-risk-panel">
+        <div className="jdbc-risk-summary">
+          <div className="jdbc-risk-summary-icon" aria-hidden="true">
+            <ShieldAlert size={18} />
+          </div>
+          <p>{t.settings.jdbcRiskSummary}</p>
+          <button type="button" className="button ghost jdbc-risk-details-button" onClick={() => setDetailsOpen(true)}>
+            {t.settings.jdbcRiskDetails}
+          </button>
+        </div>
+      </section>
+
+      <Dialog.Root open={detailsOpen} onOpenChange={setDetailsOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="dialog-overlay" />
+          <Dialog.Content className="policy-dialog jdbc-risk-dialog">
+            <div className="dialog-titlebar">
+              <div>
+                <Dialog.Title>{t.settings.jdbcRiskDetailsTitle}</Dialog.Title>
+              </div>
+              <Dialog.Close asChild>
+                <button type="button" className="icon-button" aria-label={t.common.close}><X size={18} /></button>
+              </Dialog.Close>
+            </div>
+            <div className="jdbc-risk-detail-body">
+              <p>{t.settings.jdbcRiskIntro}</p>
+              <ul>
+                <li>{t.settings.jdbcRiskCompatibility}</li>
+                <li>{t.settings.jdbcRiskDialect}</li>
+                <li>{t.settings.jdbcRiskResources}</li>
+                <li>{t.settings.jdbcRiskDriver}</li>
+              </ul>
+              <p className="jdbc-risk-detail-recommendation">{t.settings.jdbcRiskRecommendation}</p>
+            </div>
+            <footer className="jdbc-risk-dialog-footer">
+              <Dialog.Close asChild>
+                <button type="button" className="button primary">{t.common.close}</button>
+              </Dialog.Close>
+            </footer>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
+      <Dialog.Root open={dialogOpen} onOpenChange={(open) => !busy && setDialogOpen(open)}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="dialog-overlay" />
+          <Dialog.Content className="policy-dialog jdbc-install-dialog">
+            <div className="dialog-titlebar">
+              <div>
+                <Dialog.Title>{t.settings.installDriver}</Dialog.Title>
+                <Dialog.Description>{t.settings.installDriverDescription}</Dialog.Description>
+              </div>
+              <Dialog.Close asChild>
+                <button type="button" className="icon-button" disabled={busy} aria-label={t.common.close}><X size={18} /></button>
+              </Dialog.Close>
+            </div>
+            <form className="jdbc-install-form" onSubmit={submit}>
+              <Field label={t.settings.driverDisplayName}>
+                <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={80} required />
+              </Field>
+              <Field label={t.settings.mavenCoordinate}>
+                <input value={coordinate} onChange={(event) => setCoordinate(event.target.value)} placeholder="groupId:artifactId:version" autoComplete="off" required />
+              </Field>
+              <Field label={t.settings.mavenRepository}>
+                <select value={repositoryUrl} onChange={(event) => setRepositoryUrl(event.target.value)}>
+                  <option value="https://repo.maven.apache.org/maven2/">Maven Central</option>
+                  <option value="https://maven.aliyun.com/repository/public">Aliyun</option>
+                  <option value="https://repo.huaweicloud.com/repository/maven">Huawei Cloud</option>
+                  <option value="https://mirrors.cloud.tencent.com/nexus/repository/maven-public">Tencent Cloud</option>
+                  <option value="custom">{t.settings.customRepository}</option>
+                </select>
+              </Field>
+              {repositoryUrl === "custom" && <Field label={t.settings.customRepository}><input value={customRepository} onChange={(event) => setCustomRepository(event.target.value)} placeholder="https://repo.example.com/maven-public/" /></Field>}
+              <div className="driver-security-note">
+                <ShieldAlert size={17} />
+                <span>{t.settings.jdbcDriverSecurityNotice}</span>
+              </div>
+              <footer>
+                <Dialog.Close asChild><button type="button" className="button ghost" disabled={busy}>{t.common.cancel}</button></Dialog.Close>
+                <button type="submit" className="button primary" disabled={busy || !displayName.trim() || !coordinate.trim() || (repositoryUrl === "custom" && !customRepository.trim())}>{t.settings.installDriver}</button>
+              </footer>
+            </form>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
+      <Dialog.Root open={localDialogOpen} onOpenChange={(open) => !busy && setLocalDialogOpen(open)}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="dialog-overlay" />
+          <Dialog.Content className="policy-dialog jdbc-install-dialog">
+            <div className="dialog-titlebar">
+              <div><Dialog.Title>{t.settings.importJdbcDriver}</Dialog.Title><Dialog.Description>{t.settings.importJdbcDriverDescription}</Dialog.Description></div>
+              <Dialog.Close asChild><button type="button" className="icon-button" disabled={busy} aria-label={t.common.close}><X size={18} /></button></Dialog.Close>
+            </div>
+            <form className="jdbc-install-form" onSubmit={submitLocal}>
+              <Field label={t.settings.driverDisplayName}><input value={localDisplayName} onChange={(event) => setLocalDisplayName(event.target.value)} maxLength={80} required /></Field>
+              <div className="local-driver-picker"><button type="button" className="button ghost" onClick={() => void chooseLocalJars()} disabled={busy}><FolderOpen size={16} />{t.settings.selectJdbcJars}</button><span>{localPaths.length ? `${localPaths.length} ${t.settings.jdbcFilesSelected}` : t.settings.noJdbcFilesSelected}</span></div>
+              <Field label={t.settings.jdbcDriverPathPlaceholder}><input value={localPaths.join("; ")} onChange={(event) => setLocalPaths(event.target.value.split(";").map((path) => path.trim()).filter(Boolean))} placeholder="C:\\drivers\\postgresql.jar;C:\\drivers\\lib" /></Field>
+              <footer><Dialog.Close asChild><button type="button" className="button ghost" disabled={busy}>{t.common.cancel}</button></Dialog.Close><button type="submit" className="button primary" disabled={busy || !localDisplayName.trim() || localPaths.length === 0}>{t.settings.importJdbcDriver}</button></footer>
+            </form>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+    </div>
+  );
+}
+
+function StorageManagement({ t, status, busy, onRefresh }: { t: I18nMessages; status: JdbcStorageStatus | null; busy: boolean; onRefresh: () => void }) {
+  const [selectedStorageView, setSelectedStorageView] = useState<"storage" | "drivers">("storage");
+  const [cpuHistory, setCpuHistory] = useState<number[]>([]);
+  const refreshRef = useRef(onRefresh);
+  useEffect(() => {
+    refreshRef.current = onRefresh;
+  }, [onRefresh]);
+  useEffect(() => {
+    if (!status) refreshRef.current();
+    const timer = window.setInterval(() => refreshRef.current(), 5000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const totalCpuPercent = status?.runtimes.reduce((total, runtime) => total + Math.max(0, runtime.cpu_percent), 0) ?? 0;
+  useEffect(() => {
+    if (!status) return;
+    const nextCpu = status.runtimes.reduce((total, runtime) => total + Math.max(0, runtime.cpu_percent), 0);
+    setCpuHistory((history) => history.length ? [...history.slice(-23), nextCpu] : Array.from({ length: 12 }, () => nextCpu));
+  }, [status]);
+  const storageBreakdown = status?.items.map((item) => ({
+    ...item,
+    label: storageItemLabel(t, item.id),
+    tone: storageItemTone(item.id),
+    ratio: status.total_bytes > 0 ? item.bytes / status.total_bytes : 0
+  })) ?? [];
+  const cpuHistoryMax = Math.max(1, ...cpuHistory);
+
+  return (
+    <div className="settings-stack storage-management" onScroll={updateScrollFade}>
+      <section className="panel driver-runtime-panel">
+        <div className="driver-section-heading"><div><h2>{t.settings.storagePerformance}</h2><p>{t.settings.storagePerformanceDescription}</p></div><IconTooltip label={t.common.refresh}><button type="button" className="icon-button" onClick={onRefresh} disabled={busy}><RefreshCw size={17} /></button></IconTooltip></div>
+        <div className="overview-grid storage-overview-grid">
+          <button
+            type="button"
+            className={clsx("metric-card", "blue", "storage-selector-card", selectedStorageView === "storage" && "selected")}
+            onClick={() => setSelectedStorageView("storage")}
+            aria-pressed={selectedStorageView === "storage"}
+          >
+            <div className="metric-icon"><HardDrive size={17} /></div>
+            <div><span>{t.settings.totalStorage}</span><strong>{status ? formatBytes(status.total_bytes) : t.settings.runtimeChecking}</strong></div>
+          </button>
+          <button
+            type="button"
+            className={clsx("metric-card", "green", "storage-selector-card", selectedStorageView === "drivers" && "selected")}
+            onClick={() => setSelectedStorageView("drivers")}
+            aria-pressed={selectedStorageView === "drivers"}
+          >
+            <div className="metric-icon"><Activity size={17} /></div>
+            <div><span>{t.settings.runningDrivers}</span><strong>{status ? status.runtimes.filter((runtime) => runtime.status === "running").length : "-"}</strong></div>
+          </button>
+        </div>
+      </section>
+      {selectedStorageView === "storage" ? (
+        <section className="panel storage-details-panel">
+          <div className="driver-section-heading"><div><h2>{t.settings.storageDetails}</h2><p>{t.settings.storageDetailsDescription}</p></div></div>
+          {!status ? <div className="empty-state">{t.settings.runtimeChecking}</div> : <>
+            <div className="storage-usage-bar" role="img" aria-label={t.settings.storageBreakdownLabel}>{storageBreakdown.map((item) => <span key={item.id} className={clsx("storage-usage-segment", item.tone)} style={{ width: `${item.ratio * 100}%` }} />)}</div>
+            <div className="storage-breakdown">{storageBreakdown.map((item) => <div className="storage-breakdown-row" key={item.id}><div className="storage-breakdown-label"><span className={clsx("storage-breakdown-dot", item.tone)} />{item.label}</div><strong>{formatPercent(item.ratio)}</strong></div>)}</div>
+            <div className="storage-detail-list">{status.items.map((item) => <div className="storage-detail-row" key={item.id}><strong>{storageItemLabel(t, item.id)}</strong><code title={item.path}>{item.path}</code><span>{formatBytes(item.bytes)}</span></div>)}</div>
+          </>}
+        </section>
+      ) : (
+        <section className="panel runtime-details-panel">
+          <div className="driver-section-heading"><div><h2>{t.settings.driverRuntimeUsage}</h2><p>{t.settings.driverRuntimeUsageDescription}</p></div></div>
+          {!status ? <div className="empty-state">{t.settings.runtimeChecking}</div> : <>
+            <div className="runtime-cpu-overview">
+              <div className="runtime-cpu-heading"><div><span>{t.settings.totalCpuUsage}</span><small>{t.settings.cpuUsageLive}</small></div><strong>{totalCpuPercent.toFixed(1)}%</strong></div>
+              <div className="runtime-cpu-meter" role="img" aria-label={t.settings.totalCpuUsage}><span style={{ width: `${Math.min(100, totalCpuPercent)}%` }} /></div>
+              <div className="runtime-cpu-history" role="img" aria-label={t.settings.cpuUsageHistory}>{cpuHistory.map((value, index) => <span key={`${index}-${value}`} style={{ height: `${Math.max(8, Math.min(100, value / cpuHistoryMax * 100))}%` }} />)}</div>
+            </div>
+            <div className="runtime-driver-list">{status.runtimes.length ? status.runtimes.map((runtime) => <RuntimeUsageRow key={runtime.bundle_id} runtime={runtime} t={t} />) : <div className="empty-state">{t.settings.noJdbcRuntimes}</div>}</div>
+          </>}
+        </section>
+      )}
+    </div>
+  );
+}
+
+function RuntimeUsageRow({ runtime, t }: { runtime: JdbcDriverRuntimeInfo; t: I18nMessages }) {
+  const healthLabel = runtime.health === "healthy" ? t.settings.healthy : runtime.health === "stopped" ? t.settings.stopped : t.settings.unhealthy;
+  const healthTone = runtime.health === "healthy" ? "available" : runtime.health === "error" ? "unavailable" : "neutral";
+  return <div className="runtime-driver-row"><div className="runtime-driver-identity"><div className="permission-icon"><Activity size={16} /></div><div><strong>{runtime.display_name}</strong><span>{runtime.process_count ? `${runtime.process_count} ${t.settings.processes}` : t.settings.notRunning}</span></div></div><span className={clsx("runtime-status-badge", healthTone)}>{healthLabel}</span><div className="runtime-driver-stat"><span>CPU</span><strong>{runtime.cpu_percent.toFixed(1)}%</strong></div><div className="runtime-driver-stat"><span>{t.settings.memory}</span><strong>{formatBytes(runtime.memory_bytes)}</strong></div></div>;
+}
+
+function StatusBadge({ available, label }: { available: boolean; label: string }) {
+  return <span className={clsx("runtime-status-badge", available ? "available" : "unavailable")}>{label}</span>;
+}
+
+function runtimeSourceLabel(t: I18nMessages, source: string) {
+  if (source === "embedded") return t.settings.runtimeSourceEmbedded;
+  if (source === "external") return t.settings.runtimeSourceExternal;
+  return t.settings.runtimeSourceUnavailable;
+}
+
+function storageItemLabel(t: I18nMessages, id: string) {
+  if (id === "runtime") return t.settings.storageCategoryRuntime;
+  if (id === "drivers") return t.settings.storageCategoryDrivers;
+  if (id === "audit") return t.settings.storageCategoryAudit;
+  if (id === "access") return t.settings.storageCategoryAccess;
+  if (id === "config") return t.settings.storageCategoryConfig;
+  return id;
+}
+
+function storageItemTone(id: string) {
+  if (id === "runtime") return "runtime";
+  if (id === "drivers") return "drivers";
+  if (id === "audit") return "audit";
+  if (id === "access") return "access";
+  return "config";
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KiB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+}
+
+function formatPercent(ratio: number) {
+  const percent = Math.max(0, ratio * 100);
+  return percent > 0 && percent < 0.1 ? "<0.1%" : `${percent.toFixed(1)}%`;
 }
 export function AboutUpdateSection({
   t,

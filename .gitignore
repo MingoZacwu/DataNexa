@@ -13,6 +13,13 @@ coverage/
 # Rust / Tauri build output
 src-tauri/target/
 target/
+jdbc-sidecar/target/
+resources/jdbc-runtime/bin/
+resources/jdbc-runtime/conf/
+resources/jdbc-runtime/include/
+resources/jdbc-runtime/legal/
+resources/jdbc-runtime/lib/
+resources/jdbc-runtime/release
 
 # Generated Tauri schema cache
 src-tauri/gen/schemas/

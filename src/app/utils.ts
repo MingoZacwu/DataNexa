@@ -41,6 +41,7 @@ export function toolIntro(t: I18nMessages, tool: McpToolInfo) {
 }
 
 export function dbTypeLabel(type: DatabaseType) {
+  if (type === "jdbc") return "JDBC";
   if (type === "postgres") return "PostgreSQL";
   if (type === "mysql") return "MySQL";
   return "SQLite";

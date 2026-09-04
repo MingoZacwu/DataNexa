@@ -9,7 +9,7 @@ import { detectLocale, formatMessage, messages, normalizeLocale, persistLocale }
 import type { Locale } from "./i18n";
 import { api } from "./lib/tauri";
 import { useAppUpdater } from "./lib/updater";
-import type { AppSnapshot, AuditEvent, ConnectionConfig, DatabaseType, PolicyCheckResult, ServerConfig, SettingsConfig } from "./types";
+import type { AppSnapshot, AuditEvent, ConnectionConfig, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "./types";
 import { detectThemeMode, persistThemeMode, resolveTheme, systemTheme } from "./app/theme";
 import type { AuditFilters, EffectiveTheme, SettingsTab, ThemeMode, ToastMessage, ToastTone, View } from "./app/types";
 import { buildAgentPrompt, compactConnectionError, formatConnectionTest, formatDiagnostics, toolDisplayName, updateScrollFade, viewTitle } from "./app/utils";
@@ -39,6 +39,9 @@ const defaultConnection = (name: string): ConnectionConfig => ({
   username: "",
   credential_ref: null,
   ssl_mode: "prefer",
+  jdbc_bundle_id: null,
+  jdbc_url: null,
+  jdbc_driver_class: null,
   max_rows: 500,
   query_timeout_ms: 8000,
   max_connections: 1,
@@ -65,6 +68,8 @@ function App() {
   const [promptTokenDialogOpen, setPromptTokenDialogOpen] = useState(false);
   const [showAuditClear, setShowAuditClear] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
+  const [jdbcStatus, setJdbcStatus] = useState<JdbcStatus | null>(null);
+  const [jdbcStorageStatus, setJdbcStorageStatus] = useState<JdbcStorageStatus | null>(null);
   const [locale, setLocale] = useState<Locale>(detectLocale);
   const [theme, setTheme] = useState<ThemeMode>(detectThemeMode);
   const [systemThemeMode, setSystemThemeMode] = useState<EffectiveTheme>(systemTheme);
@@ -109,7 +114,15 @@ function App() {
   );
   useEffect(() => {
     void refresh();
+    void refreshJdbcStatus();
   }, []);
+
+  useEffect(() => {
+    if (activeView === "settings" && (settingsTab === "drivers" || settingsTab === "storage")) {
+      void refreshJdbcStatus();
+      if (settingsTab === "storage") void refreshJdbcStorageStatus();
+    }
+  }, [activeView, settingsTab]);
 
   useEffect(() => {
     if (hasAuditFilters) {
@@ -471,6 +484,64 @@ function App() {
     }
   }
 
+  async function refreshJdbcStatus() {
+    try {
+      setJdbcStatus(await api.jdbcStatus());
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  async function refreshJdbcStorageStatus() {
+    try {
+      setJdbcStorageStatus(await api.jdbcStorageStatus());
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  async function installJdbcDriver(input: InstallJdbcDriverInput): Promise<boolean> {
+    setBusy(true);
+    try {
+      await api.installJdbcDriver(input);
+      setJdbcStatus(await api.jdbcStatus());
+      pushToast(t.toast.jdbcDriverInstalled);
+      return true;
+    } catch (error) {
+      showError(error);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importJdbcDriver(input: ImportJdbcDriverInput): Promise<boolean> {
+    setBusy(true);
+    try {
+      await api.importJdbcDriver(input);
+      setJdbcStatus(await api.jdbcStatus());
+      pushToast(t.toast.jdbcDriverInstalled);
+      return true;
+    } catch (error) {
+      showError(error);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteJdbcDriver(bundleId: string) {
+    setBusy(true);
+    try {
+      setJdbcStatus(await api.deleteJdbcDriver(bundleId));
+      pushToast(t.toast.jdbcDriverDeleted);
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function updateAccess(action: () => Promise<AppSnapshot>, message: string): Promise<boolean> {
     setBusy(true);
     try {
@@ -794,6 +865,8 @@ function App() {
                     autoStartStatus={snapshot.auto_start_status}
                     busy={busy}
                     tab={settingsTab}
+                    jdbcStatus={jdbcStatus}
+                    jdbcStorageStatus={jdbcStorageStatus}
                     policySql={policySql}
                     policyKind={policyKind}
                     policyResult={policyResult}
@@ -803,6 +876,11 @@ function App() {
                     onUpdate={() => void updater.installUpdate()}
                     onOpenProjectReleases={() => void api.openProjectReleases().catch(showError)}
                     onTabChange={setSettingsTab}
+                    onRefreshJdbcStatus={() => void refreshJdbcStatus()}
+                    onRefreshJdbcStorageStatus={() => void refreshJdbcStorageStatus()}
+                    onInstallJdbcDriver={installJdbcDriver}
+                    onImportJdbcDriver={importJdbcDriver}
+                    onDeleteJdbcDriver={(bundleId) => void deleteJdbcDriver(bundleId)}
                     onThemeChange={setTheme}
                     onPolicyKindChange={setPolicyKind}
                     onSqlChange={setPolicySql}
@@ -836,6 +914,7 @@ function App() {
           onEditingChange={setEditing}
           onTest={testEditingConnection}
           migrationReady={migrationReady}
+          jdbcDrivers={jdbcStatus?.drivers ?? []}
           onSubmit={saveConnection}
           onClose={() => setEditing(null)}
         />

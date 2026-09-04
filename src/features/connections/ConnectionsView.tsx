@@ -1,10 +1,10 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import clsx from "clsx";
-import { Cable, MoreVertical, Power, SearchCheck, Trash2, X } from "lucide-react";
+import { Cable, Database, MoreVertical, Power, SearchCheck, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { formatMessage, type I18nMessages } from "../../i18n";
-import type { ConnectionConfig, DatabaseType } from "../../types";
+import type { ConnectionConfig, DatabaseType, JdbcDriverBundle } from "../../types";
 import { DATABASE_LOGOS } from "../../app/assets";
 import { defaultPort } from "../../app/utils";
 import { Field, FormSection, IconTooltip, PanelHeader, StatusPill } from "../../components/ui";
@@ -71,9 +71,9 @@ export function ConnectionsView({
               <button type="button" className="button ghost" disabled={busy} onClick={() => onEdit(selected)}>{t.connections.edit}</button>
             </div>
             <dl className="inspector-grid">
-              <div><dt>{t.connectionDialog.host}</dt><dd><code>{selected.type === "sqlite" ? "LOCAL" : selected.host || "-"}</code></dd></div>
-              <div><dt>{t.connectionDialog.port}</dt><dd><code>{selected.type === "sqlite" ? "-" : selected.port ?? defaultPort(selected.type)}</code></dd></div>
-              <div><dt>{t.connectionDialog.database}</dt><dd><code>{selected.database || "-"}</code></dd></div>
+              <div><dt>{t.connectionDialog.host}</dt><dd><code>{selected.type === "sqlite" ? "LOCAL" : selected.type === "jdbc" ? "SIDECAR" : selected.host || "-"}</code></dd></div>
+              <div><dt>{t.connectionDialog.port}</dt><dd><code>{selected.type === "sqlite" || selected.type === "jdbc" ? "-" : selected.port ?? defaultPort(selected.type)}</code></dd></div>
+              <div><dt>{t.connectionDialog.database}</dt><dd><code>{selected.type === "jdbc" ? t.connectionDialog.jdbcUrlConfigured : selected.database || "-"}</code></dd></div>
               <div><dt>{t.connectionDialog.username}</dt><dd><code>{selected.username || "-"}</code></dd></div>
               <div><dt>{t.connectionDialog.sslMode}</dt><dd>{selected.ssl_mode || "-"}</dd></div>
               <div><dt>{t.connectionDialog.maxRows}</dt><dd>{selected.max_rows}</dd></div>
@@ -83,7 +83,7 @@ export function ConnectionsView({
             </dl>
             <div className="inspector-actions">
               <button type="button" className="button soft" disabled={busy || !selected.enabled || !migrationReady} onClick={() => onTest(selected.id)}><Cable size={15} />{t.connections.test}</button>
-              <button type="button" className="button ghost" disabled={busy || !selected.enabled} onClick={() => onDiagnose(selected.id)}><SearchCheck size={15} />{t.connections.diagnose}</button>
+              <button type="button" className="button ghost" disabled={busy || !selected.enabled || selected.type === "jdbc"} onClick={() => onDiagnose(selected.id)}><SearchCheck size={15} />{t.connections.diagnose}</button>
             </div>
           </>
         ) : <div className="empty-state">{t.connections.empty}</div>}
@@ -103,6 +103,7 @@ export function ConnectionDialog({
   onEditingChange,
   onTest,
   migrationReady,
+  jdbcDrivers,
   onSubmit,
   onClose
 }: {
@@ -116,6 +117,7 @@ export function ConnectionDialog({
   onEditingChange: (connection: ConnectionConfig) => void;
   onTest: () => void;
   migrationReady: boolean;
+  jdbcDrivers: JdbcDriverBundle[];
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onClose: () => void;
 }) {
@@ -149,12 +151,23 @@ export function ConnectionDialog({
                   value={editing.type}
                   onChange={(event) => {
                     const type = event.target.value as DatabaseType;
-                    onEditingChange({ ...editing, type, port: defaultPort(type), ssl_mode: type === "sqlite" ? null : editing.ssl_mode ?? "prefer" });
+                    onEditingChange({
+                      ...editing,
+                      type,
+                      database: type === "jdbc" ? "" : editing.database,
+                      host: type === "jdbc" ? null : editing.host,
+                      port: defaultPort(type),
+                      ssl_mode: type === "sqlite" || type === "jdbc" ? null : editing.ssl_mode ?? "prefer",
+                      jdbc_bundle_id: type === "jdbc" ? editing.jdbc_bundle_id ?? jdbcDrivers[0]?.bundle_id ?? null : null,
+                      jdbc_url: type === "jdbc" ? editing.jdbc_url ?? "" : null,
+                      jdbc_driver_class: type === "jdbc" ? editing.jdbc_driver_class ?? null : null
+                    });
                   }}
                 >
                   <option value="sqlite">SQLite</option>
                   <option value="mysql">MySQL</option>
                   <option value="postgres">PostgreSQL</option>
+                  <option value="jdbc">JDBC</option>
                 </select>
               </Field>
             </FormSection>
@@ -164,6 +177,41 @@ export function ConnectionDialog({
                 <Field label={t.connectionDialog.databaseFile} span>
                   <input value={editing.database} onChange={(event) => onEditingChange({ ...editing, database: event.target.value })} placeholder="E:/data/app.db" required />
                 </Field>
+              ) : editing.type === "jdbc" ? (
+                <>
+                  <Field label={t.connectionDialog.jdbcDriver} span>
+                    <select
+                      value={editing.jdbc_bundle_id ?? ""}
+                      onChange={(event) => onEditingChange({ ...editing, jdbc_bundle_id: event.target.value || null })}
+                      required
+                    >
+                      <option value="">{t.connectionDialog.jdbcDriverPlaceholder}</option>
+                      {jdbcDrivers.map((driver) => (
+                        <option key={driver.bundle_id} value={driver.bundle_id}>{driver.display_name} · {driver.source === "local" ? t.settings.localDriver : driver.maven_coordinate}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label={t.connectionDialog.jdbcUrl} span>
+                    <input
+                      value={editing.jdbc_url ?? ""}
+                      onChange={(event) => onEditingChange({ ...editing, jdbc_url: event.target.value })}
+                      placeholder="jdbc:vendor:..."
+                      autoComplete="off"
+                      required
+                    />
+                  </Field>
+                  <Field label={t.connectionDialog.username}>
+                    <input value={editing.username ?? ""} onChange={(event) => onEditingChange({ ...editing, username: event.target.value })} />
+                  </Field>
+                  <Field label={t.connectionDialog.jdbcDriverClass}>
+                    <input
+                      value={editing.jdbc_driver_class ?? ""}
+                      onChange={(event) => onEditingChange({ ...editing, jdbc_driver_class: event.target.value || null })}
+                      placeholder={t.connectionDialog.jdbcDriverClassPlaceholder}
+                    />
+                  </Field>
+                  <p className="field-note span-all">{t.connectionDialog.jdbcPreviewNotice}</p>
+                </>
               ) : (
                 <>
                   <Field label={t.connectionDialog.host}>
@@ -229,14 +277,14 @@ export function ConnectionDialog({
             </div>
 
             <footer>
-              <button type="button" className="button soft" disabled={busy || !migrationReady} onClick={onTest}>
+              <button type="button" className="button soft" disabled={busy || !migrationReady || (editing.type === "jdbc" && !editing.jdbc_bundle_id)} onClick={onTest}>
                 <Cable size={16} />
                 {t.connections.test}
               </button>
               <Dialog.Close asChild>
                 <button type="button" className="button ghost">{t.common.cancel}</button>
               </Dialog.Close>
-              <button type="submit" className="button primary" disabled={busy}>{t.connectionDialog.save}</button>
+              <button type="submit" className="button primary" disabled={busy || (editing.type === "jdbc" && !editing.jdbc_bundle_id)}>{t.connectionDialog.save}</button>
             </footer>
           </form>
         </Dialog.Content>
@@ -293,7 +341,7 @@ function ConnectionRow({
           </button>
         </IconTooltip>
         <IconTooltip label={t.connections.diagnose}>
-          <button type="button" className="icon-button" onClick={() => onDiagnose(connection.id)} disabled={busy || !connection.enabled}>
+          <button type="button" className="icon-button" onClick={() => onDiagnose(connection.id)} disabled={busy || !connection.enabled || connection.type === "jdbc"}>
             <SearchCheck size={17} />
           </button>
         </IconTooltip>
@@ -316,7 +364,9 @@ export function ConnectionListItem({ t, connection, compact = false }: { t: I18n
   return (
     <div className={clsx("connection-item", compact && "compact")}>
       <div className={clsx("db-badge", connection.type)}>
-        <img src={DATABASE_LOGOS[connection.type]} alt="" aria-hidden="true" />
+        {DATABASE_LOGOS[connection.type]
+          ? <img src={DATABASE_LOGOS[connection.type]} alt="" aria-hidden="true" />
+          : <Database size={24} aria-hidden="true" />}
       </div>
       <div className="connection-info">
         <div>
@@ -326,10 +376,11 @@ export function ConnectionListItem({ t, connection, compact = false }: { t: I18n
         <p>
           {connection.type === "sqlite"
             ? connection.database || t.connections.noDatabaseFile
+            : connection.type === "jdbc"
+              ? t.connections.jdbcPreview
             : `${connection.host || "-"}:${connection.port ?? defaultPort(connection.type)}`}
         </p>
       </div>
     </div>
   );
 }
-

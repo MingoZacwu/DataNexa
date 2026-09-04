@@ -627,6 +627,7 @@ fn pool_signature(config: &ConnectionConfig) -> PoolSignature {
             DbKind::Sqlite => 0,
             DbKind::Mysql => 1,
             DbKind::Postgres => 2,
+            DbKind::Jdbc => 3,
         },
         database: config.database.clone(),
         host: config.host.clone(),
@@ -743,6 +744,9 @@ async fn connect_pool_with_password(
                 .map_err(|error| annotate_connect_error(&config.kind, error, text))?;
             Ok(ManagedPool::Postgres(pool))
         }
+        DbKind::Jdbc => Err(anyhow::anyhow!(
+            "JDBC connections are handled by the JDBC sidecar"
+        )),
     }
 }
 
@@ -871,9 +875,12 @@ fn connection_diagnostics(
         config.host.as_deref(),
         config.ssl_mode.as_deref(),
     ) {
-        (DbKind::Mysql | DbKind::Postgres, "missing_in_vault" | "not_saved", _, _) => {
-            Some(text.missing_password_hint().to_string())
-        }
+        (
+            DbKind::Mysql | DbKind::Postgres | DbKind::Jdbc,
+            "missing_in_vault" | "not_saved",
+            _,
+            _,
+        ) => Some(text.missing_password_hint().to_string()),
         (DbKind::Mysql, _, Some("127.0.0.1"), _) => Some(text.mysql_127_hint().to_string()),
         (DbKind::Mysql, _, Some("localhost"), _) => Some(text.mysql_localhost_hint().to_string()),
         (
@@ -907,6 +914,7 @@ fn db_label(kind: &DbKind) -> &'static str {
         DbKind::Sqlite => "SQLite",
         DbKind::Mysql => "MySQL",
         DbKind::Postgres => "PostgreSQL",
+        DbKind::Jdbc => "JDBC",
     }
 }
 
@@ -915,6 +923,7 @@ fn db_kind(config: &ConnectionConfig) -> &'static str {
         DbKind::Sqlite => "sqlite",
         DbKind::Mysql => "mysql",
         DbKind::Postgres => "postgres",
+        DbKind::Jdbc => "jdbc",
     }
 }
 
@@ -941,7 +950,7 @@ fn quote_identifier(kind: &DbKind, identifier: &str) -> anyhow::Result<String> {
     validate_identifier(identifier)?;
     let quote = match kind {
         DbKind::Mysql => "`",
-        DbKind::Sqlite | DbKind::Postgres => "\"",
+        DbKind::Sqlite | DbKind::Postgres | DbKind::Jdbc => "\"",
     };
     Ok(format!("{quote}{identifier}{quote}"))
 }
@@ -1327,6 +1336,9 @@ mod tests {
             username: None,
             credential_ref: None,
             ssl_mode: None,
+            jdbc_bundle_id: None,
+            jdbc_url: None,
+            jdbc_driver_class: None,
             max_rows: 10,
             query_timeout_ms: 2_000,
             max_connections: 1,

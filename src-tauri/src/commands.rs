@@ -18,6 +18,9 @@ use crate::config::{
 };
 use crate::db::ConnectionDiagnostics;
 use crate::i18n::{backend_text, BackendText, ConnectionDiagnosticText};
+use crate::jdbc::{
+    ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcDriverBundle, JdbcStatus, JdbcStorageStatus,
+};
 use crate::mcp::{self, McpToolInfo, ServerStatus};
 use crate::policy::{PolicyCheckResult, PolicyEngine};
 use crate::startup;
@@ -79,6 +82,12 @@ struct PortableConnection {
     password: Option<String>,
     #[serde(default)]
     ssl_mode: Option<String>,
+    #[serde(default)]
+    jdbc_bundle_id: Option<String>,
+    #[serde(default)]
+    jdbc_url: Option<String>,
+    #[serde(default)]
+    jdbc_driver_class: Option<String>,
     max_rows: u32,
     query_timeout_ms: u64,
     max_connections: u32,
@@ -101,13 +110,66 @@ pub struct ImportConnectionsResult {
 }
 
 const CONNECTION_TRANSFER_FORMAT: &str = "datanexa-connections";
-const CONNECTION_TRANSFER_VERSION: u16 = 2;
+const CONNECTION_TRANSFER_VERSION: u16 = 3;
 const MAX_CONNECTION_IMPORT_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_CONNECTION_IMPORT_COUNT: usize = 1000;
 
 #[tauri::command]
 pub async fn get_app_snapshot(state: State<'_, Arc<AppState>>) -> Result<AppSnapshot, String> {
     snapshot(state.inner()).await.map_err(to_client_error)
+}
+
+#[tauri::command]
+pub async fn get_jdbc_status(state: State<'_, Arc<AppState>>) -> Result<JdbcStatus, String> {
+    state.jdbc.status().await.map_err(to_client_error)
+}
+
+#[tauri::command]
+pub async fn install_jdbc_driver(
+    state: State<'_, Arc<AppState>>,
+    input: InstallJdbcDriverInput,
+) -> Result<JdbcDriverBundle, String> {
+    let _lifecycle = state.jdbc_lifecycle.lock().await;
+    state
+        .jdbc
+        .install_driver(input)
+        .await
+        .map_err(to_client_error)
+}
+
+#[tauri::command]
+pub async fn import_jdbc_driver(
+    state: State<'_, Arc<AppState>>,
+    input: ImportJdbcDriverInput,
+) -> Result<JdbcDriverBundle, String> {
+    let _lifecycle = state.jdbc_lifecycle.lock().await;
+    state
+        .jdbc
+        .import_driver(input)
+        .await
+        .map_err(to_client_error)
+}
+
+#[tauri::command]
+pub async fn get_jdbc_storage_status(
+    state: State<'_, Arc<AppState>>,
+) -> Result<JdbcStorageStatus, String> {
+    state.jdbc.storage_status().await.map_err(to_client_error)
+}
+
+#[tauri::command]
+pub async fn delete_jdbc_driver(
+    state: State<'_, Arc<AppState>>,
+    bundle_id: String,
+) -> Result<JdbcStatus, String> {
+    let _lifecycle = state.jdbc_lifecycle.lock().await;
+    let connections = state.config.read().await.connections.clone();
+    state.jdbc.shutdown_sessions().await;
+    state
+        .jdbc
+        .delete_driver(&bundle_id, &connections)
+        .map_err(to_client_error)?;
+    state.jdbc.status().await.map_err(to_client_error)
 }
 
 #[tauri::command]
@@ -357,6 +419,9 @@ pub async fn export_connections(
             username: connection.username,
             password,
             ssl_mode: connection.ssl_mode,
+            jdbc_bundle_id: connection.jdbc_bundle_id,
+            jdbc_url: connection.jdbc_url,
+            jdbc_driver_class: connection.jdbc_driver_class,
             max_rows: connection.max_rows,
             query_timeout_ms: connection.query_timeout_ms,
             max_connections: connection.max_connections,
@@ -393,7 +458,7 @@ pub async fn import_connections(
     let contents = Zeroizing::new(fs::read(path).map_err(to_client_error)?);
     let mut transfer: ConnectionTransferFile =
         serde_json::from_slice(contents.as_slice()).map_err(to_client_error)?;
-    if transfer.format != CONNECTION_TRANSFER_FORMAT || !matches!(transfer.version, 1 | 2) {
+    if transfer.format != CONNECTION_TRANSFER_FORMAT || !matches!(transfer.version, 1 | 2 | 3) {
         return Err("Unsupported DataNexa connection import file.".to_string());
     }
     if transfer.connections.len() > MAX_CONNECTION_IMPORT_COUNT {
@@ -432,12 +497,26 @@ pub async fn import_connections(
             username: portable.username.take(),
             credential_ref: credential_ref.clone(),
             ssl_mode: portable.ssl_mode.take(),
+            jdbc_bundle_id: portable.jdbc_bundle_id.take(),
+            jdbc_url: portable.jdbc_url.take(),
+            jdbc_driver_class: portable.jdbc_driver_class.take(),
             max_rows: portable.max_rows,
             query_timeout_ms: portable.query_timeout_ms,
             max_connections: portable.max_connections,
             max_result_bytes: portable.max_result_bytes,
         };
         validate_connection(&connection, &text).map_err(to_client_error)?;
+        if connection.kind == DbKind::Jdbc {
+            state
+                .jdbc
+                .ensure_bundle_exists(
+                    connection
+                        .jdbc_bundle_id
+                        .as_deref()
+                        .ok_or_else(|| "JDBC driver bundle is required".to_string())?,
+                )
+                .map_err(to_client_error)?;
+        }
         candidate.connections.push(normalize_connection(connection));
         if let (Some(credential_ref), Some(password)) = (credential_ref, password) {
             credentials.push((credential_ref, password));
@@ -508,6 +587,18 @@ pub async fn upsert_connection(
     validate_password_input(input.clear_password, input.password.as_deref())?;
     let text = text_for_state(state.inner()).await;
     validate_connection(&input.connection, &text).map_err(to_client_error)?;
+    if input.connection.kind == DbKind::Jdbc {
+        state
+            .jdbc
+            .ensure_bundle_exists(
+                input
+                    .connection
+                    .jdbc_bundle_id
+                    .as_deref()
+                    .ok_or_else(|| "JDBC driver bundle is required".to_string())?,
+            )
+            .map_err(to_client_error)?;
+    }
     let clear_password = input.clear_password;
     let mut connection = normalize_connection(input.connection);
     let password = input.password.filter(|value| !value.is_empty());
@@ -762,6 +853,16 @@ pub async fn test_connection(
     let connection = find_connection(state.inner(), &id)
         .await
         .map_err(to_client_error)?;
+    if connection.kind == DbKind::Jdbc {
+        return match state
+            .jdbc
+            .test_connection(&connection, &state.vault, None)
+            .await
+        {
+            Ok(duration) => Ok(text.connection_test_ok(duration.as_millis())),
+            Err(error) => Err(to_client_error(error)),
+        };
+    }
     state.db.close(&id).await;
     match state
         .db
@@ -801,6 +902,17 @@ pub async fn test_connection_input(
     } else {
         password.as_deref().filter(|value| !value.is_empty())
     };
+
+    if connection.kind == DbKind::Jdbc {
+        return match state
+            .jdbc
+            .test_connection(&connection, &state.vault, password_override)
+            .await
+        {
+            Ok(duration) => Ok(text.connection_test_ok(duration.as_millis())),
+            Err(error) => Err(to_client_error(error)),
+        };
+    }
 
     match state
         .db
@@ -1139,10 +1251,10 @@ fn validate_connection(connection: &ConnectionConfig, text: &BackendText) -> any
     if connection.name.trim().is_empty() {
         return Err(anyhow::anyhow!(text.connection_name_required()));
     }
-    if connection.database.trim().is_empty() {
+    if connection.kind != DbKind::Jdbc && connection.database.trim().is_empty() {
         return Err(anyhow::anyhow!(text.database_required()));
     }
-    if connection.kind != DbKind::Sqlite
+    if matches!(connection.kind, DbKind::Mysql | DbKind::Postgres)
         && connection
             .host
             .as_deref()
@@ -1151,6 +1263,26 @@ fn validate_connection(connection: &ConnectionConfig, text: &BackendText) -> any
             .is_empty()
     {
         return Err(anyhow::anyhow!(text.host_required()));
+    }
+    if connection.kind == DbKind::Jdbc {
+        if connection
+            .jdbc_bundle_id
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+        {
+            return Err(anyhow::anyhow!("JDBC driver bundle is required"));
+        }
+        if !connection
+            .jdbc_url
+            .as_deref()
+            .is_some_and(|value| value.trim().starts_with("jdbc:"))
+        {
+            return Err(anyhow::anyhow!(
+                "A JDBC URL beginning with jdbc: is required"
+            ));
+        }
     }
     Ok(())
 }
@@ -1171,8 +1303,24 @@ fn normalize_connection(mut connection: ConnectionConfig) -> ConnectionConfig {
         connection.port = None;
         connection.username = None;
         connection.ssl_mode = None;
-    } else if connection.port.is_none() {
+        connection.jdbc_bundle_id = None;
+        connection.jdbc_url = None;
+        connection.jdbc_driver_class = None;
+    } else if matches!(connection.kind, DbKind::Mysql | DbKind::Postgres)
+        && connection.port.is_none()
+    {
         connection.port = default_port(&connection.kind);
+    }
+
+    if connection.kind == DbKind::Jdbc {
+        connection.database.clear();
+        connection.host = None;
+        connection.port = None;
+        connection.ssl_mode = None;
+    } else if connection.kind != DbKind::Sqlite {
+        connection.jdbc_bundle_id = None;
+        connection.jdbc_url = None;
+        connection.jdbc_driver_class = None;
     }
 
     connection.host = connection
@@ -1187,6 +1335,18 @@ fn normalize_connection(mut connection: ConnectionConfig) -> ConnectionConfig {
         .ssl_mode
         .map(|ssl_mode| ssl_mode.trim().to_ascii_lowercase())
         .filter(|ssl_mode| !ssl_mode.is_empty());
+    connection.jdbc_bundle_id = connection
+        .jdbc_bundle_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    connection.jdbc_url = connection
+        .jdbc_url
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    connection.jdbc_driver_class = connection
+        .jdbc_driver_class
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
 
     connection
 }
@@ -1197,6 +1357,11 @@ fn normalize_settings(mut settings: SettingsConfig) -> SettingsConfig {
     if settings.language.is_empty() {
         settings.language = "zh-CN".to_string();
     }
+    settings.jdbc_java_home = settings
+        .jdbc_java_home
+        .take()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
     settings
 }
 
@@ -1210,9 +1375,12 @@ fn to_client_error(error: impl std::fmt::Display) -> String {
 }
 
 fn sanitize_text(text: &str) -> String {
-    let text = Regex::new(r"(?i)(password|token|secret)=([^&\s]+)")
+    let text = Regex::new(r"(?i)((?:[A-Za-z][A-Za-z0-9+.-]*:)+//)([^/@\s:]+):([^/@\s]+)@")
+        .expect("valid JDBC URL sanitizer regex")
+        .replace_all(text, "$1$2:REDACTED@");
+    let text = Regex::new(r"(?i)(password|passwd|pwd|token|secret)=([^&\s]+)")
         .expect("valid secret sanitizer regex")
-        .replace_all(text, "$1=REDACTED")
+        .replace_all(&text, "$1=REDACTED")
         .to_string();
     text.replace('\n', " ")
 }
@@ -1336,6 +1504,9 @@ mod tests {
             username: Some("readonly".to_string()),
             credential_ref: Some("vault://transition_db".to_string()),
             ssl_mode: None,
+            jdbc_bundle_id: None,
+            jdbc_url: None,
+            jdbc_driver_class: None,
             max_rows: 100,
             query_timeout_ms: 1_000,
             max_connections: 1,

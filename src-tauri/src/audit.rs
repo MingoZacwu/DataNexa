@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlparser::ast::{Value, VisitMut, VisitorMut};
-use sqlparser::dialect::{Dialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
+use sqlparser::dialect::{Dialect, GenericDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
 use sqlparser::parser::Parser;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use tauri::{AppHandle, Manager};
@@ -548,10 +548,12 @@ fn dialect(kind: &DbKind) -> &'static dyn Dialect {
     static SQLITE: SQLiteDialect = SQLiteDialect {};
     static MYSQL: MySqlDialect = MySqlDialect {};
     static POSTGRES: PostgreSqlDialect = PostgreSqlDialect {};
+    static GENERIC: GenericDialect = GenericDialect {};
     match kind {
         DbKind::Sqlite => &SQLITE,
         DbKind::Mysql => &MYSQL,
         DbKind::Postgres => &POSTGRES,
+        DbKind::Jdbc => &GENERIC,
     }
 }
 struct LiteralSanitizer;

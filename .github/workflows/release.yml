@@ -231,6 +231,16 @@ jobs:
           node-version: 20
           cache: pnpm
 
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Prepare bundled JDBC runtime
+        run: pnpm prepare:jdbc-runtime
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:

@@ -148,6 +148,10 @@ DataNexa is an open-source project independently developed and maintained by an 
 
 This project is provided "as is," without any express or implied warranty of fitness, reliability, security, or data integrity. To the fullest extent permitted by applicable law, the project author and contributors are not liable for data loss, service interruption, security incidents, or other damages arising from the use of or inability to use this project. Users are responsible for evaluating risks and for database permissions, backups, network isolation, and compliance requirements.
 
+## Acknowledgements
+
+Special thanks to the [DBX](https://github.com/t8y2/dbx) project. While implementing JDBC support in DataNexa, we referred to DBX's architectural design and implementation approach. We would like to express our sincere appreciation to the DBX project and its contributors.
+
 ## License
 
 This project is open source under the [MIT License](../LICENSE). You may use, copy, modify, merge, publish, and distribute the project as permitted by the license, provided that you retain the original copyright notice and license text.

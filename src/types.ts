@@ -1,4 +1,4 @@
-export type DatabaseType = "sqlite" | "mysql" | "postgres";
+export type DatabaseType = "sqlite" | "mysql" | "postgres" | "jdbc";
 
 export interface ServerConfig {
   host: string;
@@ -18,6 +18,9 @@ export interface ConnectionConfig {
   username?: string | null;
   credential_ref?: string | null;
   ssl_mode?: string | null;
+  jdbc_bundle_id?: string | null;
+  jdbc_url?: string | null;
+  jdbc_driver_class?: string | null;
   max_rows: number;
   query_timeout_ms: number;
   max_connections: number;
@@ -32,6 +35,7 @@ export interface SettingsConfig {
   auto_lightweight_mode: boolean;
   mcp_activity_effects: boolean;
   language: string;
+  jdbc_java_home?: string | null;
 }
 
 export interface ToolConfig {
@@ -123,6 +127,72 @@ export interface ConnectionInput {
 export interface ImportConnectionsResult {
   snapshot: AppSnapshot;
   imported_count: number;
+}
+
+export interface JdbcDriverFile {
+  name: string;
+  size: number;
+  sha256: string;
+}
+
+export interface JdbcDriverBundle {
+  schema_version: number;
+  bundle_id: string;
+  display_name: string;
+  maven_coordinate: string;
+  repository_url: string;
+  installed_at: string;
+  driver_classes: string[];
+  files: JdbcDriverFile[];
+  total_size: number;
+  source?: "maven" | "local" | string;
+}
+
+export interface JdbcRuntimeStatus {
+  available: boolean;
+  source: "embedded" | "external" | "unavailable" | string;
+  java_version?: string | null;
+  sidecar_available: boolean;
+}
+
+export interface JdbcStatus {
+  runtime: JdbcRuntimeStatus;
+  drivers: JdbcDriverBundle[];
+}
+
+export interface InstallJdbcDriverInput {
+  display_name: string;
+  maven_coordinate: string;
+  repository_url?: string;
+}
+
+export interface ImportJdbcDriverInput {
+  display_name: string;
+  paths: string[];
+}
+
+export interface JdbcStorageItem {
+  id: string;
+  label: string;
+  path: string;
+  bytes: number;
+}
+
+export interface JdbcDriverRuntimeInfo {
+  bundle_id: string;
+  display_name: string;
+  status: string;
+  health: string;
+  process_count: number;
+  memory_bytes: number;
+  cpu_percent: number;
+}
+
+export interface JdbcStorageStatus {
+  storage_root: string;
+  total_bytes: number;
+  items: JdbcStorageItem[];
+  runtimes: JdbcDriverRuntimeInfo[];
 }
 
 export interface ConnectionDiagnostics {

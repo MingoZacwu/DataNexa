@@ -45,6 +45,9 @@ pub struct SettingsConfig {
     pub mcp_activity_effects: bool,
     #[serde(default = "default_language")]
     pub language: String,
+    /// Explicitly selected external Java home. When unset, the bundled runtime is always used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jdbc_java_home: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +63,7 @@ pub enum DbKind {
     Sqlite,
     Mysql,
     Postgres,
+    Jdbc,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,6 +84,12 @@ pub struct ConnectionConfig {
     pub credential_ref: Option<String>,
     #[serde(default)]
     pub ssl_mode: Option<String>,
+    #[serde(default)]
+    pub jdbc_bundle_id: Option<String>,
+    #[serde(default)]
+    pub jdbc_url: Option<String>,
+    #[serde(default)]
+    pub jdbc_driver_class: Option<String>,
     #[serde(default = "default_max_rows")]
     pub max_rows: u32,
     #[serde(default = "default_query_timeout_ms")]
@@ -203,6 +213,7 @@ impl Default for SettingsConfig {
             auto_lightweight_mode: false,
             mcp_activity_effects: true,
             language: default_language(),
+            jdbc_java_home: None,
         }
     }
 }
@@ -212,6 +223,7 @@ pub fn default_port(kind: &DbKind) -> Option<u16> {
         DbKind::Sqlite => None,
         DbKind::Mysql => Some(3306),
         DbKind::Postgres => Some(5432),
+        DbKind::Jdbc => None,
     }
 }
 
@@ -247,6 +259,11 @@ fn normalize_settings(settings: &mut SettingsConfig) {
     if settings.language.is_empty() {
         settings.language = default_language();
     }
+    settings.jdbc_java_home = settings
+        .jdbc_java_home
+        .take()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
 }
 
 pub const MCP_TOOL_NAMES: [&str; 7] = [
@@ -319,6 +336,21 @@ fn normalize_connection(connection: &mut ConnectionConfig) -> anyhow::Result<()>
         .take()
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| !value.is_empty());
+    connection.jdbc_bundle_id = connection
+        .jdbc_bundle_id
+        .take()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    connection.jdbc_url = connection
+        .jdbc_url
+        .take()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    connection.jdbc_driver_class = connection
+        .jdbc_driver_class
+        .take()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
     connection.max_rows = connection.max_rows.clamp(1, 5000);
     connection.query_timeout_ms = connection.query_timeout_ms.clamp(500, 60_000);
     connection.max_connections = connection.max_connections.clamp(1, 3);
@@ -337,19 +369,28 @@ fn normalize_connection(connection: &mut ConnectionConfig) -> anyhow::Result<()>
     {
         return Err(anyhow::anyhow!("invalid connection id"));
     }
-    if connection.name.is_empty() || connection.database.is_empty() {
-        return Err(anyhow::anyhow!("connection name and database are required"));
+    if connection.name.is_empty() {
+        return Err(anyhow::anyhow!("connection name is required"));
     }
 
     match connection.kind {
         DbKind::Sqlite => {
+            if connection.database.is_empty() {
+                return Err(anyhow::anyhow!("connection database is required"));
+            }
             connection.credential_ref = None;
             connection.host = None;
             connection.port = None;
             connection.username = None;
             connection.ssl_mode = None;
+            connection.jdbc_bundle_id = None;
+            connection.jdbc_url = None;
+            connection.jdbc_driver_class = None;
         }
         DbKind::Mysql | DbKind::Postgres => {
+            if connection.database.is_empty() {
+                return Err(anyhow::anyhow!("connection database is required"));
+            }
             if let Some(credential_ref) = connection.credential_ref.as_deref() {
                 let expected = crate::vault::CredentialVault::credential_ref(&connection.id);
                 if credential_ref != expected {
@@ -392,11 +433,38 @@ fn normalize_connection(connection: &mut ConnectionConfig) -> anyhow::Result<()>
                         | "verify_full"
                         | "verify-full"
                 ),
-                DbKind::Sqlite => true,
+                DbKind::Sqlite | DbKind::Jdbc => true,
             };
             if !valid_ssl {
                 return Err(anyhow::anyhow!("unsupported database ssl_mode"));
             }
+            connection.jdbc_bundle_id = None;
+            connection.jdbc_url = None;
+            connection.jdbc_driver_class = None;
+        }
+        DbKind::Jdbc => {
+            if let Some(credential_ref) = connection.credential_ref.as_deref() {
+                let expected = crate::vault::CredentialVault::credential_ref(&connection.id);
+                if credential_ref != expected {
+                    return Err(anyhow::anyhow!(
+                        "credential_ref must match the connection id"
+                    ));
+                }
+            }
+            if connection.jdbc_bundle_id.is_none() {
+                return Err(anyhow::anyhow!("JDBC driver bundle is required"));
+            }
+            if !connection
+                .jdbc_url
+                .as_deref()
+                .is_some_and(|value| value.starts_with("jdbc:"))
+            {
+                return Err(anyhow::anyhow!("a valid JDBC URL is required"));
+            }
+            connection.database.clear();
+            connection.host = None;
+            connection.port = None;
+            connection.ssl_mode = None;
         }
     }
     Ok(())
@@ -485,6 +553,9 @@ require_token = true
             username: Some("readonly".to_string()),
             credential_ref: Some("vault://other_db".to_string()),
             ssl_mode: None,
+            jdbc_bundle_id: None,
+            jdbc_url: None,
+            jdbc_driver_class: None,
             max_rows: 100,
             query_timeout_ms: 1_000,
             max_connections: 1,

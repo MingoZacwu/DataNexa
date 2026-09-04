@@ -1,5 +1,5 @@
 export type View = "overview" | "connections" | "access" | "tools" | "audit" | "settings";
-export type SettingsTab = "general" | "about";
+export type SettingsTab = "general" | "drivers" | "storage" | "about";
 export type ThemeMode = "system" | "light" | "dark";
 export type EffectiveTheme = "light" | "dark";
 export type ToastTone = "success" | "error" | "info";

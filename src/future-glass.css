@@ -1774,6 +1774,14 @@ textarea:focus-visible,
   overflow: hidden;
 }
 
+.driver-management > .panel {
+  padding: 15px;
+}
+
+.storage-management > .panel {
+  padding: 15px;
+}
+
 .settings-stack > .panel > h2,
 .settings-stack > .panel > .panel-header {
   min-height: 45px;

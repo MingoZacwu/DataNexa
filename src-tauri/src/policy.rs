@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use sqlparser::ast::{
     Expr, LimitClause, ObjectName, Query, SetExpr, Statement, TableFactor, Value, Visit, Visitor,
 };
-use sqlparser::dialect::{Dialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
+use sqlparser::dialect::{Dialect, GenericDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
 use sqlparser::parser::Parser;
 use std::ops::ControlFlow;
 
@@ -46,6 +46,10 @@ impl PolicyEngine {
         let trimmed = sql.trim();
         if trimmed.is_empty() {
             return deny(text.policy_sql_empty());
+        }
+
+        if matches!(kind, DbKind::Jdbc) {
+            return check_jdbc(trimmed, max_rows, text, enforce_row_limit);
         }
 
         let sql_dialect = dialect(kind);
@@ -95,6 +99,120 @@ impl PolicyEngine {
     }
 }
 
+fn check_jdbc(
+    trimmed: &str,
+    _max_rows: u32,
+    text: &BackendText,
+    _enforce_row_limit: bool,
+) -> PolicyCheckResult {
+    let parsed = Parser::parse_sql(&GenericDialect {}, trimmed);
+    match parsed {
+        Ok(statements) => {
+            if statements.len() != 1 {
+                return deny(text.policy_single_statement_only());
+            }
+            if let Err(violation) = validate_statement(&statements[0], &DbKind::Jdbc) {
+                return deny(violation.reason(text));
+            }
+            PolicyCheckResult {
+                allowed: true,
+                reason: text.policy_allowed().to_string(),
+                rewritten_sql: Some(trimmed.to_string()),
+            }
+        }
+        Err(_) => match jdbc_lexical_fallback(trimmed) {
+            Ok(()) => PolicyCheckResult {
+                allowed: true,
+                reason: text.policy_allowed().to_string(),
+                rewritten_sql: Some(trimmed.to_string()),
+            },
+            Err(violation) => deny(violation.reason(text)),
+        },
+    }
+}
+
+fn jdbc_lexical_fallback(sql: &str) -> Result<(), PolicyViolation> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut chars = sql.chars().peekable();
+    let mut quote = None;
+    while let Some(character) = chars.next() {
+        if let Some(delimiter) = quote {
+            if character == delimiter {
+                if chars.peek().copied() == Some(delimiter) {
+                    chars.next();
+                } else {
+                    quote = None;
+                }
+            }
+            continue;
+        }
+        if character == '\'' || character == '"' || character == '`' {
+            quote = Some(character);
+            continue;
+        }
+        if character == '-' && chars.peek().copied() == Some('-') {
+            chars.next();
+            while let Some(next) = chars.next() {
+                if next == '\n' || next == '\r' {
+                    break;
+                }
+            }
+            continue;
+        }
+        if character == '/' && chars.peek().copied() == Some('*') {
+            chars.next();
+            let mut previous = '\0';
+            while let Some(next) = chars.next() {
+                if previous == '*' && next == '/' {
+                    break;
+                }
+                previous = next;
+            }
+            continue;
+        }
+        if character == ';' {
+            return Err(PolicyViolation::Destructive);
+        }
+        if character.is_ascii_alphabetic() || character == '_' {
+            current.push(character.to_ascii_lowercase());
+        } else if !current.is_empty() {
+            words.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    let Some(first) = words.first().map(String::as_str) else {
+        return Err(PolicyViolation::SelectOnly);
+    };
+    if !matches!(first, "select" | "with" | "explain") {
+        return Err(PolicyViolation::SelectOnly);
+    }
+    const DANGEROUS: &[&str] = &[
+        "insert", "update", "delete", "merge", "drop", "alter", "create", "truncate", "grant",
+        "revoke", "call", "execute", "do", "vacuum", "analyze", "attach", "detach", "pragma",
+        "set", "reset", "begin", "commit", "rollback", "copy", "outfile", "dumpfile", "load",
+        "unlock",
+    ];
+    if words.iter().any(|word| DANGEROUS.contains(&word.as_str())) {
+        return Err(PolicyViolation::Destructive);
+    }
+    for window in words.windows(2) {
+        if matches!(window, [first, second] if first == "for" && matches!(second.as_str(), "update" | "share"))
+        {
+            return Err(PolicyViolation::Destructive);
+        }
+    }
+    for window in words.windows(3) {
+        if matches!(window, [first, second, third] if first == "lock" && second == "in" && third == "share")
+        {
+            return Err(PolicyViolation::Destructive);
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy)]
 enum PolicyViolation {
     Destructive,
@@ -116,11 +234,13 @@ fn dialect(kind: &DbKind) -> &'static dyn Dialect {
     static SQLITE: SQLiteDialect = SQLiteDialect {};
     static MYSQL: MySqlDialect = MySqlDialect {};
     static POSTGRES: PostgreSqlDialect = PostgreSqlDialect {};
+    static GENERIC: GenericDialect = GenericDialect {};
 
     match kind {
         DbKind::Sqlite => &SQLITE,
         DbKind::Mysql => &MYSQL,
         DbKind::Postgres => &POSTGRES,
+        DbKind::Jdbc => &GENERIC,
     }
 }
 
@@ -337,6 +457,10 @@ fn is_side_effect_function(kind: &DbKind, name: &str) -> bool {
                         | "setval"
                 )
         }
+        DbKind::Jdbc => matches!(
+            name.as_str(),
+            "benchmark" | "load_extension" | "pg_sleep" | "sleep" | "sys_exec" | "sys_eval"
+        ),
     }
 }
 
