@@ -23,6 +23,7 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::config::{ConfigStore, ConnectionConfig, DbKind};
 use crate::db::{ColumnInfo, QueryResult, TableInfo};
+use crate::jdbc_runtime;
 use crate::vault::CredentialVault;
 
 const PROTOCOL_VERSION: u16 = 1;
@@ -60,7 +61,10 @@ pub struct JdbcDriverBundle {
 pub struct JdbcRuntimeStatus {
     pub available: bool,
     pub source: String,
+    pub target: String,
     pub java_version: Option<String>,
+    pub managed_version: Option<String>,
+    pub update_available: Option<String>,
     pub sidecar_available: bool,
 }
 
@@ -261,6 +265,25 @@ impl JdbcManager {
             runtime: self.runtime_status().await,
             drivers: self.list_drivers()?,
         })
+    }
+
+    pub async fn install_runtime(&self) -> anyhow::Result<JdbcRuntimeStatus> {
+        let app = self
+            .app
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("JDBC manager is unavailable in this test context"))?;
+        jdbc_runtime::install(app).await?;
+        Ok(self.runtime_status().await)
+    }
+
+    pub async fn check_runtime_update(&self) -> anyhow::Result<Option<String>> {
+        let app = self
+            .app
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("JDBC manager is unavailable in this test context"))?;
+        Ok(jdbc_runtime::check_update(app)
+            .await?
+            .map(|update| update.available_version))
     }
 
     pub async fn shutdown_sessions(&self) {
@@ -591,11 +614,7 @@ impl JdbcManager {
                 .and_then(|path| path.parent())
                 .map(|path| path.to_path_buf())
         });
-        let runtime_bytes = runtime_path
-            .as_ref()
-            .map(|path| path_size_bytes(path))
-            .unwrap_or(0);
-        let items = vec![
+        let mut items = vec![
             ("drivers", "JDBC drivers", drivers_root.clone()),
             (
                 "maven",
@@ -610,6 +629,12 @@ impl JdbcManager {
             ),
             ("config", "Configuration", storage_root.join("config.toml")),
         ];
+        if let Some(runtime_path) = runtime_path
+            .as_ref()
+            .filter(|path| path.starts_with(&storage_root))
+        {
+            items.push(("runtime", "Java Runtime", runtime_path.clone()));
+        }
         let mut items = items
             .into_iter()
             .map(|(id, label, path)| JdbcStorageItem {
@@ -619,11 +644,7 @@ impl JdbcManager {
                 path: path.to_string_lossy().to_string(),
             })
             .collect::<Vec<_>>();
-        let runtime_inside_storage = runtime_path
-            .as_ref()
-            .is_some_and(|path| path.starts_with(&storage_root));
-        let total_bytes = path_size_bytes(&storage_root)
-            .saturating_sub(runtime_inside_storage.then_some(runtime_bytes).unwrap_or(0));
+        let total_bytes = path_size_bytes(&storage_root);
         let known_bytes = items.iter().map(|item| item.bytes).sum::<u64>();
         let other_bytes = total_bytes.saturating_sub(known_bytes);
         if other_bytes > 0 {
@@ -915,11 +936,19 @@ impl JdbcManager {
 
     async fn runtime_status(&self) -> JdbcRuntimeStatus {
         let sidecar_available = self.sidecar_path().is_ok();
+        let managed_version = self
+            .app
+            .as_ref()
+            .and_then(|app| jdbc_runtime::installed(app).ok().flatten())
+            .map(|runtime| runtime.version);
         let Ok((java, source)) = self.java_executable() else {
             return JdbcRuntimeStatus {
                 available: false,
                 source: "unavailable".to_string(),
+                target: jdbc_runtime::target().to_string(),
                 java_version: None,
+                managed_version,
+                update_available: None,
                 sidecar_available,
             };
         };
@@ -950,7 +979,10 @@ impl JdbcManager {
         JdbcRuntimeStatus {
             available: sidecar_available,
             source,
+            target: jdbc_runtime::target().to_string(),
             java_version,
+            managed_version,
+            update_available: None,
             sidecar_available,
         }
     }
@@ -1314,6 +1346,9 @@ impl JdbcManager {
                     ));
                 }
             }
+            if let Some((managed, _metadata)) = jdbc_runtime::java_path(app)? {
+                return Ok((normalize_java_path(managed), "managed".to_string()));
+            }
             for root in runtime_roots(app) {
                 for relative in [
                     ["jdbc-runtime", "bin", executable].as_slice(),
@@ -1331,7 +1366,7 @@ impl JdbcManager {
             }
         }
         Err(anyhow::anyhow!(
-            "Bundled Java Runtime is unavailable. Prepare the bundled runtime or select an external Java Runtime."
+            "DataNexa Java Runtime is not installed. Download it or select an external Java Runtime."
         ))
     }
 
@@ -1345,6 +1380,7 @@ impl JdbcManager {
         if let Some(app) = self.app.as_ref() {
             for root in runtime_roots(app) {
                 for relative in [
+                    ["datanexa-jdbc-sidecar.jar"].as_slice(),
                     ["jdbc-runtime", "lib", "datanexa-jdbc-sidecar.jar"].as_slice(),
                     ["jdbc-runtime", "datanexa-jdbc-sidecar.jar"].as_slice(),
                 ] {

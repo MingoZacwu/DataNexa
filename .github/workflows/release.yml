@@ -239,7 +239,7 @@ jobs:
           cache: maven
 
       - name: Prepare bundled JDBC runtime
-        run: pnpm prepare:jdbc-runtime
+        run: pnpm prepare:jdbc-sidecar
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

@@ -21,6 +21,7 @@ resources/jdbc-runtime/legal/
 resources/jdbc-runtime/lib/
 resources/jdbc-runtime/jdk-legal-notices.tar.gz
 resources/jdbc-runtime/release
+resources/datanexa-jdbc-sidecar.jar
 
 # Generated Tauri schema cache
 src-tauri/gen/schemas/

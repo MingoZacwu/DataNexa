@@ -47,7 +47,7 @@
     "copyright": "(C) 2026 Zachary Wu All Rights Reserved",
     "category": "DeveloperTool",
     "resources": {
-      "../resources/jdbc-runtime": "jdbc-runtime"
+      "../resources/datanexa-jdbc-sidecar.jar": "datanexa-jdbc-sidecar.jar"
     }
   }
 }

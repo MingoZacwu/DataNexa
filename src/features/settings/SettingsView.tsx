@@ -64,6 +64,8 @@ export function SettingsView({
   onOpenProjectReleases,
   onTabChange,
   onRefreshJdbcStatus,
+  onInstallJdbcRuntime,
+  onCheckJdbcRuntimeUpdate,
   onRefreshJdbcStorageStatus,
   onClearMavenCache,
   onInstallJdbcDriver,
@@ -102,6 +104,8 @@ export function SettingsView({
   onOpenProjectReleases: () => void;
   onTabChange: (tab: SettingsTab) => void;
   onRefreshJdbcStatus: () => void;
+  onInstallJdbcRuntime: () => Promise<boolean>;
+  onCheckJdbcRuntimeUpdate: () => Promise<string | null>;
   onRefreshJdbcStorageStatus: () => void;
   onClearMavenCache: () => Promise<boolean>;
   onInstallJdbcDriver: (input: InstallJdbcDriverInput) => Promise<boolean>;
@@ -551,6 +555,8 @@ export function SettingsView({
           settings={settings}
           busy={busy}
           onRefresh={onRefreshJdbcStatus}
+          onInstallRuntime={onInstallJdbcRuntime}
+          onCheckRuntimeUpdate={onCheckJdbcRuntimeUpdate}
           onInstall={onInstallJdbcDriver}
           onImport={onImportJdbcDriver}
           onDelete={onDeleteJdbcDriver}
@@ -624,6 +630,8 @@ function DriverManagement({
   settings,
   busy,
   onRefresh,
+  onInstallRuntime,
+  onCheckRuntimeUpdate,
   onInstall,
   onImport,
   onDelete,
@@ -635,6 +643,8 @@ function DriverManagement({
   settings: SettingsConfig;
   busy: boolean;
   onRefresh: () => void;
+  onInstallRuntime: () => Promise<boolean>;
+  onCheckRuntimeUpdate: () => Promise<string | null>;
   onInstall: (input: InstallJdbcDriverInput) => Promise<boolean>;
   onImport: (input: ImportJdbcDriverInput) => Promise<boolean>;
   onDelete: (bundleId: string) => void;
@@ -649,6 +659,7 @@ function DriverManagement({
   const [localDialogOpen, setLocalDialogOpen] = useState(false);
   const [localDisplayName, setLocalDisplayName] = useState("");
   const [localPaths, setLocalPaths] = useState<string[]>([]);
+  const [runtimeUpdate, setRuntimeUpdate] = useState<string | null>(null);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -700,9 +711,17 @@ function DriverManagement({
     onRefresh();
   }
 
-  async function useBundledRuntime() {
+  async function useManagedRuntime() {
     await onSaveSettings({ ...settings, jdbc_java_home: null });
     onRefresh();
+  }
+
+  async function checkManagedRuntimeUpdate() {
+    setRuntimeUpdate(await onCheckRuntimeUpdate());
+  }
+
+  async function installManagedRuntime() {
+    if (await onInstallRuntime()) setRuntimeUpdate(null);
   }
 
   return (
@@ -718,9 +737,28 @@ function DriverManagement({
                 <FolderOpen size={17} />
               </button>
             </IconTooltip>
+            {!settings.jdbc_java_home && !runtime?.available && (
+              <button type="button" className="button primary" onClick={() => void installManagedRuntime()} disabled={busy}>
+                <Download size={16} />
+                {t.settings.installJdbcRuntime}
+              </button>
+            )}
+            {!settings.jdbc_java_home && runtime?.source === "managed" && (
+              <IconTooltip label={t.settings.checkJdbcRuntimeUpdate}>
+                <button type="button" className="icon-button" onClick={() => void checkManagedRuntimeUpdate()} disabled={busy} aria-label={t.settings.checkJdbcRuntimeUpdate}>
+                  <Download size={17} />
+                </button>
+              </IconTooltip>
+            )}
+            {!settings.jdbc_java_home && runtimeUpdate && (
+              <button type="button" className="button primary" onClick={() => void installManagedRuntime()} disabled={busy}>
+                <Download size={16} />
+                {formatMessage(t.settings.updateJdbcRuntime, { version: runtimeUpdate })}
+              </button>
+            )}
             {settings.jdbc_java_home && (
-              <IconTooltip label={t.settings.useBundledRuntime}>
-                <button type="button" className="icon-button" onClick={() => void useBundledRuntime()} disabled={busy} aria-label={t.settings.useBundledRuntime}>
+              <IconTooltip label={t.settings.useManagedRuntime}>
+                <button type="button" className="icon-button" onClick={() => void useManagedRuntime()} disabled={busy} aria-label={t.settings.useManagedRuntime}>
                   <RotateCcw size={17} />
                 </button>
               </IconTooltip>
@@ -1045,6 +1083,7 @@ function StatusBadge({ available, label }: { available: boolean; label: string }
 }
 
 function runtimeSourceLabel(t: I18nMessages, source: string) {
+  if (source === "managed") return t.settings.runtimeSourceManaged;
   if (source === "embedded") return t.settings.runtimeSourceEmbedded;
   if (source === "external") return t.settings.runtimeSourceExternal;
   return t.settings.runtimeSourceUnavailable;

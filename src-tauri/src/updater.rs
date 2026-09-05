@@ -12,6 +12,7 @@ const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const DISABLED_CHECK_POLL_INTERVAL: Duration = Duration::from_secs(60);
 const STATE_FILE_NAME: &str = "updater-state.json";
 const UPDATE_AVAILABLE_EVENT: &str = "updater://available";
+const JRE_UPDATE_AVAILABLE_EVENT: &str = "jdbc://runtime-update-available";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct UpdaterState {
@@ -27,6 +28,25 @@ struct UpdaterState {
 struct UpdateAvailablePayload {
     version: String,
     current_version: String,
+}
+
+#[derive(Clone, Serialize)]
+struct JreUpdateAvailablePayload {
+    version: String,
+}
+
+async fn check_jre_update(app: &AppHandle) {
+    let state = app.state::<std::sync::Arc<AppState>>();
+    match state.jdbc.check_runtime_update().await {
+        Ok(Some(version)) => {
+            let _ = app.emit(
+                JRE_UPDATE_AVAILABLE_EVENT,
+                JreUpdateAvailablePayload { version },
+            );
+        }
+        Ok(None) => {}
+        Err(error) => eprintln!("DataNexa JRE update check failed: {error}"),
+    }
 }
 
 pub fn state_path(app: &AppHandle) -> Option<PathBuf> {
@@ -108,6 +128,7 @@ pub fn spawn_updater_task(app: AppHandle) {
                 Ok::<_, anyhow::Error>(update.map(|update| update.version))
             }
             .await;
+            check_jre_update(&app).await;
 
             let mut next_state = load_state(&state_path);
             next_state.last_check_at = Some(Utc::now());
@@ -170,6 +191,7 @@ pub async fn check_if_due(app: AppHandle) -> anyhow::Result<Option<String>> {
     }
 
     let result = app.updater()?.check().await;
+    check_jre_update(&app).await;
     state.last_check_at = Some(Utc::now());
     match result {
         Ok(update) => {

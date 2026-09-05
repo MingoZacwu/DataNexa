@@ -150,8 +150,11 @@ export interface JdbcDriverBundle {
 
 export interface JdbcRuntimeStatus {
   available: boolean;
-  source: "embedded" | "external" | "unavailable" | string;
+  source: "managed" | "embedded" | "external" | "unavailable" | string;
+  target: string;
   java_version?: string | null;
+  managed_version?: string | null;
+  update_available?: string | null;
   sidecar_available: boolean;
 }
 

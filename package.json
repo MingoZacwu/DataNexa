@@ -6,6 +6,7 @@
   "scripts": {
     "sync:config": "node scripts/sync-config.mjs",
     "build:jdbc-sidecar": "mvn -f jdbc-sidecar/pom.xml package",
+    "prepare:jdbc-sidecar": "node scripts/prepare-jdbc-sidecar.mjs",
     "prepare:jdbc-runtime:windows": "powershell -ExecutionPolicy Bypass -File scripts/prepare-jdbc-runtime.ps1",
     "prepare:jdbc-runtime:macos": "bash scripts/prepare-jdbc-runtime.sh",
     "prepare:jdbc-runtime": "node scripts/prepare-jdbc-runtime.mjs",
@@ -13,9 +14,9 @@
     "dev:app": "npm run sync:config && tauri dev",
     "dev:web": "vite",
     "build": "npm run sync:config && tsc --noEmit && vite build",
-    "build:portable": "npm run prepare:jdbc-runtime && npm run sync:config && tauri build --no-bundle",
-    "build:installer": "npm run prepare:jdbc-runtime && npm run sync:config && tauri build",
-    "build:installer:unsigned": "npm run prepare:jdbc-runtime && npm run sync:config && tauri build --no-sign",
+    "build:portable": "npm run prepare:jdbc-sidecar && npm run sync:config && tauri build --no-bundle",
+    "build:installer": "npm run prepare:jdbc-sidecar && npm run sync:config && tauri build",
+    "build:installer:unsigned": "npm run prepare:jdbc-sidecar && npm run sync:config && tauri build --no-sign",
     "typecheck": "tsc --noEmit",
     "tauri": "npm run sync:config && tauri"
   },

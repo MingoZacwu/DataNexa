@@ -171,8 +171,11 @@ const mockSnapshot: AppSnapshot = {
 const mockJdbcStatus: JdbcStatus = {
   runtime: {
     available: true,
-    source: "embedded",
+    source: "managed",
+    target: "macos-aarch64",
     java_version: "openjdk version \"21\"",
+    managed_version: "21.0.8+9",
+    update_available: null,
     sidecar_available: true
   },
   drivers: [
@@ -312,6 +315,8 @@ function connectionTransferFileName() {
 export const api = {
   snapshot: () => command<AppSnapshot>("get_app_snapshot", undefined, mockSnapshot),
   jdbcStatus: () => command<JdbcStatus>("get_jdbc_status", undefined, mockJdbcStatus),
+  installJdbcRuntime: () => command<JdbcStatus["runtime"]>("install_jdbc_runtime", undefined, mockJdbcStatus.runtime),
+  checkJdbcRuntimeUpdate: () => command<string | null>("check_jdbc_runtime_update", undefined, null),
   jdbcStorageStatus: () => command<JdbcStorageStatus>("get_jdbc_storage_status", undefined, getMockJdbcStorageStatus()),
   clearMavenCache: () => command<boolean>("clear_maven_cache", undefined, true),
   installJdbcDriver: (input: InstallJdbcDriverInput) =>

@@ -24,6 +24,7 @@ import { SettingsView } from "./features/settings/SettingsView";
 
 type McpActivityTone = "success" | "error";
 type McpToolCallCompletedPayload = { failed: boolean };
+type JreUpdateAvailablePayload = { version: string };
 
 const MCP_ACTIVITY_DURATION_MS = 1750;
 const MCP_ACTIVITY_REDUCED_DURATION_MS = 200;
@@ -139,6 +140,29 @@ function App() {
       unlisten?.();
     };
   }, []);
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    let cancelled = false;
+    void (async () => {
+      try {
+        unlisten = await listen<JreUpdateAvailablePayload>("jdbc://runtime-update-available", (event) => {
+          pushToast(formatMessage(t.toast.jdbcRuntimeUpdateAvailable, { version: event.payload.version }), "info");
+          void refreshJdbcStatus();
+        });
+        if (cancelled) {
+          unlisten();
+          unlisten = undefined;
+        }
+      } catch {
+        // Event delivery is best-effort; the runtime settings can still check manually.
+      }
+    })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [t]);
 
   useEffect(() => {
     if (activeView === "settings" && (settingsTab === "drivers" || settingsTab === "storage")) {
@@ -513,6 +537,45 @@ function App() {
     } catch (error) {
       showError(error);
     }
+  }
+
+  async function installJdbcRuntime(): Promise<boolean> {
+    setBusy(true);
+    try {
+      await api.installJdbcRuntime();
+      await refreshJdbcStatus();
+      pushToast(t.toast.jdbcRuntimeInstalled, "info");
+      return true;
+    } catch (error) {
+      showError(error);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function checkJdbcRuntimeUpdate(): Promise<string | null> {
+    setBusy(true);
+    try {
+      const version = await api.checkJdbcRuntimeUpdate();
+      if (version) {
+        pushToast(formatMessage(t.toast.jdbcRuntimeUpdateAvailable, { version }), "info");
+      } else if (jdbcStatus?.runtime.source === "managed") {
+        pushToast(t.toast.jdbcRuntimeUpToDate, "info");
+      }
+      await refreshJdbcStatus();
+      return version;
+    } catch (error) {
+      showError(error);
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function checkAllUpdates() {
+    await updater.checkForUpdates();
+    await checkJdbcRuntimeUpdate();
   }
 
   async function refreshJdbcStorageStatus() {
@@ -915,11 +978,13 @@ function App() {
                     policyResult={policyResult}
                     updaterEnabled={snapshot.updater_enabled}
                     updateState={updater.state}
-                    onCheckUpdate={() => void updater.checkForUpdates()}
+                    onCheckUpdate={() => void checkAllUpdates()}
                     onUpdate={() => void updater.installUpdate()}
                     onOpenProjectReleases={() => void api.openProjectReleases().catch(showError)}
                     onTabChange={setSettingsTab}
                     onRefreshJdbcStatus={() => void refreshJdbcStatus()}
+                    onInstallJdbcRuntime={installJdbcRuntime}
+                    onCheckJdbcRuntimeUpdate={checkJdbcRuntimeUpdate}
                     onRefreshJdbcStorageStatus={() => void refreshJdbcStorageStatus()}
                     onClearMavenCache={clearMavenCache}
                     onInstallJdbcDriver={installJdbcDriver}

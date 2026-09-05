@@ -130,6 +130,31 @@ pub async fn get_jdbc_status(state: State<'_, Arc<AppState>>) -> Result<JdbcStat
 }
 
 #[tauri::command]
+pub async fn install_jdbc_runtime(
+    state: State<'_, Arc<AppState>>,
+) -> Result<crate::jdbc::JdbcRuntimeStatus, String> {
+    let _lifecycle = state.jdbc_lifecycle.lock().await;
+    let text = text_for_state(state.inner()).await;
+    state
+        .jdbc
+        .install_runtime()
+        .await
+        .map_err(|error| to_jdbc_client_error(error, &text))
+}
+
+#[tauri::command]
+pub async fn check_jdbc_runtime_update(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Option<String>, String> {
+    let text = text_for_state(state.inner()).await;
+    state
+        .jdbc
+        .check_runtime_update()
+        .await
+        .map_err(|error| to_jdbc_client_error(error, &text))
+}
+
+#[tauri::command]
 pub async fn install_jdbc_driver(
     state: State<'_, Arc<AppState>>,
     input: InstallJdbcDriverInput,
