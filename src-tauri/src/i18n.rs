@@ -363,6 +363,19 @@ impl BackendText {
             "DataNexa JRE public key is not configured" => "DataNexa JRE 公钥尚未配置。",
             "Downloaded DataNexa JRE failed SHA-256 verification" => "下载的 DataNexa JRE 未通过 SHA-256 校验。",
             "DataNexa JRE manifest signature verification failed" => "DataNexa JRE 清单签名校验失败。",
+            "Unsupported DataNexa JRE manifest" => "不支持的 DataNexa JRE 清单。",
+            "DataNexa JRE archive size is invalid" => "DataNexa JRE 压缩包大小无效。",
+            "DataNexa JRE archive SHA-256 is invalid" => "DataNexa JRE 压缩包 SHA-256 值无效。",
+            "DataNexa JRE archive URL is not trusted" => "DataNexa JRE 压缩包下载地址不受信任。",
+            "DataNexa JRE archive is too large" => "DataNexa JRE 压缩包过大。",
+            "DataNexa JRE archive contains an unsafe path" => "DataNexa JRE 压缩包包含不安全路径。",
+            "DataNexa JRE archive contains an unsupported entry" => "DataNexa JRE 压缩包包含不支持的文件项。",
+            "DataNexa JRE archive format is unsupported" => "不支持的 DataNexa JRE 压缩包格式。",
+            "Downloaded DataNexa JRE is incomplete" => "下载的 DataNexa JRE 不完整。",
+            "DataNexa JRE archive exceeded its declared size" => "DataNexa JRE 压缩包超过清单声明的大小。",
+            "DataNexa JRE archive size does not match its manifest" => "DataNexa JRE 压缩包大小与清单不一致。",
+            "Managed Java Runtime metadata is invalid" => "DataNexa Java Runtime 元数据无效。",
+            "Managed Java Runtime is incomplete" => "DataNexa Java Runtime 不完整。",
             "Unsupported JDBC driver bundle manifest" => "不支持的 JDBC 驱动 Bundle 清单。",
             "Maven repository must be an HTTPS URL" => "Maven 仓库必须使用 HTTPS URL。",
             "No .jar files were found in the selected paths" => "所选路径中没有找到 .jar 文件。",
@@ -413,6 +426,22 @@ impl BackendText {
             (
                 "JDBC sidecar stdout failed: ",
                 "JDBC sidecar 标准输出失败：",
+            ),
+            (
+                "Invalid DataNexa JRE public key: ",
+                "DataNexa JRE 公钥无效：",
+            ),
+            (
+                "Invalid DataNexa JRE manifest signature: ",
+                "DataNexa JRE 清单签名无效：",
+            ),
+            (
+                "DataNexa JRE manifest signature verification failed: ",
+                "DataNexa JRE 清单签名校验失败：",
+            ),
+            (
+                "DataNexa JRE is not available for ",
+                "当前平台没有可用的 DataNexa JRE：",
             ),
         ] {
             if let Some(detail) = raw.strip_prefix(prefix) {
@@ -468,7 +497,7 @@ impl BackendText {
                 format!("{label}：{detail}")
             };
         }
-        raw.to_string()
+        format!("JDBC 操作失败：{raw}")
     }
 
     pub fn jdbc_sample_rows_unsupported(self) -> &'static str {
