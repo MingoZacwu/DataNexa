@@ -516,6 +516,7 @@ fn validate_protocol_header(headers: &HeaderMap) -> Result<(), Response> {
     Ok(())
 }
 
+#[allow(clippy::result_large_err)]
 async fn validate_request(app: Arc<AppState>, headers: &HeaderMap) -> Result<AuditActor, Response> {
     let config = {
         let config = app.config.read().await;

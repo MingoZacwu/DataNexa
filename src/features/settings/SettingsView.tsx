@@ -1,7 +1,25 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Switch from "@radix-ui/react-switch";
 import clsx from "clsx";
-import { AlertTriangle, CheckCircle2, Download, ExternalLink, EyeOff, FileDown, FileText, FileUp, Github, Home, KeyRound, ListChecks, Monitor, RefreshCw, SearchCheck, ShieldCheck, X } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Download,
+  ExternalLink,
+  FileDown,
+  FileText,
+  FileUp,
+  Github,
+  Home,
+  KeyRound,
+  ListChecks,
+  Monitor,
+  RefreshCw,
+  SearchCheck, ShieldAlert,
+  ShieldCheck,
+  ShieldOff,
+  X
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import appConfig from "../../../app.config.json";
@@ -11,7 +29,7 @@ import type { AppSnapshot, DatabaseType, PolicyCheckResult, ServerConfig, Settin
 import type { UpdateState } from "../../lib/updater";
 import type { EffectiveTheme, SettingsTab, ThemeMode } from "../../app/types";
 import { updateScrollFade } from "../../app/utils";
-import { Field, FormSection, IconTooltip, SwitchField } from "../../components/ui";
+import { Field, IconTooltip, SwitchField } from "../../components/ui";
 import { ThemeModeControl } from "../../components/chrome";
 
 const APP_VERSION = appConfig.version;
@@ -84,6 +102,7 @@ export function SettingsView({
   const [policyDialogOpen, setPolicyDialogOpen] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [exportAcknowledged, setExportAcknowledged] = useState(false);
+  const [bearerWarningOpen, setBearerWarningOpen] = useState(false);
 
   useEffect(() => {
     setServerDraft((current) => {
@@ -175,10 +194,14 @@ export function SettingsView({
               <div className="field">
                 <span>{t.settings.accessControl}</span>
                 <SwitchField label={t.settings.requireBearer} checked={serverDraft.require_token} disabled={busy} onCheckedChange={(checked) => {
+                  if (!checked) {
+                    setBearerWarningOpen(true);
+                    return;
+                  }
                   const next = { ...serverDraft, require_token: checked };
                   serverDraftDirty.current = true;
                   setServerDraft(next);
-                  onSaveServer(next);
+                  void onSaveServer(next);
                 }} />
               </div>
             </div>
@@ -361,6 +384,62 @@ export function SettingsView({
                   >
                     <FileDown size={16} />
                     {t.settings.confirmExport}
+                  </button>
+                </footer>
+              </Dialog.Content>
+            </Dialog.Portal>
+          </Dialog.Root>
+
+          <Dialog.Root
+            open={bearerWarningOpen}
+            onOpenChange={(open) => {
+              if (!busy) setBearerWarningOpen(open);
+            }}
+          >
+            <Dialog.Portal>
+              <Dialog.Overlay className="dialog-overlay" />
+              <Dialog.Content className="policy-dialog transfer-dialog">
+                <div className="dialog-titlebar">
+                  <div>
+                    <Dialog.Title>{t.settings.bearerWarningTitle}</Dialog.Title>
+                    <Dialog.Description>{t.settings.bearerWarningDescription}</Dialog.Description>
+                  </div>
+                  <Dialog.Close asChild>
+                    <button type="button" className="icon-button" disabled={busy} aria-label={t.common.close}>
+                      <X size={18} />
+                    </button>
+                  </Dialog.Close>
+                </div>
+                <div className="transfer-warning">
+                  <div className="transfer-warning-icon"><ShieldAlert size={22} /></div>
+                  <ul>
+                    <li>{t.settings.bearerWarningSecurity}</li>
+                    <li>{t.settings.bearerWarningAccessControl}</li>
+                  </ul>
+                </div>
+                <footer className="transfer-dialog-actions">
+                  <Dialog.Close asChild>
+                    <button type="button" className="button ghost" disabled={busy}>{t.common.cancel}</button>
+                  </Dialog.Close>
+                  <button
+                    type="button"
+                    className="button danger-solid"
+                    disabled={busy}
+                    onClick={async () => {
+                      const next = { ...serverDraft, require_token: false };
+                      serverDraftDirty.current = true;
+                      setServerDraft(next);
+                      const saved = await onSaveServer(next);
+                      if (saved) {
+                        setBearerWarningOpen(false);
+                      } else {
+                        serverDraftDirty.current = false;
+                        setServerDraft(server);
+                      }
+                    }}
+                  >
+                    <ShieldOff size={16} />
+                    {t.settings.confirmDisableBearer}
                   </button>
                 </footer>
               </Dialog.Content>
