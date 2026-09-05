@@ -122,6 +122,14 @@ pub struct JdbcStorageStatus {
     pub total_bytes: u64,
     pub items: Vec<JdbcStorageItem>,
     pub runtimes: Vec<JdbcDriverRuntimeInfo>,
+    pub maven_cache_bytes: u64,
+    pub managed_runtime_old_bytes: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct JdbcCacheSelection {
+    pub maven: bool,
+    pub old_runtimes: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -274,6 +282,19 @@ impl JdbcManager {
             .ok_or_else(|| anyhow::anyhow!("JDBC manager is unavailable in this test context"))?;
         jdbc_runtime::install(app).await?;
         Ok(self.runtime_status().await)
+    }
+
+    pub async fn remove_runtime(&self) -> anyhow::Result<()> {
+        if !self.sessions.lock().await.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Cannot remove DataNexa Java Runtime while JDBC sessions are running"
+            ));
+        }
+        let app = self
+            .app
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("JDBC manager is unavailable in this test context"))?;
+        jdbc_runtime::remove(app)
     }
 
     pub async fn check_runtime_update(&self) -> anyhow::Result<Option<String>> {
@@ -609,11 +630,17 @@ impl JdbcManager {
             .ok_or_else(|| anyhow::anyhow!("JDBC manager is unavailable in this test context"))?;
         let storage_root = app.path().app_data_dir()?;
         let drivers_root = self.drivers_root()?;
-        let runtime_path = self.java_executable().ok().and_then(|(java, _)| {
-            java.parent()
-                .and_then(|path| path.parent())
-                .map(|path| path.to_path_buf())
-        });
+        let runtime_path = storage_root
+            .join("jdbc-runtime")
+            .join(jdbc_runtime::target());
+        let current_runtime_path = jdbc_runtime::installed(app)
+            .ok()
+            .flatten()
+            .map(|metadata| runtime_path.join(metadata.runtime_dir));
+        let external_runtime_path = ConfigStore::new(app)
+            .ok()
+            .and_then(|store| store.load().ok())
+            .and_then(|config| config.settings.jdbc_java_home.map(PathBuf::from));
         let mut items = vec![
             ("drivers", "JDBC drivers", drivers_root.clone()),
             (
@@ -629,10 +656,7 @@ impl JdbcManager {
             ),
             ("config", "Configuration", storage_root.join("config.toml")),
         ];
-        if let Some(runtime_path) = runtime_path
-            .as_ref()
-            .filter(|path| path.starts_with(&storage_root))
-        {
+        if runtime_path.is_dir() && runtime_path.starts_with(&storage_root) {
             items.push(("runtime", "Java Runtime", runtime_path.clone()));
         }
         let mut items = items
@@ -644,7 +668,18 @@ impl JdbcManager {
                 path: path.to_string_lossy().to_string(),
             })
             .collect::<Vec<_>>();
-        let total_bytes = path_size_bytes(&storage_root);
+        // A user-selected external Runtime is not DataNexa-owned storage. Exclude it
+        // even when the user happens to place it below the application data directory.
+        let external_runtime_bytes = external_runtime_path
+            .as_ref()
+            .filter(|path| {
+                path != &&storage_root
+                    && path.starts_with(&storage_root)
+                    && !path.starts_with(&runtime_path)
+            })
+            .map(|path| path_size_bytes(path))
+            .unwrap_or(0);
+        let total_bytes = path_size_bytes(&storage_root).saturating_sub(external_runtime_bytes);
         let known_bytes = items.iter().map(|item| item.bytes).sum::<u64>();
         let other_bytes = total_bytes.saturating_sub(known_bytes);
         if other_bytes > 0 {
@@ -657,35 +692,52 @@ impl JdbcManager {
         }
         let drivers = self.list_drivers()?;
         let runtimes = self.collect_driver_runtime_info(&drivers).await;
+        let maven_cache_bytes = path_size_bytes(&storage_root.join("maven-repository"));
+        let managed_runtime_bytes = path_size_bytes(&runtime_path);
+        let managed_runtime_current_bytes = current_runtime_path
+            .as_ref()
+            .map(|path| path_size_bytes(path))
+            .unwrap_or(0);
         Ok(JdbcStorageStatus {
             storage_root: storage_root.to_string_lossy().to_string(),
             total_bytes,
             items,
             runtimes,
+            maven_cache_bytes,
+            managed_runtime_old_bytes: managed_runtime_bytes
+                .saturating_sub(managed_runtime_current_bytes),
         })
     }
 
-    pub fn clear_maven_cache(&self) -> anyhow::Result<()> {
+    pub async fn clear_jdbc_cache(&self, selection: JdbcCacheSelection) -> anyhow::Result<()> {
         let app = self
             .app
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("JDBC manager is unavailable in this test context"))?;
-        let cache_path = app.path().app_data_dir()?.join("maven-repository");
-        let metadata = match fs::symlink_metadata(&cache_path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(error.into()),
-        };
-        if metadata.file_type().is_symlink() {
-            return Err(anyhow::anyhow!(
-                "Maven repository path must not be a symbolic link"
-            ));
+        if selection.maven {
+            let cache_path = app.path().app_data_dir()?.join("maven-repository");
+            match fs::symlink_metadata(&cache_path) {
+                Ok(metadata) => {
+                    if metadata.file_type().is_symlink() {
+                        return Err(anyhow::anyhow!(
+                            "Maven repository path must not be a symbolic link"
+                        ));
+                    }
+                    if !metadata.is_dir() {
+                        return Err(anyhow::anyhow!("Maven repository path is not a directory"));
+                    }
+                    fs::remove_dir_all(&cache_path)?;
+                    fs::create_dir_all(&cache_path)?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    fs::create_dir_all(&cache_path)?;
+                }
+                Err(error) => return Err(error.into()),
+            }
         }
-        if !metadata.is_dir() {
-            return Err(anyhow::anyhow!("Maven repository path is not a directory"));
+        if selection.old_runtimes {
+            jdbc_runtime::clear_cache(app)?;
         }
-        fs::remove_dir_all(&cache_path)?;
-        fs::create_dir_all(cache_path)?;
         Ok(())
     }
 

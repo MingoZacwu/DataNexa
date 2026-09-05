@@ -32,7 +32,7 @@ import type { FormEvent, ReactNode } from "react";
 import appConfig from "../../../app.config.json";
 import appIconUrl from "../../../resources/icon.png";
 import { formatMessage, languageOptions, normalizeLocale, type I18nMessages, type Locale } from "../../i18n";
-import type { AppSnapshot, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcDriverRuntimeInfo, JdbcInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "../../types";
+import type { AppSnapshot, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcDriverRuntimeInfo, JdbcInstallProgress, JdbcRuntimeInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "../../types";
 import type { UpdateState } from "../../lib/updater";
 import type { EffectiveTheme, SettingsTab, ThemeMode } from "../../app/types";
 import { updateScrollFade } from "../../app/utils";
@@ -54,6 +54,7 @@ export function SettingsView({
   jdbcStatus,
   jdbcStorageStatus,
   jdbcInstallProgress,
+  jdbcRuntimeProgress,
   policySql,
   policyKind,
   policyResult,
@@ -65,9 +66,10 @@ export function SettingsView({
   onTabChange,
   onRefreshJdbcStatus,
   onInstallJdbcRuntime,
+  onRemoveJdbcRuntime,
   onCheckJdbcRuntimeUpdate,
   onRefreshJdbcStorageStatus,
-  onClearMavenCache,
+  onClearJdbcCache,
   onInstallJdbcDriver,
   onImportJdbcDriver,
   onDeleteJdbcDriver,
@@ -94,6 +96,7 @@ export function SettingsView({
   jdbcStatus: JdbcStatus | null;
   jdbcStorageStatus: JdbcStorageStatus | null;
   jdbcInstallProgress: JdbcInstallProgress | null;
+  jdbcRuntimeProgress: JdbcRuntimeInstallProgress | null;
   policySql: string;
   policyKind: DatabaseType;
   policyResult: PolicyCheckResult | null;
@@ -105,9 +108,10 @@ export function SettingsView({
   onTabChange: (tab: SettingsTab) => void;
   onRefreshJdbcStatus: () => void;
   onInstallJdbcRuntime: () => Promise<boolean>;
+  onRemoveJdbcRuntime: () => Promise<boolean>;
   onCheckJdbcRuntimeUpdate: () => Promise<string | null>;
   onRefreshJdbcStorageStatus: () => void;
-  onClearMavenCache: () => Promise<boolean>;
+  onClearJdbcCache: (selection: JdbcCacheSelection) => Promise<boolean>;
   onInstallJdbcDriver: (input: InstallJdbcDriverInput) => Promise<boolean>;
   onImportJdbcDriver: (input: ImportJdbcDriverInput) => Promise<boolean>;
   onDeleteJdbcDriver: (bundleId: string) => void;
@@ -552,10 +556,12 @@ export function SettingsView({
           t={t}
           status={jdbcStatus}
           installProgress={jdbcInstallProgress}
+          runtimeProgress={jdbcRuntimeProgress}
           settings={settings}
           busy={busy}
           onRefresh={onRefreshJdbcStatus}
           onInstallRuntime={onInstallJdbcRuntime}
+          onRemoveRuntime={onRemoveJdbcRuntime}
           onCheckRuntimeUpdate={onCheckJdbcRuntimeUpdate}
           onInstall={onInstallJdbcDriver}
           onImport={onImportJdbcDriver}
@@ -563,7 +569,7 @@ export function SettingsView({
           onSaveSettings={onSaveSettings}
         />
       ) : tab === "storage" ? (
-        <StorageManagement status={jdbcStorageStatus} busy={busy} onRefresh={onRefreshJdbcStorageStatus} onClearMavenCache={onClearMavenCache} t={t} />
+        <StorageManagement status={jdbcStorageStatus} busy={busy} onRefresh={onRefreshJdbcStorageStatus} onClearJdbcCache={onClearJdbcCache} t={t} />
       ) : (
         <div className="settings-stack" onScroll={updateScrollFade}>
           <section className="panel about-panel">
@@ -627,10 +633,12 @@ function DriverManagement({
   t,
   status,
   installProgress,
+  runtimeProgress,
   settings,
   busy,
   onRefresh,
   onInstallRuntime,
+  onRemoveRuntime,
   onCheckRuntimeUpdate,
   onInstall,
   onImport,
@@ -640,10 +648,12 @@ function DriverManagement({
   t: I18nMessages;
   status: JdbcStatus | null;
   installProgress: JdbcInstallProgress | null;
+  runtimeProgress: JdbcRuntimeInstallProgress | null;
   settings: SettingsConfig;
   busy: boolean;
   onRefresh: () => void;
   onInstallRuntime: () => Promise<boolean>;
+  onRemoveRuntime: () => Promise<boolean>;
   onCheckRuntimeUpdate: () => Promise<string | null>;
   onInstall: (input: InstallJdbcDriverInput) => Promise<boolean>;
   onImport: (input: ImportJdbcDriverInput) => Promise<boolean>;
@@ -660,6 +670,7 @@ function DriverManagement({
   const [localDisplayName, setLocalDisplayName] = useState("");
   const [localPaths, setLocalPaths] = useState<string[]>([]);
   const [runtimeUpdate, setRuntimeUpdate] = useState<string | null>(null);
+  const [runtimeRemoveDialogOpen, setRuntimeRemoveDialogOpen] = useState(false);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -724,6 +735,13 @@ function DriverManagement({
     if (await onInstallRuntime()) setRuntimeUpdate(null);
   }
 
+  async function removeManagedRuntime() {
+    if (await onRemoveRuntime()) {
+      setRuntimeUpdate(null);
+      setRuntimeRemoveDialogOpen(false);
+    }
+  }
+
   return (
     <div className="settings-stack driver-management" onScroll={updateScrollFade}>
       <section className="panel driver-runtime-panel">
@@ -737,12 +755,6 @@ function DriverManagement({
                 <FolderOpen size={17} />
               </button>
             </IconTooltip>
-            {!settings.jdbc_java_home && !runtime?.available && (
-              <button type="button" className="button primary" onClick={() => void installManagedRuntime()} disabled={busy}>
-                <Download size={16} />
-                {t.settings.installJdbcRuntime}
-              </button>
-            )}
             {!settings.jdbc_java_home && runtime?.source === "managed" && (
               <IconTooltip label={t.settings.checkJdbcRuntimeUpdate}>
                 <button type="button" className="icon-button" onClick={() => void checkManagedRuntimeUpdate()} disabled={busy} aria-label={t.settings.checkJdbcRuntimeUpdate}>
@@ -750,16 +762,17 @@ function DriverManagement({
                 </button>
               </IconTooltip>
             )}
-            {!settings.jdbc_java_home && runtimeUpdate && (
-              <button type="button" className="button primary" onClick={() => void installManagedRuntime()} disabled={busy}>
-                <Download size={16} />
-                {formatMessage(t.settings.updateJdbcRuntime, { version: runtimeUpdate })}
-              </button>
-            )}
             {settings.jdbc_java_home && (
               <IconTooltip label={t.settings.useManagedRuntime}>
                 <button type="button" className="icon-button" onClick={() => void useManagedRuntime()} disabled={busy} aria-label={t.settings.useManagedRuntime}>
                   <RotateCcw size={17} />
+                </button>
+              </IconTooltip>
+            )}
+            {runtime?.managed_version && (
+              <IconTooltip label={t.settings.removeJdbcRuntime}>
+                <button type="button" className="icon-button danger" onClick={() => setRuntimeRemoveDialogOpen(true)} disabled={busy} aria-label={t.settings.removeJdbcRuntime}>
+                  <Trash2 size={17} />
                 </button>
               </IconTooltip>
             )}
@@ -773,8 +786,52 @@ function DriverManagement({
         <div className="runtime-status-row">
           <StatusBadge available={Boolean(runtime?.available)} label={runtime?.available ? t.settings.runtimeAvailable : t.settings.runtimeUnavailable} />
           <code>{runtime?.java_version ?? t.settings.runtimeNotDetected}</code>
-          <span>{runtime ? formatMessage(t.settings.runtimeSource, { source: runtimeSourceLabel(t, runtime.source) }) : t.settings.runtimeChecking}</span>
+          <div className="runtime-status-meta">
+            {runtime ? (
+              runtime.source !== "unavailable" && (
+                <span>{formatMessage(t.settings.runtimeSource, { source: runtimeSourceLabel(t, runtime.source) })}</span>
+              )
+            ) : (
+              <span>{t.settings.runtimeChecking}</span>
+            )}
+            {runtime && !settings.jdbc_java_home && !runtime.available && (
+              <button type="button" className="button primary runtime-status-action" onClick={() => void installManagedRuntime()} disabled={busy}>
+                <Download size={16} />
+                {t.settings.installJdbcRuntime}
+              </button>
+            )}
+            {!settings.jdbc_java_home && runtime?.available && runtimeUpdate && (
+              <button type="button" className="button primary runtime-status-action" onClick={() => void installManagedRuntime()} disabled={busy}>
+                <Download size={16} />
+                {formatMessage(t.settings.updateJdbcRuntime, { version: runtimeUpdate })}
+              </button>
+            )}
+          </div>
         </div>
+        {runtimeProgress && <JdbcRuntimeProgressView t={t} progress={runtimeProgress} />}
+        <Dialog.Root open={runtimeRemoveDialogOpen} onOpenChange={(open) => !busy && setRuntimeRemoveDialogOpen(open)}>
+          <Dialog.Portal>
+            <Dialog.Overlay className="dialog-overlay" />
+            <Dialog.Content className="policy-dialog jdbc-remove-dialog">
+              <div className="dialog-titlebar">
+                <div>
+                  <Dialog.Title>{t.settings.removeJdbcRuntimeConfirmTitle}</Dialog.Title>
+                  <Dialog.Description>{t.settings.removeJdbcRuntimeConfirm}</Dialog.Description>
+                </div>
+                <Dialog.Close asChild>
+                  <button type="button" className="icon-button" disabled={busy} aria-label={t.common.close}><X size={18} /></button>
+                </Dialog.Close>
+              </div>
+              <footer>
+                <Dialog.Close asChild><button type="button" className="button ghost" disabled={busy}>{t.common.cancel}</button></Dialog.Close>
+                <button type="button" className="button stop" disabled={busy} onClick={() => void removeManagedRuntime()}>
+                  <Trash2 size={16} />
+                  {t.settings.removeJdbcRuntime}
+                </button>
+              </footer>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
       </section>
 
       <section className="panel">
@@ -951,9 +1008,34 @@ function JdbcInstallProgressView({ t, progress }: { t: I18nMessages; progress: J
   );
 }
 
-function StorageManagement({ t, status, busy, onRefresh, onClearMavenCache }: { t: I18nMessages; status: JdbcStorageStatus | null; busy: boolean; onRefresh: () => void; onClearMavenCache: () => Promise<boolean> }) {
+function JdbcRuntimeProgressView({ t, progress }: { t: I18nMessages; progress: JdbcRuntimeInstallProgress }) {
+  const percent = progress.progress;
+  const label = {
+    preparing: t.settings.jdbcRuntimePreparing,
+    downloading: t.settings.jdbcRuntimeDownloading,
+    verifying: t.settings.jdbcRuntimeVerifying,
+    extracting: t.settings.jdbcRuntimeExtracting,
+    finalizing: t.settings.jdbcRuntimeFinalizing
+  }[progress.phase];
+  const downloaded = formatBytes(progress.downloaded_bytes);
+  const total = progress.total_bytes ? formatBytes(progress.total_bytes) : null;
+  return (
+    <div className="jdbc-install-progress jdbc-runtime-progress" aria-live="polite">
+      <div className="jdbc-install-progress-heading">
+        <span>{label}</span>
+        <span>{total ? `${downloaded} / ${total}` : (percent === null ? t.settings.jdbcInstallInProgress : `${percent}%`)}</span>
+      </div>
+      <div className={clsx("update-progress", percent === null && "indeterminate")} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? undefined}>
+        <span style={{ width: percent === null ? "22%" : `${percent}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache }: { t: I18nMessages; status: JdbcStorageStatus | null; busy: boolean; onRefresh: () => void; onClearJdbcCache: (selection: JdbcCacheSelection) => Promise<boolean> }) {
   const [selectedStorageView, setSelectedStorageView] = useState<"storage" | "drivers">("storage");
   const [mavenCacheDialogOpen, setMavenCacheDialogOpen] = useState(false);
+  const [cacheSelection, setCacheSelection] = useState<JdbcCacheSelection>({ maven: true, old_runtimes: true });
   const [cpuHistory, setCpuHistory] = useState<number[]>([]);
   const refreshRef = useRef(onRefresh);
   useEffect(() => {
@@ -1009,8 +1091,8 @@ function StorageManagement({ t, status, busy, onRefresh, onClearMavenCache }: { 
           <div className="driver-section-heading">
             <div><h2>{t.settings.storageDetails}</h2></div>
             <div className="runtime-heading-actions">
-              <IconTooltip label={t.settings.clearMavenCache}>
-                <button type="button" className="icon-button danger" onClick={() => setMavenCacheDialogOpen(true)} disabled={busy || !status} aria-label={t.settings.clearMavenCache}>
+                <IconTooltip label={t.settings.clearJdbcCache}>
+                <button type="button" className="icon-button danger" onClick={() => { setCacheSelection({ maven: Boolean(status?.maven_cache_bytes), old_runtimes: Boolean(status?.managed_runtime_old_bytes) }); setMavenCacheDialogOpen(true); }} disabled={busy || !status} aria-label={t.settings.clearJdbcCache}>
                   <Trash2 size={17} />
                 </button>
               </IconTooltip>
@@ -1036,18 +1118,23 @@ function StorageManagement({ t, status, busy, onRefresh, onClearMavenCache }: { 
                 <Dialog.Content className="policy-dialog jdbc-cache-dialog">
                   <div className="dialog-titlebar">
                     <div>
-                      <Dialog.Title>{t.settings.clearMavenCacheConfirmTitle}</Dialog.Title>
-                      <Dialog.Description>{t.settings.clearMavenCacheConfirmDescription}</Dialog.Description>
+                      <Dialog.Title>{t.settings.clearJdbcCacheConfirmTitle}</Dialog.Title>
+                      <Dialog.Description>{t.settings.clearJdbcCacheConfirmDescription}</Dialog.Description>
                     </div>
                     <Dialog.Close asChild>
                       <button type="button" className="icon-button" disabled={busy} aria-label={t.common.close}><X size={18} /></button>
                     </Dialog.Close>
                   </div>
+                  <div className="jdbc-cache-options">
+                    <CacheOption label={t.settings.clearMavenCacheOption} size={status.maven_cache_bytes} checked={cacheSelection.maven} disabled={status.maven_cache_bytes === 0} onChange={(checked) => setCacheSelection((value) => ({ ...value, maven: checked }))} />
+                    <CacheOption label={t.settings.clearOldRuntimeOption} size={status.managed_runtime_old_bytes} checked={cacheSelection.old_runtimes} disabled={status.managed_runtime_old_bytes === 0} onChange={(checked) => setCacheSelection((value) => ({ ...value, old_runtimes: checked }))} />
+                    <div className="jdbc-cache-total"><span>{t.settings.selectedSpace}</span><strong>{formatBytes((cacheSelection.maven ? status.maven_cache_bytes : 0) + (cacheSelection.old_runtimes ? status.managed_runtime_old_bytes : 0))}</strong></div>
+                  </div>
                   <footer>
                     <Dialog.Close asChild><button type="button" className="button ghost" disabled={busy}>{t.common.cancel}</button></Dialog.Close>
-                    <button type="button" className="button stop" disabled={busy} onClick={() => void onClearMavenCache().then((cleared) => cleared && setMavenCacheDialogOpen(false))}>
+                    <button type="button" className="button stop" disabled={busy || (!cacheSelection.maven && !cacheSelection.old_runtimes)} onClick={() => void onClearJdbcCache(cacheSelection).then((cleared) => cleared && setMavenCacheDialogOpen(false))}>
                       <Trash2 size={16} />
-                      {t.settings.confirmClearMavenCache}
+                      {t.settings.confirmClearJdbcCache}
                     </button>
                   </footer>
                 </Dialog.Content>
@@ -1069,6 +1156,16 @@ function StorageManagement({ t, status, busy, onRefresh, onClearMavenCache }: { 
         </section>
       )}
     </div>
+  );
+}
+
+function CacheOption({ label, size, checked, disabled, onChange }: { label: string; size: number; checked: boolean; disabled: boolean; onChange: (checked: boolean) => void }) {
+  return (
+    <label className={clsx("jdbc-cache-option", disabled && "disabled")}>
+      <input type="checkbox" checked={checked && !disabled} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
+      <span>{label}</span>
+      <strong>{formatBytes(size)}</strong>
+    </label>
   );
 }
 

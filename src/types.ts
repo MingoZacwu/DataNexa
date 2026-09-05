@@ -158,6 +158,13 @@ export interface JdbcRuntimeStatus {
   sidecar_available: boolean;
 }
 
+export interface JdbcRuntimeInstallProgress {
+  phase: "preparing" | "downloading" | "verifying" | "extracting" | "finalizing";
+  downloaded_bytes: number;
+  total_bytes?: number | null;
+  progress?: number | null;
+}
+
 export interface JdbcStatus {
   runtime: JdbcRuntimeStatus;
   drivers: JdbcDriverBundle[];
@@ -205,6 +212,13 @@ export interface JdbcStorageStatus {
   total_bytes: number;
   items: JdbcStorageItem[];
   runtimes: JdbcDriverRuntimeInfo[];
+  maven_cache_bytes: number;
+  managed_runtime_old_bytes: number;
+}
+
+export interface JdbcCacheSelection {
+  maven: boolean;
+  old_runtimes: boolean;
 }
 
 export interface ConnectionDiagnostics {

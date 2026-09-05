@@ -1312,6 +1312,73 @@ p {
   width: min(480px, calc(100vw - 40px));
 }
 
+.jdbc-remove-dialog {
+  width: min(420px, calc(100vw - 40px));
+}
+
+.jdbc-remove-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.jdbc-cache-options {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.jdbc-cache-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--surface-strong) 84%, var(--line));
+  cursor: pointer;
+}
+
+.jdbc-cache-option.disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.jdbc-cache-option input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--blue);
+}
+
+.jdbc-cache-option span {
+  min-width: 0;
+  font-size: 13px;
+}
+
+.jdbc-cache-option strong,
+.jdbc-cache-total strong {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.jdbc-cache-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 2px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.jdbc-cache-total strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
 .jdbc-cache-dialog footer {
   display: flex;
   justify-content: flex-end;
@@ -1398,9 +1465,22 @@ p {
   white-space: nowrap;
 }
 
-.runtime-status-row > span:last-child {
+.runtime-status-meta {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.runtime-status-meta > span {
   color: var(--muted);
   font-size: 12px;
+  white-space: nowrap;
+}
+
+.runtime-status-action {
+  white-space: nowrap;
 }
 
 .runtime-status-badge {
@@ -1595,6 +1675,10 @@ p {
 
 .jdbc-install-progress .update-progress {
   width: 100%;
+}
+
+.jdbc-runtime-progress {
+  margin-top: 10px;
 }
 
 .jdbc-install-form footer {

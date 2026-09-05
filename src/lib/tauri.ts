@@ -10,6 +10,7 @@ import type {
   ImportJdbcDriverInput,
   InstallJdbcDriverInput,
   JdbcDriverBundle,
+  JdbcCacheSelection,
   JdbcStatus,
   JdbcStorageStatus,
   McpToolInfo,
@@ -219,7 +220,9 @@ const mockJdbcStorageStatus: JdbcStorageStatus = {
   runtimes: [
     { bundle_id: "00000000-0000-4000-8000-000000000021", display_name: "Oracle JDBC", status: "running", health: "healthy", process_count: 1, memory_bytes: 87.9 * 1024 * 1024, cpu_percent: 0.4 },
     { bundle_id: "00000000-0000-4000-8000-000000000022", display_name: "PostgreSQL JDBC", status: "stopped", health: "stopped", process_count: 0, memory_bytes: 0, cpu_percent: 0 }
-  ]
+  ],
+  maven_cache_bytes: 0,
+  managed_runtime_old_bytes: 0
 };
 
 function getMockJdbcStorageStatus(): JdbcStorageStatus {
@@ -316,9 +319,10 @@ export const api = {
   snapshot: () => command<AppSnapshot>("get_app_snapshot", undefined, mockSnapshot),
   jdbcStatus: () => command<JdbcStatus>("get_jdbc_status", undefined, mockJdbcStatus),
   installJdbcRuntime: () => command<JdbcStatus["runtime"]>("install_jdbc_runtime", undefined, mockJdbcStatus.runtime),
+  removeJdbcRuntime: () => command<void>("remove_jdbc_runtime", undefined, undefined),
   checkJdbcRuntimeUpdate: () => command<string | null>("check_jdbc_runtime_update", undefined, null),
   jdbcStorageStatus: () => command<JdbcStorageStatus>("get_jdbc_storage_status", undefined, getMockJdbcStorageStatus()),
-  clearMavenCache: () => command<boolean>("clear_maven_cache", undefined, true),
+  clearJdbcCache: (selection: JdbcCacheSelection) => command<boolean>("clear_jdbc_cache", { selection }, true),
   installJdbcDriver: (input: InstallJdbcDriverInput) =>
     command<JdbcDriverBundle>("install_jdbc_driver", { input }, {
       schema_version: 1,

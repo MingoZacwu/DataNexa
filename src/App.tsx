@@ -9,7 +9,7 @@ import { detectLocale, formatMessage, messages, normalizeLocale, persistLocale }
 import type { Locale } from "./i18n";
 import { api } from "./lib/tauri";
 import { useAppUpdater } from "./lib/updater";
-import type { AppSnapshot, AuditEvent, ConnectionConfig, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "./types";
+import type { AppSnapshot, AuditEvent, ConnectionConfig, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcInstallProgress, JdbcRuntimeInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "./types";
 import { detectThemeMode, persistThemeMode, resolveTheme, systemTheme } from "./app/theme";
 import type { AuditFilters, EffectiveTheme, SettingsTab, ThemeMode, ToastMessage, ToastTone, View } from "./app/types";
 import { buildAgentPrompt, compactConnectionError, formatConnectionTest, formatDiagnostics, toolDisplayName, updateScrollFade, viewTitle } from "./app/utils";
@@ -72,6 +72,7 @@ function App() {
   const [jdbcStatus, setJdbcStatus] = useState<JdbcStatus | null>(null);
   const [jdbcStorageStatus, setJdbcStorageStatus] = useState<JdbcStorageStatus | null>(null);
   const [jdbcInstallProgress, setJdbcInstallProgress] = useState<JdbcInstallProgress | null>(null);
+  const [jdbcRuntimeProgress, setJdbcRuntimeProgress] = useState<JdbcRuntimeInstallProgress | null>(null);
   const [locale, setLocale] = useState<Locale>(detectLocale);
   const [theme, setTheme] = useState<ThemeMode>(detectThemeMode);
   const [systemThemeMode, setSystemThemeMode] = useState<EffectiveTheme>(systemTheme);
@@ -117,6 +118,28 @@ function App() {
   useEffect(() => {
     void refresh();
     void refreshJdbcStatus();
+  }, []);
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    let cancelled = false;
+    void (async () => {
+      try {
+        unlisten = await listen<JdbcRuntimeInstallProgress>("jdbc://runtime-install-progress", (event) => {
+          setJdbcRuntimeProgress(event.payload);
+        });
+        if (cancelled) {
+          unlisten();
+          unlisten = undefined;
+        }
+      } catch {
+        // Preview mode and older runtimes may not provide event delivery.
+      }
+    })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -541,10 +564,28 @@ function App() {
 
   async function installJdbcRuntime(): Promise<boolean> {
     setBusy(true);
+    setJdbcRuntimeProgress({ phase: "preparing", downloaded_bytes: 0, total_bytes: null, progress: 0 });
     try {
       await api.installJdbcRuntime();
       await refreshJdbcStatus();
       pushToast(t.toast.jdbcRuntimeInstalled, "info");
+      return true;
+    } catch (error) {
+      showError(error);
+      return false;
+    } finally {
+      setJdbcRuntimeProgress(null);
+      setBusy(false);
+    }
+  }
+
+  async function removeJdbcRuntime(): Promise<boolean> {
+    setBusy(true);
+    try {
+      await api.removeJdbcRuntime();
+      await refreshJdbcStatus();
+      await refreshJdbcStorageStatus();
+      pushToast(t.toast.jdbcRuntimeRemoved, "info");
       return true;
     } catch (error) {
       showError(error);
@@ -586,12 +627,12 @@ function App() {
     }
   }
 
-  async function clearMavenCache(): Promise<boolean> {
+  async function clearJdbcCache(selection: JdbcCacheSelection): Promise<boolean> {
     setBusy(true);
     try {
-      await api.clearMavenCache();
+      await api.clearJdbcCache(selection);
       await refreshJdbcStorageStatus();
-      pushToast(t.toast.mavenCacheCleared, "info");
+      pushToast(t.toast.jdbcCacheCleared, "info");
       return true;
     } catch (error) {
       showError(error);
@@ -973,6 +1014,7 @@ function App() {
                     jdbcStatus={jdbcStatus}
                     jdbcStorageStatus={jdbcStorageStatus}
                     jdbcInstallProgress={jdbcInstallProgress}
+                    jdbcRuntimeProgress={jdbcRuntimeProgress}
                     policySql={policySql}
                     policyKind={policyKind}
                     policyResult={policyResult}
@@ -984,9 +1026,10 @@ function App() {
                     onTabChange={setSettingsTab}
                     onRefreshJdbcStatus={() => void refreshJdbcStatus()}
                     onInstallJdbcRuntime={installJdbcRuntime}
+                    onRemoveJdbcRuntime={removeJdbcRuntime}
                     onCheckJdbcRuntimeUpdate={checkJdbcRuntimeUpdate}
                     onRefreshJdbcStorageStatus={() => void refreshJdbcStorageStatus()}
-                    onClearMavenCache={clearMavenCache}
+                    onClearJdbcCache={clearJdbcCache}
                     onInstallJdbcDriver={installJdbcDriver}
                     onImportJdbcDriver={importJdbcDriver}
                     onDeleteJdbcDriver={(bundleId) => void deleteJdbcDriver(bundleId)}

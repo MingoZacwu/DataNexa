@@ -19,7 +19,8 @@ use crate::config::{
 use crate::db::ConnectionDiagnostics;
 use crate::i18n::{backend_text, BackendText, ConnectionDiagnosticText};
 use crate::jdbc::{
-    ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcDriverBundle, JdbcStatus, JdbcStorageStatus,
+    ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcDriverBundle,
+    JdbcStatus, JdbcStorageStatus,
 };
 use crate::mcp::{self, McpToolInfo, ServerStatus};
 use crate::policy::{PolicyCheckResult, PolicyEngine};
@@ -143,6 +144,17 @@ pub async fn install_jdbc_runtime(
 }
 
 #[tauri::command]
+pub async fn remove_jdbc_runtime(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    let _lifecycle = state.jdbc_lifecycle.lock().await;
+    let text = text_for_state(state.inner()).await;
+    state
+        .jdbc
+        .remove_runtime()
+        .await
+        .map_err(|error| to_jdbc_client_error(error, &text))
+}
+
+#[tauri::command]
 pub async fn check_jdbc_runtime_update(
     state: State<'_, Arc<AppState>>,
 ) -> Result<Option<String>, String> {
@@ -195,12 +207,16 @@ pub async fn get_jdbc_storage_status(
 }
 
 #[tauri::command]
-pub async fn clear_maven_cache(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+pub async fn clear_jdbc_cache(
+    state: State<'_, Arc<AppState>>,
+    selection: JdbcCacheSelection,
+) -> Result<(), String> {
     let _lifecycle = state.jdbc_lifecycle.lock().await;
     let text = text_for_state(state.inner()).await;
     state
         .jdbc
-        .clear_maven_cache()
+        .clear_jdbc_cache(selection)
+        .await
         .map_err(|error| to_jdbc_client_error(error, &text))
 }
 

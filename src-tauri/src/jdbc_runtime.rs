@@ -10,7 +10,7 @@ use minisign_verify::{PublicKey, Signature};
 use reqwest::header::CACHE_CONTROL;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::AsyncWriteExt;
 
 const MANIFEST_URL: &str =
@@ -19,6 +19,15 @@ const MANIFEST_SIGNATURE_URL: &str = "https://github.com/MingoZacwu/DataNexa-JRE
 const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const MANIFEST_PUBLIC_KEY: &str = include_str!("../jre-manifest.pub");
+pub const JDBC_RUNTIME_PROGRESS_EVENT: &str = "jdbc://runtime-install-progress";
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RuntimeInstallProgress {
+    pub phase: String,
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub progress: Option<u8>,
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct JreManifest {
@@ -116,6 +125,7 @@ pub async fn check_update(app: &AppHandle) -> anyhow::Result<Option<RuntimeUpdat
 }
 
 pub async fn install(app: &AppHandle) -> anyhow::Result<InstalledRuntime> {
+    emit_progress(app, "preparing", 0, None, Some(0));
     let manifest = fetch_manifest().await?;
     let target = target();
     let artifact = manifest
@@ -128,7 +138,14 @@ pub async fn install(app: &AppHandle) -> anyhow::Result<InstalledRuntime> {
     let target_dir = base.join(target);
     fs::create_dir_all(&target_dir)?;
     let temporary = target_dir.join(format!(".{}.part", uuid::Uuid::new_v4()));
-    download_archive(&artifact.url, &temporary, artifact.size).await?;
+    download_archive(app, &artifact.url, &temporary, artifact.size).await?;
+    emit_progress(
+        app,
+        "verifying",
+        artifact.size,
+        Some(artifact.size),
+        Some(70),
+    );
     let actual_hash = sha256_file(&temporary)?;
     if !actual_hash.eq_ignore_ascii_case(&artifact.sha256) {
         let _ = fs::remove_file(&temporary);
@@ -140,6 +157,7 @@ pub async fn install(app: &AppHandle) -> anyhow::Result<InstalledRuntime> {
     let runtime_dir = format!("runtime-{}", sanitize_component(&manifest.release_tag));
     let staging = target_dir.join(format!(".install-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&staging)?;
+    emit_progress(app, "extracting", artifact.size, Some(artifact.size), None);
     let extract_result = extract_archive(&temporary, &staging);
     let _ = fs::remove_file(&temporary);
     extract_result?;
@@ -171,7 +189,60 @@ pub async fn install(app: &AppHandle) -> anyhow::Result<InstalledRuntime> {
     let metadata_tmp = target_dir.join(format!(".current-{}.tmp", uuid::Uuid::new_v4()));
     fs::write(&metadata_tmp, metadata_text)?;
     fs::rename(metadata_tmp, target_dir.join("current.json"))?;
+    emit_progress(
+        app,
+        "finalizing",
+        artifact.size,
+        Some(artifact.size),
+        Some(100),
+    );
     Ok(metadata)
+}
+
+pub fn remove(app: &AppHandle) -> anyhow::Result<()> {
+    let target_dir = runtime_base(app)?.join(target());
+    if target_dir.exists() {
+        fs::remove_dir_all(&target_dir)?;
+    }
+    let base = runtime_base(app)?;
+    if base.exists() && fs::read_dir(&base)?.next().is_none() {
+        let _ = fs::remove_dir(&base);
+    }
+    Ok(())
+}
+
+pub fn clear_cache(app: &AppHandle) -> anyhow::Result<()> {
+    let target_dir = runtime_base(app)?.join(target());
+    if !target_dir.is_dir() {
+        return Ok(());
+    }
+    let metadata_path = target_dir.join("current.json");
+    let current_runtime_dir = if metadata_path.is_file() {
+        let metadata =
+            serde_json::from_str::<InstalledRuntime>(&fs::read_to_string(metadata_path)?)?;
+        if metadata.target != target() || !valid_runtime_dir(&metadata.runtime_dir) {
+            return Err(anyhow::anyhow!("Managed Java Runtime metadata is invalid"));
+        }
+        Some(metadata.runtime_dir)
+    } else {
+        None
+    };
+    for entry in fs::read_dir(&target_dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name == "current.json" || current_runtime_dir.as_deref() == Some(name.as_ref()) {
+            continue;
+        }
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.is_dir() {
+            fs::remove_dir_all(path)?;
+        } else {
+            fs::remove_file(path)?;
+        }
+    }
+    Ok(())
 }
 
 async fn fetch_manifest() -> anyhow::Result<JreManifest> {
@@ -242,7 +313,12 @@ fn validate_artifact(artifact: &JreArtifact) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn download_archive(url: &str, path: &Path, expected_size: u64) -> anyhow::Result<()> {
+async fn download_archive(
+    app: &AppHandle,
+    url: &str,
+    path: &Path,
+    expected_size: u64,
+) -> anyhow::Result<()> {
     let client = reqwest::Client::builder()
         .timeout(DOWNLOAD_TIMEOUT)
         .user_agent("DataNexa-JRE-Manager")
@@ -257,6 +333,7 @@ async fn download_archive(url: &str, path: &Path, expected_size: u64) -> anyhow:
     let mut file = tokio::fs::File::create(path).await?;
     let mut total = 0u64;
     let mut stream = response.bytes_stream();
+    emit_progress(app, "downloading", 0, Some(expected_size), Some(0));
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
         total = total.saturating_add(chunk.len() as u64);
@@ -268,6 +345,14 @@ async fn download_archive(url: &str, path: &Path, expected_size: u64) -> anyhow:
             ));
         }
         file.write_all(&chunk).await?;
+        let progress = ((total.saturating_mul(65)) / expected_size.max(1)).min(65) as u8;
+        emit_progress(
+            app,
+            "downloading",
+            total,
+            Some(expected_size),
+            Some(progress),
+        );
     }
     file.flush().await?;
     if total != expected_size {
@@ -277,6 +362,24 @@ async fn download_archive(url: &str, path: &Path, expected_size: u64) -> anyhow:
         ));
     }
     Ok(())
+}
+
+fn emit_progress(
+    app: &AppHandle,
+    phase: &str,
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+    progress: Option<u8>,
+) {
+    let _ = app.emit(
+        JDBC_RUNTIME_PROGRESS_EVENT,
+        RuntimeInstallProgress {
+            phase: phase.to_string(),
+            downloaded_bytes,
+            total_bytes,
+            progress,
+        },
+    );
 }
 
 fn extract_archive(archive_path: &Path, destination: &Path) -> anyhow::Result<()> {
