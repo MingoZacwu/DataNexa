@@ -1,6 +1,6 @@
 {
   "name": "datanexa",
-  "version": "0.8.0-alpha",
+  "version": "0.8.0-beta",
   "private": true,
   "type": "module",
   "scripts": {
