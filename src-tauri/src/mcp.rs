@@ -76,7 +76,8 @@ const MAX_MCP_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_MCP_RESULT_BYTES: usize = MAX_MCP_RESPONSE_BYTES - 64 * 1024;
 const MCP_TOOL_CALL_COMPLETED_EVENT: &str = "mcp://tool-call-completed";
 const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
-const SUPPORTED_PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", LATEST_PROTOCOL_VERSION];
+const SUPPORTED_PROTOCOL_VERSIONS: [&str; 3] =
+    ["2025-03-26", "2025-06-18", LATEST_PROTOCOL_VERSION];
 
 struct ToolRateLimit {
     tokens: f64,
@@ -428,6 +429,14 @@ async fn handle_mcp_post(
         return StatusCode::ACCEPTED.into_response();
     }
 
+    let result = if request.method == "tools/call"
+        && protocol_version_header(&headers).is_none_or(|version| version == "2025-03-26")
+    {
+        result.map(strip_unsupported_structured_content)
+    } else {
+        result
+    };
+
     match result {
         Ok(value) => Json(json!({
             "jsonrpc": "2.0",
@@ -502,18 +511,28 @@ fn validate_transport_headers(headers: &HeaderMap) -> Result<(), Response> {
 
 #[allow(clippy::result_large_err)]
 fn validate_protocol_header(headers: &HeaderMap) -> Result<(), Response> {
-    let version = headers
-        .get("mcp-protocol-version")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
+    let Some(version) = protocol_version_header(headers) else {
+        // Older HTTP MCP clients did not send this header. Treat them as the
+        // deprecated 2025-03-26 transport for interoperability.
+        return Ok(());
+    };
     if !SUPPORTED_PROTOCOL_VERSIONS.contains(&version) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Missing or unsupported MCP-Protocol-Version",
-        )
-            .into_response());
+        return Err((StatusCode::BAD_REQUEST, "Unsupported MCP-Protocol-Version").into_response());
     }
     Ok(())
+}
+
+fn protocol_version_header(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get("mcp-protocol-version")
+        .and_then(|value| value.to_str().ok())
+}
+
+fn strip_unsupported_structured_content(mut result: Value) -> Value {
+    if let Some(object) = result.as_object_mut() {
+        object.remove("structuredContent");
+    }
+    result
 }
 
 #[allow(clippy::result_large_err)]
@@ -728,7 +747,11 @@ fn tools(tool_configs: &[ToolConfig]) -> Vec<Value> {
         tool(
             "datanexa_list_connections",
             tool_description("datanexa_list_connections"),
-            json!({ "type": "object", "properties": {} }),
+            json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
         ),
         tool(
             "datanexa_get_schema",
@@ -795,7 +818,7 @@ fn tool_description(name: &str) -> &'static str {
         }
         "datanexa_explain_sql" => "Run EXPLAIN for a read-only SQL statement.",
         "datanexa_policy_check" => {
-            "Validate SQL against DataNexa read-only policy without executing it."
+            "Validate SQL against DataNexa read-only policy without executing it. Provide either kind (sqlite, mysql, or postgres) or connection_id."
         }
         _ => "Unknown DataNexa MCP tool.",
     }
@@ -812,6 +835,7 @@ fn tool(name: &str, description: &str, input_schema: Value) -> Value {
 fn connection_schema() -> Value {
     json!({
         "type": "object",
+        "additionalProperties": false,
         "required": ["connection_id"],
         "properties": {
             "connection_id": { "type": "string" }
@@ -822,6 +846,7 @@ fn connection_schema() -> Value {
 fn table_schema() -> Value {
     json!({
         "type": "object",
+        "additionalProperties": false,
         "required": ["connection_id", "table"],
         "properties": {
             "connection_id": { "type": "string" },
@@ -834,6 +859,7 @@ fn table_schema() -> Value {
 fn sample_schema() -> Value {
     json!({
         "type": "object",
+        "additionalProperties": false,
         "required": ["connection_id", "table"],
         "properties": {
             "connection_id": { "type": "string" },
@@ -847,6 +873,7 @@ fn sample_schema() -> Value {
 fn sql_schema() -> Value {
     json!({
         "type": "object",
+        "additionalProperties": false,
         "required": ["connection_id", "sql"],
         "properties": {
             "connection_id": { "type": "string" },
@@ -858,11 +885,8 @@ fn sql_schema() -> Value {
 fn policy_check_schema() -> Value {
     json!({
         "type": "object",
+        "additionalProperties": false,
         "required": ["sql"],
-        "anyOf": [
-            { "required": ["kind"] },
-            { "required": ["connection_id"] }
-        ],
         "properties": {
             "connection_id": { "type": "string" },
             "kind": {
@@ -1344,6 +1368,7 @@ async fn call_tool(
                     "text": serde_json::to_string_pretty(&payload)?
                 }
             ],
+            "structuredContent": payload,
             "isError": false
         }),
         denied,
@@ -1646,13 +1671,70 @@ mod tests {
 
     #[test]
     fn protocol_negotiation_preserves_supported_client_versions() {
+        let legacy = json!({ "protocolVersion": "2025-03-26" });
         let supported = json!({ "protocolVersion": "2025-06-18" });
         let unsupported = json!({ "protocolVersion": "1900-01-01" });
+        assert_eq!(negotiated_protocol_version(Some(&legacy)), "2025-03-26");
         assert_eq!(negotiated_protocol_version(Some(&supported)), "2025-06-18");
         assert_eq!(
             negotiated_protocol_version(Some(&unsupported)),
             "2025-11-25"
         );
+    }
+
+    #[test]
+    fn tool_input_schemas_are_strict_object_schemas() {
+        for tool in tools(&AppConfig::default().tools) {
+            let schema = tool
+                .get("inputSchema")
+                .expect("tool input schema")
+                .as_object()
+                .expect("input schema is an object");
+            assert_eq!(
+                schema.get("type"),
+                Some(&Value::String("object".to_string()))
+            );
+            assert_eq!(
+                schema.get("additionalProperties"),
+                Some(&Value::Bool(false))
+            );
+            assert!(schema.get("anyOf").is_none());
+            assert!(schema.get("oneOf").is_none());
+        }
+    }
+
+    #[test]
+    fn legacy_protocol_results_omit_structured_content() {
+        let result = strip_unsupported_structured_content(json!({
+            "content": [{ "type": "text", "text": "{}" }],
+            "structuredContent": { "value": 1 },
+            "isError": false
+        }));
+        assert!(result.get("structuredContent").is_none());
+        assert_eq!(result.get("isError"), Some(&Value::Bool(false)));
+    }
+
+    #[tokio::test]
+    async fn missing_protocol_header_uses_legacy_http_compatibility() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let state = test_state(
+            directory.path(),
+            17321,
+            &directory.path().join("audit.json"),
+        )
+        .await;
+        let mut request = mcp_request(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list"
+        }));
+        request.headers_mut().remove("mcp-protocol-version");
+        let response = mcp_router(state)
+            .oneshot(request)
+            .await
+            .expect("legacy request response");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response_json(response).await.get("result").is_some());
     }
 
     #[tokio::test]
@@ -1677,6 +1759,19 @@ mod tests {
         .expect("allowed policy check");
         assert!(!allowed.denied);
         assert_eq!(allowed.response.get("isError"), Some(&Value::Bool(false)));
+        assert!(allowed
+            .response
+            .get("structuredContent")
+            .is_some_and(Value::is_object));
+        let text = allowed
+            .response
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .expect("structured result text");
+        assert_eq!(
+            serde_json::from_str::<Value>(text).expect("result text is JSON"),
+            allowed.response["structuredContent"]
+        );
 
         let denied = call_tool(
             state,
