@@ -1,14 +1,36 @@
-import type { UIEvent as ReactUIEvent } from "react";
+import { useCallback, useLayoutEffect, useRef, type UIEvent as ReactUIEvent } from "react";
 import { formatMessage, type I18nMessages } from "../i18n";
 import type { AuditEvent, ConnectionDiagnostics, DatabaseType, McpToolInfo } from "../types";
 import type { View } from "./types";
 
-export function updateScrollFade(event: ReactUIEvent<HTMLDivElement>) {
-  const element = event.currentTarget;
+export function applyScrollFade(element: HTMLElement) {
   const pastStart = element.scrollTop > 1;
   const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
   element.classList.toggle("scroll-past-start", pastStart);
   element.classList.toggle("scroll-at-end", atBottom);
+}
+
+export function updateScrollFade(event: ReactUIEvent<HTMLDivElement>) {
+  applyScrollFade(event.currentTarget);
+}
+
+export function useScrollFade() {
+  const nodeRef = useRef<HTMLDivElement | null>(null);
+  const observerRef = useRef<ResizeObserver | null>(null);
+  useLayoutEffect(() => {
+    // Scroll events never fire while content fits or grows, so re-evaluate after every render.
+    if (nodeRef.current) applyScrollFade(nodeRef.current);
+  });
+  return useCallback((node: HTMLDivElement | null) => {
+    observerRef.current?.disconnect();
+    observerRef.current = null;
+    nodeRef.current = node;
+    if (!node) return;
+    applyScrollFade(node);
+    const observer = new ResizeObserver(() => applyScrollFade(node));
+    observer.observe(node);
+    observerRef.current = observer;
+  }, []);
 }
 
 export function viewTitle(t: I18nMessages, view: View) {

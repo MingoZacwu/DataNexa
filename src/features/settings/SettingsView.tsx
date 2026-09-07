@@ -35,7 +35,7 @@ import { formatMessage, languageOptions, normalizeLocale, type I18nMessages, typ
 import type { AppSnapshot, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcDriverRuntimeInfo, JdbcInstallProgress, JdbcRuntimeInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "../../types";
 import type { UpdateState } from "../../lib/updater";
 import type { EffectiveTheme, SettingsTab, ThemeMode } from "../../app/types";
-import { updateScrollFade } from "../../app/utils";
+import { updateScrollFade, useScrollFade } from "../../app/utils";
 import { Field, IconTooltip, SwitchField } from "../../components/ui";
 import { ThemeModeControl } from "../../components/chrome";
 
@@ -136,6 +136,7 @@ export function SettingsView({
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [exportAcknowledged, setExportAcknowledged] = useState(false);
   const [bearerWarningOpen, setBearerWarningOpen] = useState(false);
+  const scrollFadeRef = useScrollFade();
 
   useEffect(() => {
     setServerDraft((current) => {
@@ -189,7 +190,7 @@ export function SettingsView({
       </div>
 
       {tab === "general" ? (
-        <div className="settings-stack" onScroll={updateScrollFade}>
+        <div ref={scrollFadeRef} className="settings-stack" onScroll={updateScrollFade}>
           <section className="panel">
             <h2>{t.settings.servicePolicy}</h2>
             <div className="form-grid settings-grid">
@@ -571,7 +572,7 @@ export function SettingsView({
       ) : tab === "storage" ? (
         <StorageManagement status={jdbcStorageStatus} busy={busy} onRefresh={onRefreshJdbcStorageStatus} onClearJdbcCache={onClearJdbcCache} t={t} />
       ) : (
-        <div className="settings-stack" onScroll={updateScrollFade}>
+        <div ref={scrollFadeRef} className="settings-stack" onScroll={updateScrollFade}>
           <section className="panel about-panel">
             <div className="about-hero">
               <img src={appIconUrl} alt="DataNexa" />
@@ -671,6 +672,7 @@ function DriverManagement({
   const [localPaths, setLocalPaths] = useState<string[]>([]);
   const [runtimeUpdate, setRuntimeUpdate] = useState<string | null>(null);
   const [runtimeRemoveDialogOpen, setRuntimeRemoveDialogOpen] = useState(false);
+  const scrollFadeRef = useScrollFade();
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -743,7 +745,7 @@ function DriverManagement({
   }
 
   return (
-    <div className="settings-stack driver-management" onScroll={updateScrollFade}>
+    <div ref={scrollFadeRef} className="settings-stack driver-management" onScroll={updateScrollFade}>
       <section className="panel driver-runtime-panel">
         <div className="driver-section-heading">
           <div>
@@ -1038,6 +1040,7 @@ function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache }: { t
   const [cacheSelection, setCacheSelection] = useState<JdbcCacheSelection>({ maven: true, old_runtimes: true });
   const [cpuHistory, setCpuHistory] = useState<number[]>([]);
   const refreshRef = useRef(onRefresh);
+  const scrollFadeRef = useScrollFade();
   useEffect(() => {
     refreshRef.current = onRefresh;
   }, [onRefresh]);
@@ -1062,7 +1065,7 @@ function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache }: { t
   const cpuHistoryMax = Math.max(1, ...cpuHistory);
 
   return (
-    <div className="settings-stack storage-management" onScroll={updateScrollFade}>
+    <div ref={scrollFadeRef} className="settings-stack storage-management" onScroll={updateScrollFade}>
       <section className="panel driver-runtime-panel">
         <div className="driver-section-heading"><div><h2>{t.settings.storagePerformance}</h2></div><IconTooltip label={t.common.refresh}><button type="button" className="icon-button" onClick={onRefresh} disabled={busy}><RefreshCw size={17} /></button></IconTooltip></div>
         <div className="overview-grid storage-overview-grid">

@@ -12,7 +12,7 @@ import { useAppUpdater } from "./lib/updater";
 import type { AppSnapshot, AuditEvent, ConnectionConfig, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcInstallProgress, JdbcRuntimeInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "./types";
 import { detectThemeMode, persistThemeMode, resolveTheme, systemTheme } from "./app/theme";
 import type { AuditFilters, EffectiveTheme, SettingsTab, ThemeMode, ToastMessage, ToastTone, View } from "./app/types";
-import { buildAgentPrompt, compactConnectionError, formatConnectionTest, formatDiagnostics, toolDisplayName, updateScrollFade, viewTitle } from "./app/utils";
+import { buildAgentPrompt, compactConnectionError, formatConnectionTest, formatDiagnostics, toolDisplayName, updateScrollFade, useScrollFade, viewTitle } from "./app/utils";
 import { AuditMigrationDialog, AuditMigrationReminder, NavButton, SidebarFooter, SidebarUpdateReminder, WindowControls, WindowDragRegion } from "./components/chrome";
 import { IconTooltip, ToastViewport } from "./components/ui";
 import { OverviewView } from "./features/overview/OverviewView";
@@ -90,6 +90,7 @@ function App() {
   const mcpActivityEffectsEnabledRef = useRef(mcpActivityEffectsEnabled);
   const mcpActivityPlayingRef = useRef(false);
   const mcpActivityTimerRef = useRef<number | undefined>(undefined);
+  const stageScrollFadeRef = useScrollFade();
 
   useEffect(() => {
     activeViewRef.current = activeView;
@@ -964,7 +965,7 @@ function App() {
             {!snapshot ? (
               <div className="loading-panel">{t.overview.loading}</div>
             ) : (
-              <div className={clsx("view-stage", `view-${activeView}`)} key={activeView} onScroll={updateScrollFade}>
+              <div className={clsx("view-stage", `view-${activeView}`)} key={activeView} ref={stageScrollFadeRef} onScroll={updateScrollFade}>
                 {activeView === "overview" && (
                   <OverviewView
                     t={t}
