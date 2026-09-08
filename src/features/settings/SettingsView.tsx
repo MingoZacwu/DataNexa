@@ -70,6 +70,7 @@ export function SettingsView({
   onCheckJdbcRuntimeUpdate,
   onRefreshJdbcStorageStatus,
   onClearJdbcCache,
+  onOpenDataDirectory,
   onInstallJdbcDriver,
   onImportJdbcDriver,
   onDeleteJdbcDriver,
@@ -112,6 +113,7 @@ export function SettingsView({
   onCheckJdbcRuntimeUpdate: () => Promise<string | null>;
   onRefreshJdbcStorageStatus: () => void;
   onClearJdbcCache: (selection: JdbcCacheSelection) => Promise<boolean>;
+  onOpenDataDirectory: () => void;
   onInstallJdbcDriver: (input: InstallJdbcDriverInput) => Promise<boolean>;
   onImportJdbcDriver: (input: ImportJdbcDriverInput) => Promise<boolean>;
   onDeleteJdbcDriver: (bundleId: string) => void;
@@ -570,7 +572,7 @@ export function SettingsView({
           onSaveSettings={onSaveSettings}
         />
       ) : tab === "storage" ? (
-        <StorageManagement status={jdbcStorageStatus} busy={busy} onRefresh={onRefreshJdbcStorageStatus} onClearJdbcCache={onClearJdbcCache} t={t} />
+        <StorageManagement status={jdbcStorageStatus} busy={busy} onRefresh={onRefreshJdbcStorageStatus} onClearJdbcCache={onClearJdbcCache} onOpenDataDirectory={onOpenDataDirectory} t={t} />
       ) : (
         <div ref={scrollFadeRef} className="settings-stack" onScroll={updateScrollFade}>
           <section className="panel about-panel">
@@ -1034,7 +1036,7 @@ function JdbcRuntimeProgressView({ t, progress }: { t: I18nMessages; progress: J
   );
 }
 
-function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache }: { t: I18nMessages; status: JdbcStorageStatus | null; busy: boolean; onRefresh: () => void; onClearJdbcCache: (selection: JdbcCacheSelection) => Promise<boolean> }) {
+function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache, onOpenDataDirectory }: { t: I18nMessages; status: JdbcStorageStatus | null; busy: boolean; onRefresh: () => void; onClearJdbcCache: (selection: JdbcCacheSelection) => Promise<boolean>; onOpenDataDirectory: () => void }) {
   const [selectedStorageView, setSelectedStorageView] = useState<"storage" | "drivers">("storage");
   const [mavenCacheDialogOpen, setMavenCacheDialogOpen] = useState(false);
   const [cacheSelection, setCacheSelection] = useState<JdbcCacheSelection>({ maven: true, old_runtimes: true });
@@ -1094,6 +1096,11 @@ function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache }: { t
           <div className="driver-section-heading">
             <div><h2>{t.settings.storageDetails}</h2></div>
             <div className="runtime-heading-actions">
+                <IconTooltip label={t.settings.openDataDirectory}>
+                <button type="button" className="icon-button" onClick={onOpenDataDirectory} disabled={busy} aria-label={t.settings.openDataDirectory}>
+                  <FolderOpen size={17} />
+                </button>
+              </IconTooltip>
                 <IconTooltip label={t.settings.clearJdbcCache}>
                 <button type="button" className="icon-button danger" onClick={() => { setCacheSelection({ maven: Boolean(status?.maven_cache_bytes), old_runtimes: Boolean(status?.managed_runtime_old_bytes) }); setMavenCacheDialogOpen(true); }} disabled={busy || !status} aria-label={t.settings.clearJdbcCache}>
                   <Trash2 size={17} />

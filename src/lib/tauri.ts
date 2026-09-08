@@ -323,6 +323,7 @@ export const api = {
   checkJdbcRuntimeUpdate: () => command<string | null>("check_jdbc_runtime_update", undefined, null),
   jdbcStorageStatus: () => command<JdbcStorageStatus>("get_jdbc_storage_status", undefined, getMockJdbcStorageStatus()),
   clearJdbcCache: (selection: JdbcCacheSelection) => command<boolean>("clear_jdbc_cache", { selection }, true),
+  openDataDirectory: () => command<void>("open_data_directory", undefined, undefined),
   installJdbcDriver: (input: InstallJdbcDriverInput) =>
     command<JdbcDriverBundle>("install_jdbc_driver", { input }, {
       schema_version: 1,

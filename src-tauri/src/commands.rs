@@ -7,7 +7,7 @@ use std::time::Instant;
 use chrono::Utc;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State, WebviewWindow};
+use tauri::{AppHandle, Manager, State, WebviewWindow};
 use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -1131,6 +1131,15 @@ pub fn open_project_releases() -> Result<(), String> {
         None::<&str>,
     )
     .map_err(to_client_error)
+}
+
+/// Open the DataNexa application data directory in the system file manager.
+/// The path is resolved on the Rust side so the front end cannot open
+/// arbitrary locations.
+#[tauri::command]
+pub async fn open_data_directory(app: AppHandle) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(to_client_error)?;
+    tauri_plugin_opener::open_path(&data_dir, None::<&str>).map_err(to_client_error)
 }
 
 async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
