@@ -98,20 +98,26 @@ export function SidebarUpdateReminder({
   t,
   version,
   onOpenAbout,
-  onDismiss
+  onDismiss,
+  icon,
+  title,
+  compact
 }: {
   t: I18nMessages;
   version: string;
   onOpenAbout: () => void;
   onDismiss: () => void;
+  icon?: ReactNode;
+  title?: string;
+  compact?: string;
 }) {
   return (
     <div className="sidebar-update-reminder">
       <button type="button" className="sidebar-update-main" onClick={onOpenAbout}>
-        <span className="sidebar-update-icon"><Download size={16} /></span>
+        <span className="sidebar-update-icon">{icon ?? <Download size={16} />}</span>
         <span className="sidebar-update-copy">
-          <strong>{t.updates.availableTitle}</strong>
-          <span>{formatMessage(t.updates.availableCompact, { version })}</span>
+          <strong>{title ?? t.updates.availableTitle}</strong>
+          <span>{compact ?? formatMessage(t.updates.availableCompact, { version })}</span>
         </span>
       </button>
       <IconTooltip label={t.updates.dismissReminder}>

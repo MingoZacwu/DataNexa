@@ -1,7 +1,7 @@
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import clsx from "clsx";
-import { AlertTriangle, Database, Filter, Home, Logs, Plus, RefreshCw, Settings, ShieldCheck, Trash2, Wrench, X } from "lucide-react";
+import { AlertTriangle, Coffee, Database, Filter, Home, Logs, Plus, RefreshCw, Settings, ShieldCheck, Trash2, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import brandLogoUrl from "../resources/datanexa.png";
@@ -77,6 +77,8 @@ function App() {
   const [theme, setTheme] = useState<ThemeMode>(detectThemeMode);
   const [systemThemeMode, setSystemThemeMode] = useState<EffectiveTheme>(systemTheme);
   const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string | null>(null);
+  const [jreUpdateVersion, setJreUpdateVersion] = useState<string | null>(null);
+  const [dismissedJreUpdateVersion, setDismissedJreUpdateVersion] = useState<string | null>(null);
   const [migrationDialogOpen, setMigrationDialogOpen] = useState(false);
   const [migrationRecoveryBusy, setMigrationRecoveryBusy] = useState(false);
   const [mcpActivitySequence, setMcpActivitySequence] = useState(0);
@@ -171,7 +173,7 @@ function App() {
     void (async () => {
       try {
         unlisten = await listen<JreUpdateAvailablePayload>("jdbc://runtime-update-available", (event) => {
-          pushToast(formatMessage(t.toast.jdbcRuntimeUpdateAvailable, { version: event.payload.version }), "info");
+          setJreUpdateVersion(event.payload.version);
           void refreshJdbcStatus();
         });
         if (cancelled) {
@@ -845,6 +847,12 @@ function App() {
   const recentEvents = snapshot?.audit_events.slice(0, 8) ?? [];
   const availableUpdateVersion = updater.state.kind === "available" ? updater.state.version : null;
   const showUpdateReminder = availableUpdateVersion !== null && dismissedUpdateVersion !== availableUpdateVersion;
+  const managedJreVersion = jdbcStatus?.runtime.managed_version ?? null;
+  const showJreUpdateReminder = jreUpdateVersion !== null
+    && dismissedJreUpdateVersion !== jreUpdateVersion
+    && !snapshot?.config.settings.jdbc_java_home
+    && managedJreVersion !== null
+    && managedJreVersion !== jreUpdateVersion;
   const migrationReady = snapshot?.audit_migration.status === "ready";
   const emergencyDisconnect = Boolean(snapshot?.emergency_disconnect);
 
@@ -877,17 +885,35 @@ function App() {
             <div className="sidebar-bottom">
               {snapshot && snapshot.audit_migration.status !== "ready" ? (
                 <AuditMigrationReminder t={t} state={snapshot.audit_migration} onOpen={() => setMigrationDialogOpen(true)} />
-              ) : showUpdateReminder && availableUpdateVersion ? (
-                <SidebarUpdateReminder
-                  t={t}
-                  version={availableUpdateVersion}
-                  onOpenAbout={() => {
-                    setActiveView("settings");
-                    setSettingsTab("about");
-                  }}
-                  onDismiss={() => setDismissedUpdateVersion(availableUpdateVersion)}
-                />
-              ) : null}
+              ) : (
+                <>
+                  {showUpdateReminder && availableUpdateVersion && (
+                    <SidebarUpdateReminder
+                      t={t}
+                      version={availableUpdateVersion}
+                      onOpenAbout={() => {
+                        setActiveView("settings");
+                        setSettingsTab("about");
+                      }}
+                      onDismiss={() => setDismissedUpdateVersion(availableUpdateVersion)}
+                    />
+                  )}
+                  {showJreUpdateReminder && jreUpdateVersion && (
+                    <SidebarUpdateReminder
+                      t={t}
+                      version={jreUpdateVersion}
+                      icon={<Coffee size={16} />}
+                      title={t.updates.runtimeUpdateTitle}
+                      compact={formatMessage(t.updates.runtimeUpdateCompact, { version: jreUpdateVersion })}
+                      onOpenAbout={() => {
+                        setActiveView("settings");
+                        setSettingsTab("drivers");
+                      }}
+                      onDismiss={() => setDismissedJreUpdateVersion(jreUpdateVersion)}
+                    />
+                  )}
+                </>
+              )}
               <SidebarFooter
                 t={t}
                 running={Boolean(snapshot?.server_status.running)}
