@@ -473,6 +473,8 @@ textarea:focus-visible,
 .view-stage.view-connections,
 .view-stage.view-settings {
   overflow: hidden;
+  /* These stages only clip; inner panels scroll, so never reserve the stable gutter inherited above. */
+  scrollbar-gutter: auto;
 }
 
 .view-stage.view-audit {
@@ -1739,7 +1741,6 @@ textarea:focus-visible,
   overflow-y: auto;
   margin-inline: calc(-1 * var(--content-shadow-gutter));
   padding-inline: var(--content-shadow-gutter);
-  scrollbar-gutter: stable;
 }
 
 .policy-check-button {
