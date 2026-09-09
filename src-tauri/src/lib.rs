@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use commands::{
-    check_jdbc_runtime_update, check_updates_if_due, clear_audit_events, clear_jdbc_cache,
+    check_jdbc_runtime_update, check_jdbc_runtime_update_if_due, check_updates_if_due, clear_audit_events, clear_jdbc_cache,
     clear_legacy_audit_log, create_access_token, delete_access_token, delete_connection,
     delete_jdbc_driver, diagnose_connection, disable_all_connections, export_connections,
     get_access_token_secret, get_app_snapshot, get_jdbc_status, get_jdbc_storage_status,
@@ -647,6 +647,7 @@ pub fn run() {
             install_jdbc_runtime,
             remove_jdbc_runtime,
             check_jdbc_runtime_update,
+            check_jdbc_runtime_update_if_due,
             get_jdbc_storage_status,
             clear_jdbc_cache,
             install_jdbc_driver,

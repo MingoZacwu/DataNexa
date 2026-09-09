@@ -130,6 +130,7 @@ export interface ConnectionInput {
 export interface ImportConnectionsResult {
   snapshot: AppSnapshot;
   imported_count: number;
+  skipped_count: number;
 }
 
 export interface JdbcDriverFile {

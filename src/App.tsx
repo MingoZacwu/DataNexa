@@ -124,6 +124,26 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (snapshot?.config.settings.auto_check_updates !== true) return;
+
+    const checkJreUpdateIfDue = () => {
+      void api.checkJdbcRuntimeUpdateIfDue()
+        .then((version) => {
+          setJreUpdateVersion(version);
+          if (version) void refreshJdbcStatus();
+        })
+        .catch(() => undefined);
+    };
+
+    checkJreUpdateIfDue();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") checkJreUpdateIfDue();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [snapshot?.config.settings.auto_check_updates]);
+
+  useEffect(() => {
     let unlisten: UnlistenFn | undefined;
     let cancelled = false;
     void (async () => {
@@ -571,6 +591,7 @@ function App() {
     try {
       await api.installJdbcRuntime();
       await refreshJdbcStatus();
+      setJreUpdateVersion(null);
       pushToast(t.toast.jdbcRuntimeInstalled, "info");
       return true;
     } catch (error) {
@@ -588,6 +609,7 @@ function App() {
       await api.removeJdbcRuntime();
       await refreshJdbcStatus();
       await refreshJdbcStorageStatus();
+      setJreUpdateVersion(null);
       pushToast(t.toast.jdbcRuntimeRemoved, "info");
       return true;
     } catch (error) {
@@ -602,6 +624,7 @@ function App() {
     setBusy(true);
     try {
       const version = await api.checkJdbcRuntimeUpdate();
+      setJreUpdateVersion(version);
       if (version) {
         pushToast(formatMessage(t.toast.jdbcRuntimeUpdateAvailable, { version }), "info");
       } else if (jdbcStatus?.runtime.source === "managed") {
@@ -789,7 +812,10 @@ function App() {
       const result = await api.importConnections(locale);
       if (result) {
         setSnapshot(result.snapshot);
-        pushToast(formatMessage(t.toast.connectionsImported, { count: result.imported_count }));
+        pushToast(formatMessage(
+          result.skipped_count > 0 ? t.toast.connectionsImportedPartial : t.toast.connectionsImported,
+          { count: result.imported_count, skipped: result.skipped_count }
+        ));
       }
     } catch (error) {
       showError(error);

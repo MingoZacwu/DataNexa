@@ -108,6 +108,7 @@ impl Drop for PortableConnection {
 pub struct ImportConnectionsResult {
     pub snapshot: AppSnapshot,
     pub imported_count: usize,
+    pub skipped_count: usize,
 }
 
 const CONNECTION_TRANSFER_FORMAT: &str = "datanexa-connections";
@@ -156,14 +157,25 @@ pub async fn remove_jdbc_runtime(state: State<'_, Arc<AppState>>) -> Result<(), 
 
 #[tauri::command]
 pub async fn check_jdbc_runtime_update(
+    app: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Option<String>, String> {
     let text = text_for_state(state.inner()).await;
-    state
-        .jdbc
-        .check_runtime_update()
-        .await
-        .map_err(|error| to_jdbc_client_error(error, &text))
+    #[cfg(feature = "updater")]
+    {
+        crate::updater::check_jre_now(app)
+            .await
+            .map_err(|error| to_jdbc_client_error(error, &text))
+    }
+    #[cfg(not(feature = "updater"))]
+    {
+        let _ = app;
+        state
+            .jdbc
+            .check_runtime_update()
+            .await
+            .map_err(|error| to_jdbc_client_error(error, &text))
+    }
 }
 
 #[tauri::command]
@@ -533,7 +545,8 @@ pub async fn import_connections(
         return Err("A connection import file can contain at most 1000 connections.".to_string());
     }
 
-    let imported_count = transfer.connections.len();
+    let total_count = transfer.connections.len();
+    let mut imported_count = 0;
     let _transaction = state.config_transaction.write().await;
     let mut candidate = state.config.read().await.clone();
     let text = backend_text(&candidate.settings.language);
@@ -573,26 +586,25 @@ pub async fn import_connections(
             max_connections: portable.max_connections,
             max_result_bytes: portable.max_result_bytes,
         };
-        validate_connection(&connection, &text).map_err(to_client_error)?;
-        if connection.kind == DbKind::Jdbc {
-            state
-                .jdbc
-                .ensure_bundle_exists(
-                    connection
-                        .jdbc_bundle_id
-                        .as_deref()
-                        .ok_or_else(|| text.jdbc_driver_required().to_string())?,
-                )
-                .map_err(|error| to_jdbc_client_error(error, &text))?;
+        if !append_importable_connection(&mut candidate, connection, &text, |bundle_id| {
+            state.jdbc.ensure_bundle_exists(bundle_id)
+        }) {
+            continue;
         }
-        candidate.connections.push(normalize_connection(connection));
+        imported_count += 1;
         if let (Some(credential_ref), Some(password)) = (credential_ref, password) {
             credentials.push((credential_ref, password));
         }
     }
-    candidate
-        .normalize_and_validate()
-        .map_err(|error| to_jdbc_client_error(error, &text))?;
+
+    if imported_count == 0 {
+        drop(_transaction);
+        return Ok(ImportConnectionsResult {
+            snapshot: snapshot(state.inner()).await.map_err(to_client_error)?,
+            imported_count,
+            skipped_count: total_count,
+        });
+    }
 
     let mut saved_credential_refs = Vec::with_capacity(credentials.len());
     for (credential_ref, password) in credentials {
@@ -620,6 +632,7 @@ pub async fn import_connections(
     Ok(ImportConnectionsResult {
         snapshot: snapshot(state.inner()).await.map_err(to_client_error)?,
         imported_count,
+        skipped_count: total_count - imported_count,
     })
 }
 
@@ -1124,6 +1137,23 @@ pub async fn check_updates_if_due(app: AppHandle) -> Result<Option<String>, Stri
     }
 }
 
+/// Return the cached JRE update result, refreshing it only when its 24-hour
+/// check window has elapsed.
+#[tauri::command]
+pub async fn check_jdbc_runtime_update_if_due(app: AppHandle) -> Result<Option<String>, String> {
+    #[cfg(feature = "updater")]
+    {
+        crate::updater::check_jre_if_due(app)
+            .await
+            .map_err(to_client_error)
+    }
+    #[cfg(not(feature = "updater"))]
+    {
+        let _ = app;
+        Ok(None)
+    }
+}
+
 #[tauri::command]
 pub fn open_project_releases() -> Result<(), String> {
     tauri_plugin_opener::open_url(
@@ -1318,6 +1348,35 @@ fn import_failure_with_rollback(
         ),
         None => format!("{}: {}", context, to_client_error(error)),
     }
+}
+
+fn append_importable_connection(
+    candidate: &mut AppConfig,
+    connection: ConnectionConfig,
+    text: &BackendText,
+    ensure_jdbc_bundle: impl FnOnce(&str) -> anyhow::Result<()>,
+) -> bool {
+    let connection = normalize_connection(connection);
+    if validate_connection(&connection, text).is_err() {
+        return false;
+    }
+
+    if connection.kind == DbKind::Jdbc {
+        let Some(bundle_id) = connection.jdbc_bundle_id.as_deref() else {
+            return false;
+        };
+        if ensure_jdbc_bundle(bundle_id).is_err() {
+            return false;
+        }
+    }
+
+    let mut next = candidate.clone();
+    next.connections.push(connection);
+    if next.normalize_and_validate().is_err() {
+        return false;
+    }
+    *candidate = next;
+    true
 }
 
 fn validate_connection(connection: &ConnectionConfig, text: &BackendText) -> anyhow::Result<()> {
@@ -1606,5 +1665,64 @@ mod tests {
             .as_deref(),
             Some("vault://transition_db")
         );
+    }
+
+    #[test]
+    fn connection_import_skips_jdbc_connection_with_missing_driver() {
+        let text = backend_text("en");
+        let mut candidate = AppConfig::default();
+        let sqlite = ConnectionConfig {
+            id: "imported_sqlite".to_string(),
+            name: "Imported SQLite".to_string(),
+            kind: DbKind::Sqlite,
+            enabled: true,
+            database: "imported.db".to_string(),
+            host: None,
+            port: None,
+            username: None,
+            credential_ref: None,
+            ssl_mode: None,
+            jdbc_bundle_id: None,
+            jdbc_url: None,
+            jdbc_driver_class: None,
+            max_rows: 100,
+            query_timeout_ms: 1_000,
+            max_connections: 1,
+            max_result_bytes: default_max_result_bytes(),
+        };
+        let jdbc = ConnectionConfig {
+            id: "imported_jdbc".to_string(),
+            name: "Imported JDBC".to_string(),
+            kind: DbKind::Jdbc,
+            enabled: true,
+            database: String::new(),
+            host: None,
+            port: None,
+            username: None,
+            credential_ref: None,
+            ssl_mode: None,
+            jdbc_bundle_id: Some("missing-driver".to_string()),
+            jdbc_url: Some("jdbc:vendor://localhost/database".to_string()),
+            jdbc_driver_class: None,
+            max_rows: 100,
+            query_timeout_ms: 1_000,
+            max_connections: 1,
+            max_result_bytes: default_max_result_bytes(),
+        };
+
+        assert!(append_importable_connection(
+            &mut candidate,
+            sqlite,
+            &text,
+            |_| Ok(())
+        ));
+        assert!(!append_importable_connection(
+            &mut candidate,
+            jdbc,
+            &text,
+            |_| Err(anyhow::anyhow!("JDBC driver bundle was not found"))
+        ));
+        assert_eq!(candidate.connections.len(), 1);
+        assert_eq!(candidate.connections[0].id, "imported_sqlite");
     }
 }
