@@ -243,7 +243,11 @@ public final class JdbcSidecar {
                 // Some drivers only accept read-only mode in connection properties.
             }
             int timeoutSeconds = Math.max(1, Math.min(60, request.path("query_timeout_ms").asInt(8000) / 1000));
-            statement.setQueryTimeout(timeoutSeconds);
+            try {
+                statement.setQueryTimeout(timeoutSeconds);
+            } catch (SQLException ignored) {
+                // Some drivers (e.g. read-only CSV drivers) do not support query timeouts.
+            }
             try (ResultSet result = statement.executeQuery(sql)) {
                 ResultSetMetaData metadata = result.getMetaData();
                 ObjectNode response = success(requestId);

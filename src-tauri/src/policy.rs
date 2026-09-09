@@ -427,6 +427,8 @@ fn is_side_effect_function(kind: &DbKind, name: &str) -> bool {
                         | "pg_logical_slot_get_changes"
                         | "pg_notify"
                         | "pg_promote"
+                        | "pg_read_binary_file"
+                        | "pg_read_file"
                         | "pg_replication_origin_advance"
                         | "pg_replication_origin_create"
                         | "pg_replication_origin_drop"
@@ -457,10 +459,37 @@ fn is_side_effect_function(kind: &DbKind, name: &str) -> bool {
                         | "setval"
                 )
         }
-        DbKind::Jdbc => matches!(
-            name.as_str(),
-            "benchmark" | "load_extension" | "pg_sleep" | "sleep" | "sys_exec" | "sys_eval"
-        ),
+        DbKind::Jdbc => {
+            // Generic JDBC backends may be any database, so block the union of
+            // dialect-specific side-effect functions instead of a dialect-specific list.
+            name.starts_with("dblink")
+                || matches!(
+                    name.as_str(),
+                    "benchmark"
+                        | "get_lock"
+                        | "load_extension"
+                        | "load_file"
+                        | "lo_create"
+                        | "lo_export"
+                        | "lo_import"
+                        | "lo_unlink"
+                        | "master_pos_wait"
+                        | "pg_read_binary_file"
+                        | "pg_read_file"
+                        | "pg_sleep"
+                        | "pg_sleep_for"
+                        | "pg_sleep_until"
+                        | "readfile"
+                        | "release_all_locks"
+                        | "release_lock"
+                        | "service_get_write_locks"
+                        | "sleep"
+                        | "source_pos_wait"
+                        | "sys_exec"
+                        | "sys_eval"
+                        | "writefile"
+                )
+        }
     }
 }
 
