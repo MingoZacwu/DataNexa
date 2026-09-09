@@ -30,8 +30,8 @@ pub struct ServerConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsConfig {
-    #[serde(default = "default_audit_max_events")]
-    pub audit_max_events: usize,
+    #[serde(default = "default_audit_retention_days")]
+    pub audit_retention_days: u32,
     // Enable this explicitly when audit logs must not retain SQL literal values.
     #[serde(default)]
     pub audit_redact_sql_literals: bool,
@@ -48,6 +48,14 @@ pub struct SettingsConfig {
     /// Explicitly selected external Java home. When unset, the bundled runtime is always used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jdbc_java_home: Option<String>,
+    // Auto-disable an access token once it accumulates enough denied audit
+    // events within the configured window. Requires bearer authentication.
+    #[serde(default)]
+    pub auto_circuit_breaker: bool,
+    #[serde(default = "default_circuit_breaker_window_minutes")]
+    pub auto_circuit_breaker_window_minutes: u32,
+    #[serde(default = "default_circuit_breaker_threshold")]
+    pub auto_circuit_breaker_threshold: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,10 +181,8 @@ impl AppConfig {
         }
 
         self.normalize();
-        self.settings.audit_max_events = self
-            .settings
-            .audit_max_events
-            .clamp(1, crate::audit::MAX_AUDIT_MAX_EVENTS);
+        self.settings.audit_retention_days =
+            crate::audit::normalize_retention_days(self.settings.audit_retention_days);
 
         let mut connection_ids = HashSet::new();
         for connection in &mut self.connections {
@@ -206,7 +212,7 @@ impl Default for ServerConfig {
 impl Default for SettingsConfig {
     fn default() -> Self {
         Self {
-            audit_max_events: default_audit_max_events(),
+            audit_retention_days: default_audit_retention_days(),
             audit_redact_sql_literals: false,
             auto_check_updates: true,
             auto_start_mcp: false,
@@ -214,6 +220,9 @@ impl Default for SettingsConfig {
             mcp_activity_effects: true,
             language: default_language(),
             jdbc_java_home: None,
+            auto_circuit_breaker: false,
+            auto_circuit_breaker_window_minutes: default_circuit_breaker_window_minutes(),
+            auto_circuit_breaker_threshold: default_circuit_breaker_threshold(),
         }
     }
 }
@@ -246,12 +255,20 @@ pub fn default_max_result_bytes() -> usize {
     1024 * 1024
 }
 
-fn default_audit_max_events() -> usize {
-    300
+fn default_audit_retention_days() -> u32 {
+    crate::audit::DEFAULT_AUDIT_RETENTION_DAYS
 }
 
 fn default_language() -> String {
     "zh-CN".to_string()
+}
+
+fn default_circuit_breaker_window_minutes() -> u32 {
+    10
+}
+
+fn default_circuit_breaker_threshold() -> u32 {
+    5
 }
 
 fn normalize_settings(settings: &mut SettingsConfig) {
@@ -264,6 +281,10 @@ fn normalize_settings(settings: &mut SettingsConfig) {
         .take()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
+    settings.auto_circuit_breaker_window_minutes = settings
+        .auto_circuit_breaker_window_minutes
+        .clamp(1, 60);
+    settings.auto_circuit_breaker_threshold = settings.auto_circuit_breaker_threshold.clamp(1, 50);
 }
 
 pub const MCP_TOOL_NAMES: [&str; 7] = [
@@ -529,13 +550,13 @@ require_token = true
         assert!(config.normalize_and_validate().is_err());
 
         let mut config = AppConfig::default();
-        config.settings.audit_max_events = usize::MAX;
+        config.settings.audit_retention_days = 10;
         config
             .normalize_and_validate()
             .expect("valid defaults normalize");
         assert_eq!(
-            config.settings.audit_max_events,
-            crate::audit::MAX_AUDIT_MAX_EVENTS
+            config.settings.audit_retention_days,
+            crate::audit::DEFAULT_AUDIT_RETENTION_DAYS
         );
     }
 

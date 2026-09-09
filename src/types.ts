@@ -28,7 +28,7 @@ export interface ConnectionConfig {
 }
 
 export interface SettingsConfig {
-  audit_max_events: number;
+  audit_retention_days: number;
   audit_redact_sql_literals: boolean;
   auto_check_updates: boolean;
   auto_start_mcp: boolean;
@@ -36,6 +36,9 @@ export interface SettingsConfig {
   mcp_activity_effects: boolean;
   language: string;
   jdbc_java_home?: string | null;
+  auto_circuit_breaker: boolean;
+  auto_circuit_breaker_window_minutes: number;
+  auto_circuit_breaker_threshold: number;
 }
 
 export interface ToolConfig {

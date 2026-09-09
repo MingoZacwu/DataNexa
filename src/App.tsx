@@ -1038,6 +1038,7 @@ function App() {
                     autoStartStatus={snapshot.auto_start_status}
                     busy={busy}
                     tab={settingsTab}
+                    auditEvents={snapshot.audit_events}
                     jdbcStatus={jdbcStatus}
                     jdbcStorageStatus={jdbcStorageStatus}
                     jdbcInstallProgress={jdbcInstallProgress}
@@ -1050,6 +1051,7 @@ function App() {
                     onCheckUpdate={() => void checkAllUpdates()}
                     onUpdate={() => void updater.installUpdate()}
                     onOpenProjectReleases={() => void api.openProjectReleases().catch(showError)}
+                    onOpenAudit={() => setActiveView("audit")}
                     onTabChange={setSettingsTab}
                     onRefreshJdbcStatus={() => void refreshJdbcStatus()}
                     onInstallJdbcRuntime={installJdbcRuntime}

@@ -5,20 +5,24 @@ import clsx from "clsx";
 import {
   AlertTriangle,
   CheckCircle2,
+  Database,
   Download,
   ExternalLink,
   FileDown,
   FileText,
   FileUp,
   FolderOpen,
+  Gauge,
   HardDrive,
   Activity,
   Github,
   Home,
+  Info,
   KeyRound,
-  ListChecks,
   Monitor,
+  Network,
   PackagePlus,
+  Plus,
   RefreshCw,
   RotateCcw,
   SearchCheck, ShieldAlert,
@@ -32,7 +36,7 @@ import type { FormEvent, ReactNode } from "react";
 import appConfig from "../../../app.config.json";
 import appIconUrl from "../../../resources/icon.png";
 import { formatMessage, languageOptions, normalizeLocale, type I18nMessages, type Locale } from "../../i18n";
-import type { AppSnapshot, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcDriverRuntimeInfo, JdbcInstallProgress, JdbcRuntimeInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "../../types";
+import type { AppSnapshot, AuditEvent, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcDriverRuntimeInfo, JdbcInstallProgress, JdbcRuntimeInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "../../types";
 import type { UpdateState } from "../../lib/updater";
 import type { EffectiveTheme, SettingsTab, ThemeMode } from "../../app/types";
 import { updateScrollFade, useScrollFade } from "../../app/utils";
@@ -40,6 +44,9 @@ import { Field, IconTooltip, SwitchField } from "../../components/ui";
 import { ThemeModeControl } from "../../components/chrome";
 
 const APP_VERSION = appConfig.version;
+// Must match the backend snapshot list limit (audit.rs MAX_AUDIT_LIST_EVENTS).
+const AUDIT_LIST_LIMIT = 5000;
+const AUDIT_RETENTION_DAY_OPTIONS = [3, 7, 15, 30];
 
 export function SettingsView({
   t,
@@ -51,6 +58,7 @@ export function SettingsView({
   autoStartStatus,
   busy,
   tab,
+  auditEvents,
   jdbcStatus,
   jdbcStorageStatus,
   jdbcInstallProgress,
@@ -63,6 +71,7 @@ export function SettingsView({
   onCheckUpdate,
   onUpdate,
   onOpenProjectReleases,
+  onOpenAudit,
   onTabChange,
   onRefreshJdbcStatus,
   onInstallJdbcRuntime,
@@ -94,6 +103,7 @@ export function SettingsView({
   autoStartStatus: AppSnapshot["auto_start_status"];
   busy: boolean;
   tab: SettingsTab;
+  auditEvents: AuditEvent[];
   jdbcStatus: JdbcStatus | null;
   jdbcStorageStatus: JdbcStorageStatus | null;
   jdbcInstallProgress: JdbcInstallProgress | null;
@@ -106,6 +116,7 @@ export function SettingsView({
   onCheckUpdate: () => void;
   onUpdate: () => void;
   onOpenProjectReleases: () => void;
+  onOpenAudit: () => void;
   onTabChange: (tab: SettingsTab) => void;
   onRefreshJdbcStatus: () => void;
   onInstallJdbcRuntime: () => Promise<boolean>;
@@ -131,7 +142,6 @@ export function SettingsView({
   const [serverDraft, setServerDraft] = useState(server);
   const [settingsDraft, setSettingsDraft] = useState(settings);
   const [serverPortDraft, setServerPortDraft] = useState(String(server.port));
-  const [auditMaxEventsDraft, setAuditMaxEventsDraft] = useState(String(settings.audit_max_events));
   const serverDraftDirty = useRef(false);
   const settingsDraftDirty = useRef(false);
   const [policyDialogOpen, setPolicyDialogOpen] = useState(false);
@@ -155,29 +165,42 @@ export function SettingsView({
   useEffect(() => {
     setSettingsDraft((current) => {
       if (!settingsDraftDirty.current) return settings;
-      const saved = current.audit_max_events === settings.audit_max_events
+      const saved = current.audit_retention_days === settings.audit_retention_days
         && current.audit_redact_sql_literals === settings.audit_redact_sql_literals
         && current.auto_check_updates === settings.auto_check_updates
         && current.auto_start_mcp === settings.auto_start_mcp
         && current.auto_lightweight_mode === settings.auto_lightweight_mode
         && current.mcp_activity_effects === settings.mcp_activity_effects
         && current.language === settings.language
-        && (current.jdbc_java_home ?? null) === (settings.jdbc_java_home ?? null);
+        && (current.jdbc_java_home ?? null) === (settings.jdbc_java_home ?? null)
+        && current.auto_circuit_breaker === settings.auto_circuit_breaker
+        && current.auto_circuit_breaker_window_minutes === settings.auto_circuit_breaker_window_minutes
+        && current.auto_circuit_breaker_threshold === settings.auto_circuit_breaker_threshold;
       if (saved) settingsDraftDirty.current = false;
-      if (saved) setAuditMaxEventsDraft(String(settings.audit_max_events));
       return saved ? settings : current;
     });
-    if (!settingsDraftDirty.current) setAuditMaxEventsDraft(String(settings.audit_max_events));
   }, [settings]);
   useEffect(() => {
     setSettingsDraft((current) => ({ ...current, language: locale }));
   }, [locale]);
+
+  const blockedCutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const blockedLast24Hours = auditEvents.filter((event) => (
+    event.status === "denied" && new Date(event.timestamp).getTime() >= blockedCutoff
+  )).length;
+  const oldestAuditEvent = auditEvents[auditEvents.length - 1];
+  const blockedPossiblyTruncated = auditEvents.length >= AUDIT_LIST_LIMIT
+    && Boolean(oldestAuditEvent && new Date(oldestAuditEvent.timestamp).getTime() >= blockedCutoff);
+  const bearerAuthEnabled = server.require_token;
 
   return (
     <section className="settings-page">
       <div className="settings-tabs">
         <button type="button" className={clsx(tab === "general" && "active")} onClick={() => onTabChange("general")}>
           {t.settings.general}
+        </button>
+        <button type="button" className={clsx(tab === "security" && "active")} onClick={() => onTabChange("security")}>
+          {t.settings.security}
         </button>
         <button type="button" className={clsx("jdbc-support-tab", tab === "drivers" && "active")} onClick={() => onTabChange("drivers")}>
           <span>{t.settings.driverManagement}</span>
@@ -323,24 +346,21 @@ export function SettingsView({
           <section className="panel">
             <h2>{t.settings.auditLog}</h2>
             <div className="form-grid settings-grid">
-              <Field label={t.settings.auditMaxEvents}>
-                <input
-                  type="number"
-                  min={1}
-                  max={5000}
-                  value={auditMaxEventsDraft}
+              <Field label={t.settings.auditRetentionDays}>
+                <select
+                  value={String(settingsDraft.audit_retention_days)}
+                  disabled={busy}
                   onChange={(event) => {
+                    const next = { ...settingsDraft, audit_retention_days: Number(event.target.value) };
                     settingsDraftDirty.current = true;
-                    setAuditMaxEventsDraft(event.target.value);
-                    setSettingsDraft({ ...settingsDraft, audit_max_events: Number(event.target.value) || 0 });
+                    setSettingsDraft(next);
+                    onSaveSettings(next);
                   }}
-                  onBlur={(event) => {
-                    const auditMaxEvents = Math.max(1, Math.min(5000, Number(event.currentTarget.value) || settings.audit_max_events));
-                    setAuditMaxEventsDraft(String(auditMaxEvents));
-                    setSettingsDraft((current) => ({ ...current, audit_max_events: auditMaxEvents }));
-                    onSaveSettings({ ...settingsDraft, audit_max_events: auditMaxEvents });
-                  }}
-                />
+                >
+                  {AUDIT_RETENTION_DAY_OPTIONS.map((days) => (
+                    <option key={days} value={days}>{formatMessage(t.settings.auditRetentionDaysOption, { days })}</option>
+                  ))}
+                </select>
               </Field>
               <div className="field">
                 <span>{t.settings.auditPrivacy}</span>
@@ -489,27 +509,166 @@ export function SettingsView({
               </Dialog.Content>
             </Dialog.Portal>
           </Dialog.Root>
-
+        </div>
+      ) : tab === "security" ? (
+        <div ref={scrollFadeRef} className="settings-stack" onScroll={updateScrollFade}>
           <Dialog.Root open={policyDialogOpen} onOpenChange={setPolicyDialogOpen}>
-            <section className="panel safety-panel">
-              <div className="panel-header">
-                <h2>{t.settings.securityPosture}</h2>
-                <IconTooltip label={t.settings.checkSql}>
-                  <Dialog.Trigger asChild>
-                    <button type="button" className="policy-check-button" disabled={busy} aria-label={t.settings.checkSql}>
-                      <SearchCheck size={17} />
-                    </button>
-                  </Dialog.Trigger>
-                </IconTooltip>
+            <section className={clsx("security-hero", blockedLast24Hours > 0 && "alerted")}>
+              <div className="security-hero-core">
+                <span className="security-hero-emblem">{blockedLast24Hours > 0 ? <ShieldAlert size={22} /> : <ShieldCheck size={22} />}</span>
+                <div>
+                  <span>{t.settings.securityBlockedLabel}</span>
+                  <strong>
+                    {blockedLast24Hours}
+                    <small> {t.settings.securityBlockedUnit}</small>
+                    {blockedPossiblyTruncated && (
+                      <IconTooltip label={t.settings.securityBlockedTruncatedHint}>
+                        <span className="call-count-overflow" role="img" aria-label={t.settings.securityBlockedTruncatedHint} tabIndex={0}>
+                          <Plus size={10} strokeWidth={2.5} />
+                        </span>
+                      </IconTooltip>
+                    )}
+                  </strong>
+                </div>
               </div>
-              <ul className="security-list">
-                <li><ShieldCheck size={16} /> {t.settings.securityAst}</li>
-                <li><ListChecks size={16} /> {t.settings.securityReadonly}</li>
-                <li><KeyRound size={16} /> {t.settings.securityVault}</li>
-                <li><FileText size={16} /> {t.settings.securityAudit}</li>
+              <div className="security-hero-actions">
+                <Dialog.Trigger asChild>
+                  <button type="button" className="button primary" disabled={busy}>
+                    <SearchCheck size={16} />
+                    {t.settings.policyConsole}
+                  </button>
+                </Dialog.Trigger>
+                <button type="button" className="button ghost" onClick={onOpenAudit}>
+                  <FileText size={16} />
+                  {t.settings.securityViewAudit}
+                </button>
+              </div>
+            </section>
+
+            <section className="panel">
+              <div className="panel-header">
+                <h2 className={clsx("defense-state", !bearerAuthEnabled && "warning")}>
+                  <span className="defense-state-dot" />
+                  {bearerAuthEnabled ? t.settings.securityDefenseActive : t.settings.securityDefensePartial}
+                </h2>
+              </div>
+              <ul className="defense-list">
+                <li>
+                  <span className="defense-icon"><Network size={16} /></span>
+                  <div>
+                    <strong>{t.settings.securityLayerNetwork}</strong>
+                    <p>{t.settings.securityLayerNetworkDesc}</p>
+                  </div>
+                  <span className="defense-index">L1</span>
+                </li>
+                <li className={clsx(!bearerAuthEnabled && "defense-item-warning")}>
+                  <span className="defense-icon"><KeyRound size={16} /></span>
+                  <div>
+                    <strong>
+                      {t.settings.securityLayerAuth}
+                      {!bearerAuthEnabled && <span className="defense-item-badge">{t.settings.securityLayerAuthOffBadge}</span>}
+                    </strong>
+                    <p>{bearerAuthEnabled ? t.settings.securityLayerAuthDesc : t.settings.securityLayerAuthOffDesc}</p>
+                  </div>
+                  <span className="defense-index">L2</span>
+                </li>
+                <li>
+                  <span className="defense-icon"><ShieldCheck size={16} /></span>
+                  <div>
+                    <strong>{t.settings.securityLayerSyntax}</strong>
+                    <p>{t.settings.securityLayerSyntaxDesc}</p>
+                  </div>
+                  <span className="defense-index">L3</span>
+                </li>
+                <li>
+                  <span className="defense-icon"><Database size={16} /></span>
+                  <div>
+                    <strong>{t.settings.securityLayerDatabase}</strong>
+                    <p>{t.settings.securityLayerDatabaseDesc}</p>
+                  </div>
+                  <span className="defense-index">L4</span>
+                </li>
+                <li>
+                  <span className="defense-icon"><Gauge size={16} /></span>
+                  <div>
+                    <strong>{t.settings.securityLayerResource}</strong>
+                    <p>{t.settings.securityLayerResourceDesc}</p>
+                  </div>
+                  <span className="defense-index">L5</span>
+                </li>
+                <li>
+                  <span className="defense-icon"><FileText size={16} /></span>
+                  <div>
+                    <strong>{t.settings.securityLayerAudit}</strong>
+                    <p>{t.settings.securityLayerAuditDesc}</p>
+                  </div>
+                  <span className="defense-index">L6</span>
+                </li>
+              </ul>
+              <ul className="security-list defense-notice">
                 <li className="security-warning"><AlertTriangle size={16} /> {t.settings.securityWarning}</li>
               </ul>
             </section>
+
+            <section className="panel">
+              <h2>{t.settings.circuitBreaker}</h2>
+              <div className="form-grid settings-grid">
+                <div className="field span-all">
+                  <span>{t.settings.circuitBreaker}</span>
+                  <SwitchField
+                    label={t.settings.circuitBreakerToggle}
+                    tooltip={t.settings.circuitBreakerToggleHint}
+                    checked={settingsDraft.auto_circuit_breaker}
+                    disabled={busy || !bearerAuthEnabled}
+                    onCheckedChange={(checked) => {
+                      const next = { ...settingsDraft, auto_circuit_breaker: checked };
+                      settingsDraftDirty.current = true;
+                      setSettingsDraft(next);
+                      onSaveSettings(next);
+                    }}
+                  />
+                </div>
+                <Field label={t.settings.circuitBreakerWindow}>
+                  <select
+                    value={String(settingsDraft.auto_circuit_breaker_window_minutes)}
+                    disabled={busy || !bearerAuthEnabled || !settingsDraft.auto_circuit_breaker}
+                    onChange={(event) => {
+                      const next = { ...settingsDraft, auto_circuit_breaker_window_minutes: Number(event.target.value) };
+                      settingsDraftDirty.current = true;
+                      setSettingsDraft(next);
+                      onSaveSettings(next);
+                    }}
+                  >
+                    {[1, 5, 10, 30, 60].map((minutes) => (
+                      <option key={minutes} value={minutes}>{formatMessage(t.settings.circuitBreakerWindowOption, { minutes })}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label={t.settings.circuitBreakerThreshold}>
+                  <select
+                    value={String(settingsDraft.auto_circuit_breaker_threshold)}
+                    disabled={busy || !bearerAuthEnabled || !settingsDraft.auto_circuit_breaker}
+                    onChange={(event) => {
+                      const next = { ...settingsDraft, auto_circuit_breaker_threshold: Number(event.target.value) };
+                      settingsDraftDirty.current = true;
+                      setSettingsDraft(next);
+                      onSaveSettings(next);
+                    }}
+                  >
+                    {[3, 5, 10, 20, 50].map((count) => (
+                      <option key={count} value={count}>{formatMessage(t.settings.circuitBreakerThresholdOption, { count })}</option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <ul className="security-list circuit-note">
+                <li className="security-info">
+                  <Info size={16} />
+                  {bearerAuthEnabled ? t.settings.circuitBreakerNote : t.settings.circuitBreakerRequiresBearer}
+                </li>
+              </ul>
+            </section>
+
             <Dialog.Portal>
               <Dialog.Overlay className="dialog-overlay" />
               <Dialog.Content className="policy-dialog">

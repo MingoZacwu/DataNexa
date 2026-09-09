@@ -197,6 +197,15 @@ impl AccessControlStore {
         ensure_changed(changed)
     }
 
+    /// Disables the token only when it is currently enabled. Returns true when
+    /// this call performed the enabled -> disabled transition, so concurrent
+    /// evaluations cannot trip the breaker twice.
+    pub async fn disable_if_enabled(&self, id: &str) -> anyhow::Result<bool> {
+        let changed = sqlx::query("UPDATE access_tokens SET enabled=0,updated_at_ms=? WHERE id=? AND enabled=1 AND deleted_at_ms IS NULL")
+            .bind(Utc::now().timestamp_millis()).bind(id).execute(&self.pool).await?.rows_affected();
+        Ok(changed > 0)
+    }
+
     pub async fn rotate(&self, id: &str) -> anyhow::Result<String> {
         let secret = Uuid::new_v4().to_string();
         let changed = sqlx::query("UPDATE access_tokens SET secret=?,updated_at_ms=? WHERE id=? AND deleted_at_ms IS NULL")

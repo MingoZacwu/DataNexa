@@ -300,6 +300,17 @@ impl BackendText {
         }
     }
 
+    pub fn circuit_breaker_reason(self, window_minutes: u32, threshold: u32, count: u64) -> String {
+        match self.locale {
+            Locale::ZhCn => format!(
+                "访问令牌在 {window_minutes} 分钟内触发 {count} 次拦截（阈值 {threshold} 次），已自动熔断停用。可在访问控制中手动重新启用。"
+            ),
+            Locale::En => format!(
+                "Access token auto-disabled after {count} denials within {window_minutes} minutes (threshold {threshold}). Re-enable it manually in access control."
+            ),
+        }
+    }
+
     pub fn tray_show(self) -> &'static str {
         match self.locale {
             Locale::ZhCn => "显示 DataNexa",

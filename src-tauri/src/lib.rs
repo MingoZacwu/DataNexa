@@ -1,5 +1,6 @@
 mod access_control;
 mod audit;
+mod circuit_breaker;
 mod commands;
 mod config;
 mod db;
@@ -531,8 +532,8 @@ pub fn run() {
             let app_handle = app.handle().clone();
             let state_for_task = state.clone();
             tauri::async_runtime::spawn(async move {
-                let max_events = state_for_task.config.read().await.settings.audit_max_events;
-                let migration_result = state_for_task.audit.initialize(max_events).await;
+                let retention_days = state_for_task.config.read().await.settings.audit_retention_days;
+                let migration_result = state_for_task.audit.initialize(retention_days).await;
                 if migration_result.is_ok() && configured && login_launch {
                     let started = std::time::Instant::now();
                     if let Err(error) = mcp::start(state_for_task.clone()).await {

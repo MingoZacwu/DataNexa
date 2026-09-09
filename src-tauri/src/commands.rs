@@ -430,10 +430,10 @@ pub async fn save_settings_config(
             return Err(reason);
         }
     }
-    let audit_max_events = state.config.read().await.settings.audit_max_events;
+    let audit_retention_days = state.config.read().await.settings.audit_retention_days;
     state
         .audit
-        .trim(audit_max_events)
+        .trim(audit_retention_days)
         .await
         .map_err(to_client_error)?;
 
@@ -881,10 +881,10 @@ pub async fn retry_audit_migration(
     ) {
         return Err("Audit log migration can only be retried after a failure.".to_string());
     }
-    let max_events = state.config.read().await.settings.audit_max_events;
+    let retention_days = state.config.read().await.settings.audit_retention_days;
     state
         .audit
-        .retry(max_events)
+        .retry(retention_days)
         .await
         .map_err(to_client_error)?;
     let language = state.config.read().await.settings.language.clone();
@@ -1153,7 +1153,7 @@ async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
     config.server.token = None;
     let audit_ready = state.audit.is_ready().await;
     if audit_ready {
-        state.audit.trim(config.settings.audit_max_events).await?;
+        state.audit.trim(config.settings.audit_retention_days).await?;
     }
     let mut audit_events = if audit_ready {
         state.audit.list().await?
@@ -1193,7 +1193,7 @@ pub(crate) async fn record_startup_event(
     reason: String,
     elapsed: std::time::Duration,
 ) {
-    let max_events = state.config.read().await.settings.audit_max_events;
+    let retention_days = state.config.read().await.settings.audit_retention_days;
     let _ = state
         .audit
         .record_with_limit(
@@ -1205,7 +1205,7 @@ pub(crate) async fn record_startup_event(
             Some(elapsed.as_millis().try_into().unwrap_or(u64::MAX)),
             None,
             None,
-            max_events,
+            retention_days,
         )
         .await;
 }
@@ -1427,7 +1427,7 @@ fn normalize_connection(mut connection: ConnectionConfig) -> ConnectionConfig {
 }
 
 fn normalize_settings(mut settings: SettingsConfig) -> SettingsConfig {
-    settings.audit_max_events = settings.audit_max_events.clamp(1, 5000);
+    settings.audit_retention_days = crate::audit::normalize_retention_days(settings.audit_retention_days);
     settings.language = settings.language.trim().to_string();
     if settings.language.is_empty() {
         settings.language = "zh-CN".to_string();
@@ -1437,6 +1437,10 @@ fn normalize_settings(mut settings: SettingsConfig) -> SettingsConfig {
         .take()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
+    settings.auto_circuit_breaker_window_minutes = settings
+        .auto_circuit_breaker_window_minutes
+        .clamp(1, 60);
+    settings.auto_circuit_breaker_threshold = settings.auto_circuit_breaker_threshold.clamp(1, 50);
     settings
 }
 

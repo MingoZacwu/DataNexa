@@ -54,6 +54,7 @@ export function toolDisplayName(t: I18nMessages, name: string) {
   const names: Record<string, string> = t.tools.names;
   if (name === "system.auto_start_mcp") return names.system_auto_start_mcp;
   if (name === "system.start_mcp") return names.system_start_mcp;
+  if (name === "system.auto_circuit_breaker") return names.system_auto_circuit_breaker;
   return names[name] ?? name;
 }
 

@@ -32,7 +32,7 @@ impl AppState {
     pub async fn new(app: tauri::AppHandle) -> anyhow::Result<Self> {
         let store = ConfigStore::new(&app)?;
         let mut config = store.load()?;
-        let audit = AuditLogger::new(&app, config.settings.audit_max_events)?;
+        let audit = AuditLogger::new(&app)?;
         let access = AccessControlStore::new(&app)?;
         access.initialize(&store, &mut config).await?;
 

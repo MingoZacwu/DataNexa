@@ -14,7 +14,11 @@ use uuid::Uuid;
 
 use crate::config::DbKind;
 
-pub const MAX_AUDIT_MAX_EVENTS: usize = 5000;
+/// Maximum number of events returned to the frontend in a single snapshot.
+pub const MAX_AUDIT_LIST_EVENTS: usize = 5000;
+/// User-selectable audit log retention windows, in days.
+pub const AUDIT_RETENTION_DAY_OPTIONS: [u32; 4] = [3, 7, 15, 30];
+pub const DEFAULT_AUDIT_RETENTION_DAYS: u32 = 7;
 const MAX_SQL_CHARS: usize = 20_000;
 const REDACTED_LITERAL: &str = "REDACTED";
 const REDACTED_UNPARSEABLE_SQL: &str = "[SQL REDACTED: PARSE FAILED]";
@@ -106,6 +110,17 @@ impl AuditActor {
         }
     }
 
+    /// System actor attributed to a specific token, used for events the backend
+    /// generates about that token (e.g. the auto circuit breaker).
+    pub fn system_for_token(token_id: String) -> Self {
+        Self {
+            token_id: Some(token_id),
+            source: "system",
+            denied_connections: Vec::new(),
+            denied_tools: Vec::new(),
+        }
+    }
+
     pub fn allows_tool(&self, tool: &str) -> bool {
         !self.denied_tools.iter().any(|denied| denied == tool)
     }
@@ -157,7 +172,7 @@ struct AuditLogFile {
 }
 
 impl AuditLogger {
-    pub fn new(app: &AppHandle, _max_events: usize) -> anyhow::Result<Self> {
+    pub fn new(app: &AppHandle) -> anyhow::Result<Self> {
         let dir = app.path().app_config_dir()?;
         std::fs::create_dir_all(&dir)?;
         let db_path = dir.join("audit.db");
@@ -203,13 +218,13 @@ impl AuditLogger {
         }
     }
 
-    pub async fn initialize(&self, max_events: usize) -> anyhow::Result<()> {
+    pub async fn initialize(&self, retention_days: u32) -> anyhow::Result<()> {
         if let Err(error) = self.prepare_schema().await {
             return self.fail(error).await;
         }
         self.initialized.store(true, Ordering::Release);
         if self.legacy_path.exists() {
-            self.migrate(max_events).await
+            self.migrate(retention_days).await
         } else {
             *self.migration.write().await = AuditMigrationState::Ready;
             Ok(())
@@ -275,7 +290,7 @@ impl AuditLogger {
         matches!(*self.migration.read().await, AuditMigrationState::Ready)
     }
 
-    pub async fn migrate(&self, max_events: usize) -> anyhow::Result<()> {
+    pub async fn migrate(&self, retention_days: u32) -> anyhow::Result<()> {
         let text = match tokio::fs::read_to_string(&self.legacy_path).await {
             Ok(value) => value,
             Err(error) => return self.fail(error).await,
@@ -319,8 +334,8 @@ impl AuditLogger {
             processed: total,
             total,
         };
-        let limit = normalize_limit(max_events) as i64;
-        if let Err(error) = sqlx::query("DELETE FROM audit_events WHERE seq NOT IN (SELECT seq FROM audit_events ORDER BY seq DESC LIMIT ?)").bind(limit).execute(&mut *tx).await { return self.fail(error).await; }
+        let cutoff_ms = retention_cutoff_ms(retention_days);
+        if let Err(error) = sqlx::query("DELETE FROM audit_events WHERE timestamp_ms < ?").bind(cutoff_ms).execute(&mut *tx).await { return self.fail(error).await; }
         if let Err(error) = tx.commit().await {
             return self.fail(error).await;
         }
@@ -352,13 +367,13 @@ impl AuditLogger {
         Err(anyhow::anyhow!(reason))
     }
 
-    pub async fn retry(&self, max_events: usize) -> anyhow::Result<()> {
+    pub async fn retry(&self, retention_days: u32) -> anyhow::Result<()> {
         *self.migration.write().await = AuditMigrationState::Migrating {
             phase: AuditMigrationPhase::ReadingLegacyFile,
             processed: 0,
             total: 0,
         };
-        self.migrate(max_events).await
+        self.migrate(retention_days).await
     }
 
     pub async fn clear_legacy(&self) -> anyhow::Result<()> {
@@ -403,7 +418,7 @@ impl AuditLogger {
         elapsed_ms: Option<u64>,
         row_count: Option<usize>,
         sql: Option<AuditSql>,
-        max_events: usize,
+        retention_days: u32,
     ) -> anyhow::Result<()> {
         self.record_with_actor(
             AuditActor::system(),
@@ -415,7 +430,7 @@ impl AuditLogger {
             elapsed_ms,
             row_count,
             sql,
-            max_events,
+            retention_days,
         )
         .await
     }
@@ -432,7 +447,7 @@ impl AuditLogger {
         elapsed_ms: Option<u64>,
         row_count: Option<usize>,
         sql: Option<AuditSql>,
-        max_events: usize,
+        retention_days: u32,
     ) -> anyhow::Result<()> {
         let result = async {
             if !self.is_ready().await {
@@ -444,25 +459,51 @@ impl AuditLogger {
             sqlx::query("INSERT INTO audit_events (event_id,timestamp_ms,connection_id,connection_name,tool,status,reason,elapsed_ms,row_count,sql,token_id,access_source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
                 .bind(Uuid::new_v4().to_string()).bind(Utc::now().timestamp_millis()).bind(connection_id).bind(connection_name).bind(tool.into())
                 .bind(status_text(&status)).bind(reason).bind(elapsed_ms.map(|v| v as i64)).bind(row_count.map(|v| v as i64)).bind(sql.map(|v| truncate_sql(v.0))).bind(actor.token_id).bind(actor.source).execute(&mut *tx).await?;
-            let limit = normalize_limit(max_events) as i64;
-            sqlx::query("DELETE FROM audit_events WHERE seq NOT IN (SELECT seq FROM audit_events ORDER BY seq DESC LIMIT ?)").bind(limit).execute(&mut *tx).await?;
+            sqlx::query("DELETE FROM audit_events WHERE timestamp_ms < ?").bind(retention_cutoff_ms(retention_days)).execute(&mut *tx).await?;
             tx.commit().await?;
             Ok::<(), anyhow::Error>(())
         }.await;
         result.map_err(|error| anyhow::anyhow!("audit storage unavailable: {error}"))
     }
 
-    pub async fn trim(&self, max_events: usize) -> anyhow::Result<()> {
+    pub async fn trim(&self, retention_days: u32) -> anyhow::Result<()> {
         if !self.is_ready().await {
             return Ok(());
         }
         self.ensure_initialized().await?;
-        sqlx::query("DELETE FROM audit_events WHERE seq NOT IN (SELECT seq FROM audit_events ORDER BY seq DESC LIMIT ?)").bind(normalize_limit(max_events) as i64).execute(&self.pool).await?;
+        sqlx::query("DELETE FROM audit_events WHERE timestamp_ms < ?").bind(retention_cutoff_ms(retention_days)).execute(&self.pool).await?;
         Ok(())
+    }
+
+    /// Counts denied events recorded for a token since the cutoff. Events at or
+    /// before the latest breaker marker for the token are excluded so a manually
+    /// re-enabled token starts from a fresh count, and the breaker's own marker
+    /// events never count toward the threshold.
+    pub async fn count_token_denials(
+        &self,
+        token_id: &str,
+        breaker_tool: &str,
+        cutoff_ms: i64,
+    ) -> anyhow::Result<u64> {
+        if !self.is_ready().await {
+            return Ok(0);
+        }
+        self.ensure_initialized().await?;
+        let count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM audit_events WHERE token_id=? AND status='denied' AND tool!=? AND timestamp_ms>=? AND timestamp_ms > COALESCE((SELECT MAX(timestamp_ms) FROM audit_events WHERE token_id=? AND tool=?), 0)",
+        )
+        .bind(token_id)
+        .bind(breaker_tool)
+        .bind(cutoff_ms)
+        .bind(token_id)
+        .bind(breaker_tool)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count.max(0) as u64)
     }
     pub async fn list(&self) -> anyhow::Result<Vec<AuditEvent>> {
         self.ensure_initialized().await?;
-        let rows = sqlx::query_as::<_, (String, i64, Option<String>, Option<String>, String, String, Option<String>, Option<i64>, Option<i64>, Option<String>, Option<String>, String)>("SELECT event_id,timestamp_ms,connection_id,connection_name,tool,status,reason,elapsed_ms,row_count,sql,token_id,access_source FROM audit_events ORDER BY seq DESC LIMIT 5000").fetch_all(&self.pool).await?;
+        let rows = sqlx::query_as::<_, (String, i64, Option<String>, Option<String>, String, String, Option<String>, Option<i64>, Option<i64>, Option<String>, Option<String>, String)>("SELECT event_id,timestamp_ms,connection_id,connection_name,tool,status,reason,elapsed_ms,row_count,sql,token_id,access_source FROM audit_events ORDER BY seq DESC LIMIT ?").bind(MAX_AUDIT_LIST_EVENTS as i64).fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
             .filter_map(|r| {
@@ -499,8 +540,18 @@ fn legacy_access_source() -> String {
     "legacy".to_string()
 }
 
-fn normalize_limit(max_events: usize) -> usize {
-    max_events.clamp(1, MAX_AUDIT_MAX_EVENTS)
+/// Maps a configured retention window onto the supported day options,
+/// falling back to the default when the value is not user-selectable.
+pub fn normalize_retention_days(days: u32) -> u32 {
+    if AUDIT_RETENTION_DAY_OPTIONS.contains(&days) {
+        days
+    } else {
+        DEFAULT_AUDIT_RETENTION_DAYS
+    }
+}
+
+fn retention_cutoff_ms(retention_days: u32) -> i64 {
+    Utc::now().timestamp_millis() - i64::from(normalize_retention_days(retention_days)) * 86_400_000
 }
 fn status_text(status: &AuditStatus) -> &'static str {
     match status {
@@ -648,7 +699,7 @@ mod tests {
                         &DbKind::Postgres,
                         "SELECT * FROM account WHERE secret = 'fake-secret'",
                     )),
-                    10,
+                    DEFAULT_AUDIT_RETENTION_DAYS,
                 )
                 .await
                 .expect("audit persists");

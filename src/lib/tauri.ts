@@ -78,14 +78,17 @@ const mockSnapshot: AppSnapshot = {
       token: null
     },
     settings: {
-      audit_max_events: 300,
+      audit_retention_days: 7,
       audit_redact_sql_literals: false,
       auto_check_updates: true,
       auto_start_mcp: false,
       auto_lightweight_mode: false,
       mcp_activity_effects: true,
       language: "zh-CN",
-      jdbc_java_home: null
+      jdbc_java_home: null,
+      auto_circuit_breaker: false,
+      auto_circuit_breaker_window_minutes: 10,
+      auto_circuit_breaker_threshold: 5
     },
     tools: mockTools.map(({ name, enabled }) => ({ name, enabled })),
     connections: [

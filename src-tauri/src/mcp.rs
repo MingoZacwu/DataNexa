@@ -939,8 +939,9 @@ async fn call_tool_audited(
     } else {
         result
     };
+    let breaker_token_id = actor.token_id.clone();
     if let Err(error) = &result {
-        let max_events = audit_limit(&app).await;
+        let retention_days = audit_retention_days(&app).await;
         let denied = error.to_string().contains("disabled in DataNexa")
             || error
                 .to_string()
@@ -966,12 +967,25 @@ async fn call_tool_audited(
                 Some(started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)),
                 None,
                 audit_sql,
-                max_events,
+                retention_days,
             )
             .await
             .map_err(|audit_error| {
                 anyhow::anyhow!("audit storage unavailable: {audit_error}; request failed")
             })?;
+        // Evaluate the circuit breaker after the denial is persisted so the
+        // count query includes the event that was just recorded.
+        if denied {
+            if let Some(token_id) = &breaker_token_id {
+                crate::circuit_breaker::evaluate(app.clone(), token_id.clone()).await;
+            }
+        }
+    } else if let Ok(outcome) = &result {
+        if outcome.denied {
+            if let Some(token_id) = &breaker_token_id {
+                crate::circuit_breaker::evaluate(app.clone(), token_id.clone()).await;
+            }
+        }
     }
     result
 }
@@ -1031,7 +1045,7 @@ async fn call_tool(
             }
         }
     }
-    let max_events = audit_limit(&app).await;
+    let retention_days = audit_retention_days(&app).await;
     let text = text_for_app(&app).await;
     let mut denied = false;
 
@@ -1070,7 +1084,7 @@ async fn call_tool(
                     None,
                     Some(connections.len()),
                     None,
-                    max_events,
+                    retention_days,
                 )
                 .await?;
             json!({ "connections": connections })
@@ -1094,7 +1108,7 @@ async fn call_tool(
                     None,
                     Some(schema.len()),
                     None,
-                    max_events,
+                    retention_days,
                 )
                 .await?;
             json!({ "schema": schema })
@@ -1124,7 +1138,7 @@ async fn call_tool(
                     None,
                     Some(columns.len()),
                     None,
-                    max_events,
+                    retention_days,
                 )
                 .await?;
             json!({ "columns": columns })
@@ -1151,7 +1165,7 @@ async fn call_tool(
                         None,
                         None,
                         None,
-                        max_events,
+                        retention_days,
                     )
                     .await?;
                 denied = true;
@@ -1187,7 +1201,7 @@ async fn call_tool(
                         Some(result.elapsed_ms),
                         Some(result.row_count),
                         Some(audit_sql(&app, &connection.kind, &result.rewritten_sql).await),
-                        max_events,
+                        retention_days,
                     )
                     .await?;
                 json!(result)
@@ -1219,7 +1233,7 @@ async fn call_tool(
                         None,
                         None,
                         Some(audit_sql(&app, &connection.kind, &sql).await),
-                        max_events,
+                        retention_days,
                     )
                     .await?;
                 json!({ "policy": policy, "result": null })
@@ -1240,7 +1254,7 @@ async fn call_tool(
                         Some(result.elapsed_ms),
                         Some(result.row_count),
                         Some(audit_sql(&app, &connection.kind, &result.rewritten_sql).await),
-                        max_events,
+                        retention_days,
                     )
                     .await?;
                 json!({ "policy": policy, "result": result })
@@ -1263,7 +1277,7 @@ async fn call_tool(
                         None,
                         None,
                         Some(audit_sql(&app, &connection.kind, &sql).await),
-                        max_events,
+                        retention_days,
                     )
                     .await?;
                 denied = true;
@@ -1290,7 +1304,7 @@ async fn call_tool(
                             None,
                             None,
                             Some(audit_sql(&app, &connection.kind, &sql).await),
-                            max_events,
+                            retention_days,
                         )
                         .await?;
                     json!({ "policy": policy, "result": null })
@@ -1311,7 +1325,7 @@ async fn call_tool(
                             Some(result.elapsed_ms),
                             Some(result.row_count),
                             Some(audit_sql(&app, &connection.kind, &result.rewritten_sql).await),
-                            max_events,
+                            retention_days,
                         )
                         .await?;
                     json!({ "policy": policy, "result": result })
@@ -1352,7 +1366,7 @@ async fn call_tool(
                     None,
                     None,
                     Some(audit_sql(&app, &kind, &sql).await),
-                    max_events,
+                    retention_days,
                 )
                 .await?;
             json!({ "policy": policy })
@@ -1375,8 +1389,8 @@ async fn call_tool(
     })
 }
 
-async fn audit_limit(app: &Arc<AppState>) -> usize {
-    app.config.read().await.settings.audit_max_events
+async fn audit_retention_days(app: &Arc<AppState>) -> u32 {
+    app.config.read().await.settings.audit_retention_days
 }
 
 async fn connection_name(app: &Arc<AppState>, connection_id: Option<&str>) -> Option<String> {
