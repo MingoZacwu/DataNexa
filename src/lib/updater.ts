@@ -1,8 +1,9 @@
-import { check, type Update } from "@tauri-apps/plugin-updater";
+﻿import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { api } from "./tauri";
 
 export type UpdateErrorPhase = "check" | "download" | "relaunch";
 
@@ -45,7 +46,8 @@ export function useAppUpdater(enabled: boolean | null, autoCheck: boolean) {
         await previousUpdate.close().catch(() => undefined);
       }
       setState(update ? { kind: "available", version: update.version } : { kind: "up-to-date" });
-    } catch {
+    } catch (error) {
+      api.logFrontendEvent("error", `app update check failed: ${error}`);
       setState({ kind: "error", phase: "check" });
     } finally {
       busyRef.current = false;
@@ -60,6 +62,7 @@ export function useAppUpdater(enabled: boolean | null, autoCheck: boolean) {
     let downloaded = 0;
     let total: number | undefined;
     setState({ kind: "downloading", version: update.version, downloaded });
+    api.logFrontendEvent("info", `app update download started (version=${update.version})`);
 
     try {
       await update.downloadAndInstall((event) => {
@@ -76,16 +79,19 @@ export function useAppUpdater(enabled: boolean | null, autoCheck: boolean) {
           total
         });
       });
-    } catch {
+    } catch (error) {
+      api.logFrontendEvent("error", `app update download failed (version=${update.version}): ${error}`);
       setState({ kind: "error", phase: "download", version: update.version });
       busyRef.current = false;
       return;
     }
 
     setState({ kind: "relaunching", version: update.version });
+    api.logFrontendEvent("info", `app update downloaded, relaunching (version=${update.version})`);
     try {
       await relaunch();
-    } catch {
+    } catch (error) {
+      api.logFrontendEvent("error", `app update relaunch failed (version=${update.version}): ${error}`);
       setState({ kind: "error", phase: "relaunch", version: update.version });
       busyRef.current = false;
     }

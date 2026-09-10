@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import clsx from "clsx";
 import {
   AlertTriangle,
+  Bug,
   CheckCircle2,
   Database,
   Download,
@@ -47,6 +48,9 @@ const APP_VERSION = appConfig.version;
 // Must match the backend snapshot list limit (audit.rs MAX_AUDIT_LIST_EVENTS).
 const AUDIT_LIST_LIMIT = 5000;
 const AUDIT_RETENTION_DAY_OPTIONS = [3, 7, 15, 30];
+// Number of clicks on the about-page version badge that reveal the hidden
+// debug options panel, mirroring the classic developer-mode gesture.
+const DEBUG_OPTIONS_UNLOCK_TAPS = 5;
 
 export function SettingsView({
   t,
@@ -80,6 +84,7 @@ export function SettingsView({
   onRefreshJdbcStorageStatus,
   onClearJdbcCache,
   onOpenDataDirectory,
+  onOpenDebugLogFolder,
   onInstallJdbcDriver,
   onImportJdbcDriver,
   onDeleteJdbcDriver,
@@ -125,6 +130,7 @@ export function SettingsView({
   onRefreshJdbcStorageStatus: () => void;
   onClearJdbcCache: (selection: JdbcCacheSelection) => Promise<boolean>;
   onOpenDataDirectory: () => void;
+  onOpenDebugLogFolder: () => void;
   onInstallJdbcDriver: (input: InstallJdbcDriverInput) => Promise<boolean>;
   onImportJdbcDriver: (input: ImportJdbcDriverInput) => Promise<boolean>;
   onDeleteJdbcDriver: (bundleId: string) => void;
@@ -148,6 +154,9 @@ export function SettingsView({
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [exportAcknowledged, setExportAcknowledged] = useState(false);
   const [bearerWarningOpen, setBearerWarningOpen] = useState(false);
+  const [versionTaps, setVersionTaps] = useState(0);
+  const [debugOptionsVisible, setDebugOptionsVisible] = useState(false);
+  const [debugLogConfirmOpen, setDebugLogConfirmOpen] = useState(false);
   const scrollFadeRef = useScrollFade();
 
   useEffect(() => {
@@ -175,7 +184,8 @@ export function SettingsView({
         && (current.jdbc_java_home ?? null) === (settings.jdbc_java_home ?? null)
         && current.auto_circuit_breaker === settings.auto_circuit_breaker
         && current.auto_circuit_breaker_window_minutes === settings.auto_circuit_breaker_window_minutes
-        && current.auto_circuit_breaker_threshold === settings.auto_circuit_breaker_threshold;
+        && current.auto_circuit_breaker_threshold === settings.auto_circuit_breaker_threshold
+        && current.debug_logging_enabled === settings.debug_logging_enabled;
       if (saved) settingsDraftDirty.current = false;
       return saved ? settings : current;
     });
@@ -183,6 +193,28 @@ export function SettingsView({
   useEffect(() => {
     setSettingsDraft((current) => ({ ...current, language: locale }));
   }, [locale]);
+  useEffect(() => {
+    // Collapse the unlocked debug panel again once the user leaves the About
+    // tab while debug logging is off; while logging stays enabled the panel
+    // remains visible for quick access to the log folder.
+    if (tab !== "about" && !settingsDraft.debug_logging_enabled) {
+      setVersionTaps(0);
+      setDebugOptionsVisible(false);
+    }
+  }, [tab, settingsDraft.debug_logging_enabled]);
+  // Lightweight mode destroys the whole frontend, which resets the unlock
+  // state. When debug logging is already running, restore the panel without
+  // the hidden version-badge gesture so users keep control over it.
+  const debugPanelAutoShown = useRef(false);
+  useEffect(() => {
+    if (debugPanelAutoShown.current) return;
+    debugPanelAutoShown.current = true;
+    if (settings.debug_logging_enabled) {
+      setDebugOptionsVisible(true);
+    }
+    // Runs once per frontend mount on purpose.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.debug_logging_enabled]);
 
   const blockedCutoff = Date.now() - 24 * 60 * 60 * 1000;
   const blockedLast24Hours = auditEvents.filter((event) => (
@@ -731,14 +763,25 @@ export function SettingsView({
           onSaveSettings={onSaveSettings}
         />
       ) : tab === "storage" ? (
-        <StorageManagement status={jdbcStorageStatus} busy={busy} onRefresh={onRefreshJdbcStorageStatus} onClearJdbcCache={onClearJdbcCache} onOpenDataDirectory={onOpenDataDirectory} t={t} />
+        <StorageManagement status={jdbcStorageStatus} busy={busy} onRefresh={onRefreshJdbcStorageStatus} onClearJdbcCache={onClearJdbcCache} onOpenDataDirectory={onOpenDataDirectory} debugLoggingEnabled={settingsDraft.debug_logging_enabled} t={t} />
       ) : (
         <div ref={scrollFadeRef} className="settings-stack" onScroll={updateScrollFade}>
           <section className="panel about-panel">
             <div className="about-hero">
               <img src={appIconUrl} alt="DataNexa" />
               <div>
-                <h2>DataNexa <span className="version-badge">v{APP_VERSION}</span></h2>
+                <h2>DataNexa <span
+                  className="version-badge"
+                  onClick={() => {
+                    const next = versionTaps + 1;
+                    if (next >= DEBUG_OPTIONS_UNLOCK_TAPS) {
+                      setVersionTaps(0);
+                      setDebugOptionsVisible(true);
+                    } else {
+                      setVersionTaps(next);
+                    }
+                  }}
+                >v{APP_VERSION}</span></h2>
                 <p>{t.settings.aboutText}</p>
               </div>
             </div>
@@ -756,7 +799,100 @@ export function SettingsView({
               onCheck={onCheckUpdate}
               onUpdate={onUpdate}
               onOpenProjectReleases={onOpenProjectReleases}
-            />
+            >
+              {debugOptionsVisible && (
+                <>
+                  <div className="about-update-switch-row">
+                    <span className="switch-label">
+                      {t.settings.debugLogging}
+                      <IconTooltip label={t.settings.debugLoggingTooltip}>
+                        <button type="button" className="switch-info" aria-label={t.settings.debugLoggingTooltip}>
+                          <Info size={13} />
+                        </button>
+                      </IconTooltip>
+                    </span>
+                    <span className="debug-log-controls">
+                      {settingsDraft.debug_logging_enabled && (
+                        <IconTooltip label={t.settings.openDebugLogFolder}>
+                          <button
+                            type="button"
+                            className="debug-log-folder-btn"
+                            onClick={onOpenDebugLogFolder}
+                            disabled={busy}
+                            aria-label={t.settings.openDebugLogFolder}
+                          >
+                            <FolderOpen size={15} />
+                          </button>
+                        </IconTooltip>
+                      )}
+                      <Switch.Root
+                        className="switch"
+                        checked={settingsDraft.debug_logging_enabled}
+                        disabled={busy}
+                        aria-label={t.settings.debugLogging}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setDebugLogConfirmOpen(true);
+                            return;
+                          }
+                          const next = { ...settingsDraft, debug_logging_enabled: false };
+                          settingsDraftDirty.current = true;
+                          setSettingsDraft(next);
+                          onSaveSettings(next);
+                        }}
+                      >
+                        <Switch.Thumb className="switch-thumb" />
+                      </Switch.Root>
+                    </span>
+                  </div>
+                  <Dialog.Root open={debugLogConfirmOpen} onOpenChange={setDebugLogConfirmOpen}>
+                    <Dialog.Portal>
+                      <Dialog.Overlay className="dialog-overlay" />
+                      <Dialog.Content className="policy-dialog transfer-dialog">
+                        <div className="dialog-titlebar">
+                          <div>
+                            <Dialog.Title>{t.settings.debugLogConfirmTitle}</Dialog.Title>
+                            <Dialog.Description>{t.settings.debugLogConfirmDescription}</Dialog.Description>
+                          </div>
+                          <Dialog.Close asChild>
+                            <button type="button" className="icon-button" aria-label={t.common.close}>
+                              <X size={18} />
+                            </button>
+                          </Dialog.Close>
+                        </div>
+                        <div className="transfer-warning">
+                          <div className="transfer-warning-icon"><AlertTriangle size={22} /></div>
+                          <ul>
+                            <li>{t.settings.debugLogConfirmTroubleshootOnly}</li>
+                            <li>{t.settings.debugLogConfirmPerformance}</li>
+                            <li>{t.settings.debugLogConfirmSanitized}</li>
+                          </ul>
+                        </div>
+                        <footer className="transfer-dialog-actions">
+                          <Dialog.Close asChild>
+                            <button type="button" className="button ghost">{t.common.cancel}</button>
+                          </Dialog.Close>
+                          <button
+                            type="button"
+                            className="button danger-solid"
+                            onClick={() => {
+                              setDebugLogConfirmOpen(false);
+                              const next = { ...settingsDraft, debug_logging_enabled: true };
+                              settingsDraftDirty.current = true;
+                              setSettingsDraft(next);
+                              onSaveSettings(next);
+                            }}
+                          >
+                            <Bug size={16} />
+                            {t.settings.debugLogConfirmEnable}
+                          </button>
+                        </footer>
+                      </Dialog.Content>
+                    </Dialog.Portal>
+                  </Dialog.Root>
+                </>
+              )}
+            </AboutUpdateSection>
             <footer className="about-footer">
               <div className="about-footer-links">
                 <a
@@ -1195,10 +1331,10 @@ function JdbcRuntimeProgressView({ t, progress }: { t: I18nMessages; progress: J
   );
 }
 
-function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache, onOpenDataDirectory }: { t: I18nMessages; status: JdbcStorageStatus | null; busy: boolean; onRefresh: () => void; onClearJdbcCache: (selection: JdbcCacheSelection) => Promise<boolean>; onOpenDataDirectory: () => void }) {
+function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache, onOpenDataDirectory, debugLoggingEnabled }: { t: I18nMessages; status: JdbcStorageStatus | null; busy: boolean; onRefresh: () => void; onClearJdbcCache: (selection: JdbcCacheSelection) => Promise<boolean>; onOpenDataDirectory: () => void; debugLoggingEnabled: boolean }) {
   const [selectedStorageView, setSelectedStorageView] = useState<"storage" | "drivers">("storage");
   const [mavenCacheDialogOpen, setMavenCacheDialogOpen] = useState(false);
-  const [cacheSelection, setCacheSelection] = useState<JdbcCacheSelection>({ maven: true, old_runtimes: true });
+  const [cacheSelection, setCacheSelection] = useState<JdbcCacheSelection>({ maven: true, old_runtimes: true, debug_logs: false });
   const [cpuHistory, setCpuHistory] = useState<number[]>([]);
   const refreshRef = useRef(onRefresh);
   const scrollFadeRef = useScrollFade();
@@ -1223,6 +1359,7 @@ function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache, onOpe
     ratio: status.total_bytes > 0 ? item.bytes / status.total_bytes : 0
   })) ?? [];
   const storageBreakdownById = new Map(storageBreakdown.map((item) => [item.id, item]));
+  const debugLogBytes = status?.items.find((item) => item.id === "logs")?.bytes ?? 0;
   const cpuHistoryMax = Math.max(1, ...cpuHistory);
 
   return (
@@ -1261,7 +1398,7 @@ function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache, onOpe
                 </button>
               </IconTooltip>
                 <IconTooltip label={t.settings.clearJdbcCache}>
-                <button type="button" className="icon-button danger" onClick={() => { setCacheSelection({ maven: Boolean(status?.maven_cache_bytes), old_runtimes: Boolean(status?.managed_runtime_old_bytes) }); setMavenCacheDialogOpen(true); }} disabled={busy || !status} aria-label={t.settings.clearJdbcCache}>
+                <button type="button" className="icon-button danger" onClick={() => { setCacheSelection({ maven: Boolean(status?.maven_cache_bytes), old_runtimes: Boolean(status?.managed_runtime_old_bytes), debug_logs: !debugLoggingEnabled && Boolean(status?.items.some((item) => item.id === "logs" && item.bytes > 0)) }); setMavenCacheDialogOpen(true); }} disabled={busy || !status} aria-label={t.settings.clearJdbcCache}>
                   <Trash2 size={17} />
                 </button>
               </IconTooltip>
@@ -1297,11 +1434,12 @@ function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache, onOpe
                   <div className="jdbc-cache-options">
                     <CacheOption label={t.settings.clearMavenCacheOption} size={status.maven_cache_bytes} checked={cacheSelection.maven} disabled={status.maven_cache_bytes === 0} onChange={(checked) => setCacheSelection((value) => ({ ...value, maven: checked }))} />
                     <CacheOption label={t.settings.clearOldRuntimeOption} size={status.managed_runtime_old_bytes} checked={cacheSelection.old_runtimes} disabled={status.managed_runtime_old_bytes === 0} onChange={(checked) => setCacheSelection((value) => ({ ...value, old_runtimes: checked }))} />
-                    <div className="jdbc-cache-total"><span>{t.settings.selectedSpace}</span><strong>{formatBytes((cacheSelection.maven ? status.maven_cache_bytes : 0) + (cacheSelection.old_runtimes ? status.managed_runtime_old_bytes : 0))}</strong></div>
+                    <CacheOption label={t.settings.clearDebugLogsOption} size={debugLogBytes} checked={cacheSelection.debug_logs} disabled={debugLogBytes === 0 || debugLoggingEnabled} onChange={(checked) => setCacheSelection((value) => ({ ...value, debug_logs: checked }))} />
+                    <div className="jdbc-cache-total"><span>{t.settings.selectedSpace}</span><strong>{formatBytes((cacheSelection.maven ? status.maven_cache_bytes : 0) + (cacheSelection.old_runtimes ? status.managed_runtime_old_bytes : 0) + (cacheSelection.debug_logs ? debugLogBytes : 0))}</strong></div>
                   </div>
                   <footer>
                     <Dialog.Close asChild><button type="button" className="button ghost" disabled={busy}>{t.common.cancel}</button></Dialog.Close>
-                    <button type="button" className="button stop" disabled={busy || (!cacheSelection.maven && !cacheSelection.old_runtimes)} onClick={() => void onClearJdbcCache(cacheSelection).then((cleared) => cleared && setMavenCacheDialogOpen(false))}>
+                    <button type="button" className="button stop" disabled={busy || (!cacheSelection.maven && !cacheSelection.old_runtimes && !cacheSelection.debug_logs)} onClick={() => void onClearJdbcCache(cacheSelection).then((cleared) => cleared && setMavenCacheDialogOpen(false))}>
                       <Trash2 size={16} />
                       {t.settings.confirmClearJdbcCache}
                     </button>
@@ -1362,6 +1500,7 @@ function storageItemLabel(t: I18nMessages, id: string) {
   if (id === "audit") return t.settings.storageCategoryAudit;
   if (id === "access") return t.settings.storageCategoryAccess;
   if (id === "config") return t.settings.storageCategoryConfig;
+  if (id === "logs") return t.settings.storageCategoryLogs;
   if (id === "other") return t.settings.storageCategoryOther;
   return id;
 }
@@ -1372,6 +1511,7 @@ function storageItemTone(id: string) {
   if (id === "maven") return "maven";
   if (id === "audit") return "audit";
   if (id === "access") return "access";
+  if (id === "logs") return "logs";
   if (id === "other") return "other";
   return "config";
 }
@@ -1394,7 +1534,8 @@ export function AboutUpdateSection({
   onAutoCheckUpdatesChange,
   onCheck,
   onUpdate,
-  onOpenProjectReleases
+  onOpenProjectReleases,
+  children
 }: {
   t: I18nMessages;
   enabled: boolean;
@@ -1404,6 +1545,7 @@ export function AboutUpdateSection({
   onCheck: () => void;
   onUpdate: () => void;
   onOpenProjectReleases: () => void;
+  children?: ReactNode;
 }) {
   let icon: ReactNode = <RefreshCw size={19} />;
   let title = t.updates.readyTitle;
@@ -1527,6 +1669,7 @@ export function AboutUpdateSection({
             <Switch.Thumb className="switch-thumb" />
           </Switch.Root>
         </label>
+        {children}
       </div>
     </section>
   );

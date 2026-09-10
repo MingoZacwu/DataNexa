@@ -130,6 +130,8 @@ pub struct JdbcStorageStatus {
 pub struct JdbcCacheSelection {
     pub maven: bool,
     pub old_runtimes: bool,
+    #[serde(default)]
+    pub debug_logs: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -326,7 +328,10 @@ impl JdbcManager {
                 progress,
             },
         ) {
-            eprintln!("failed to emit JDBC install progress: {error}");
+            crate::debug_log::warn(
+                "jdbc",
+                format_args!("failed to emit JDBC install progress: {error}"),
+            );
         }
     }
 
@@ -659,6 +664,12 @@ impl JdbcManager {
         if runtime_path.is_dir() && runtime_path.starts_with(&storage_root) {
             items.push(("runtime", "Java Runtime", runtime_path.clone()));
         }
+        // Debug logs are only created once the user enables debug logging, so
+        // the category stays hidden until the "logs" folder actually exists.
+        let logs_path = storage_root.join("logs");
+        if logs_path.is_dir() {
+            items.push(("logs", "Debug logs", logs_path));
+        }
         let mut items = items
             .into_iter()
             .map(|(id, label, path)| JdbcStorageItem {
@@ -737,6 +748,11 @@ impl JdbcManager {
         }
         if selection.old_runtimes {
             jdbc_runtime::clear_cache(app)?;
+        }
+        // Debug logs can only be cleared while debug logging is off, so an
+        // active logging session is never wiped mid-troubleshooting.
+        if selection.debug_logs && !crate::debug_log::is_enabled() {
+            crate::debug_log::clear();
         }
         Ok(())
     }
@@ -1170,16 +1186,21 @@ impl JdbcManager {
                 let mut reader = BufReader::new(stderr);
                 let mut line = String::new();
                 while reader.read_line(&mut line).await.unwrap_or(0) > 0 {
+                    // The sidecar stdout carries the JSON protocol, so stderr
+                    // is the only channel for JVM and driver diagnostics.
+                    crate::debug_log::warn("jdbc", format_args!("{}", line.trim_end()));
                     line.clear();
                 }
             });
         }
+        let bundle_id = bundle_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let sidecar_pid = child.id().unwrap_or(0);
         let session = Arc::new(JdbcSidecarSession {
-            bundle_id: bundle_path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or("unknown")
-                .to_string(),
+            bundle_id: bundle_id.clone(),
             process: Mutex::new(JdbcSidecarProcess {
                 child,
                 stdin,
@@ -1190,6 +1211,13 @@ impl JdbcManager {
         // A successful spawn is enough to publish the session. The first real
         // request is serialized through the same process lock and will surface
         // startup failures to the caller.
+        crate::debug_log::info(
+            "jdbc",
+            format_args!(
+                "JDBC sidecar started (bundle={}, pid={})",
+                bundle_id, sidecar_pid
+            ),
+        );
         sessions.insert(session_key.to_string(), session.clone());
         Ok(session)
     }

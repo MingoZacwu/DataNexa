@@ -1086,6 +1086,7 @@ function App() {
                     onRefreshJdbcStorageStatus={() => void refreshJdbcStorageStatus()}
                     onClearJdbcCache={clearJdbcCache}
                     onOpenDataDirectory={() => void api.openDataDirectory().catch(showError)}
+                    onOpenDebugLogFolder={() => void api.openDebugLogDirectory().catch(showError)}
                     onInstallJdbcDriver={installJdbcDriver}
                     onImportJdbcDriver={importJdbcDriver}
                     onDeleteJdbcDriver={(bundleId) => void deleteJdbcDriver(bundleId)}

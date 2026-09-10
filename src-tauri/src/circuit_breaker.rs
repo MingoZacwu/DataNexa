@@ -10,10 +10,13 @@ use crate::state::AppState;
 pub const CIRCUIT_BREAKER_TOOL: &str = "system.auto_circuit_breaker";
 
 /// Best-effort circuit breaker evaluation. Failures never affect the tool-call
-/// result; they are logged to stderr only.
+/// result; they are recorded in the debug log only.
 pub async fn evaluate(app: Arc<AppState>, token_id: String) {
     if let Err(error) = evaluate_inner(app, token_id).await {
-        eprintln!("circuit breaker evaluation failed: {error}");
+        crate::debug_log::warn(
+            "circuit_breaker",
+            format_args!("circuit breaker evaluation failed: {error}"),
+        );
     }
 }
 
@@ -50,6 +53,12 @@ async fn evaluate_inner(app: Arc<AppState>, token_id: String) -> anyhow::Result<
     }
     let started = Instant::now();
     let reason = backend_text(&language).circuit_breaker_reason(window_minutes, threshold, count);
+    crate::debug_log::warn(
+        "circuit_breaker",
+        format_args!(
+            "circuit breaker tripped: token disabled (denials={count}, window={window_minutes}m, threshold={threshold})"
+        ),
+    );
     app.audit
         .record_with_actor(
             AuditActor::system_for_token(token_id),

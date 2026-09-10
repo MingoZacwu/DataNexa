@@ -17,6 +17,7 @@ use crate::config::{
     ServerConfig, SettingsConfig,
 };
 use crate::db::ConnectionDiagnostics;
+use crate::debug_log;
 use crate::i18n::{backend_text, BackendText, ConnectionDiagnosticText};
 use crate::jdbc::{
     ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcDriverBundle,
@@ -406,6 +407,7 @@ pub async fn save_settings_config(
     apply_auto_start: bool,
 ) -> Result<AppSnapshot, String> {
     let previous_auto_start = state.config.read().await.settings.auto_start_mcp;
+    let previous_settings = state.config.read().await.settings.clone();
     let text = commit_config(state.inner(), |config| {
         let mut settings = normalize_settings(settings);
         if !apply_auto_start {
@@ -417,6 +419,21 @@ pub async fn save_settings_config(
     })
     .await
     .map_err(to_client_error)?;
+    if debug_log::is_enabled() {
+        // Record which setting keys changed, never the values, so the log
+        // stays useful as a timeline without capturing sensitive state.
+        let changed = changed_setting_keys(&previous_settings, &state.config.read().await.settings);
+        if changed.is_empty() {
+            debug_log::info("settings", format_args!("settings saved (no changes)"));
+        } else {
+            debug_log::info(
+                "settings",
+                format_args!("settings updated (changed: {})", changed.join(", ")),
+            );
+        }
+    }
+    // Apply the debug logging switch immediately so no restart is required.
+    debug_log::set_enabled(state.config.read().await.settings.debug_logging_enabled);
     if apply_auto_start {
         let auto_start = state.config.read().await.settings.auto_start_mcp;
         let startup_started = Instant::now();
@@ -785,6 +802,20 @@ pub async fn upsert_connection(
             })?;
         }
     }
+    debug_log::info(
+        "connection",
+        format_args!(
+            "connection saved (id={}, name={}, kind={})",
+            connection.id,
+            connection.name,
+            match connection.kind {
+                DbKind::Sqlite => "sqlite",
+                DbKind::Mysql => "mysql",
+                DbKind::Postgres => "postgres",
+                DbKind::Jdbc => "jdbc",
+            }
+        ),
+    );
     snapshot(state.inner()).await.map_err(to_client_error)
 }
 
@@ -795,6 +826,11 @@ pub async fn delete_connection(
 ) -> Result<AppSnapshot, String> {
     let _transaction = state.config_transaction.write().await;
     let mut candidate = state.config.read().await.clone();
+    let connection_name = candidate
+        .connections
+        .iter()
+        .find(|connection| connection.id == id)
+        .map(|connection| connection.name.clone());
     let credential_ref = candidate
         .connections
         .iter()
@@ -824,6 +860,14 @@ pub async fn delete_connection(
         })?;
     }
     drop(_transaction);
+    debug_log::info(
+        "connection",
+        format_args!(
+            "connection deleted (id={}, name={})",
+            id,
+            connection_name.as_deref().unwrap_or("unknown")
+        ),
+    );
 
     snapshot(state.inner()).await.map_err(to_client_error)
 }
@@ -941,7 +985,16 @@ pub async fn test_connection(
             .await
         {
             Ok(duration) => Ok(text.connection_test_ok(duration.as_millis())),
-            Err(error) => Err(to_jdbc_client_error(error, &text)),
+            Err(error) => {
+                debug_log::error(
+                    "connection_test",
+                    format_args!(
+                        "JDBC connection test failed (id={}, name={}, error={error})",
+                        connection.id, connection.name
+                    ),
+                );
+                Err(to_jdbc_client_error(error, &text))
+            }
         };
     }
     state.db.close(&id).await;
@@ -952,6 +1005,13 @@ pub async fn test_connection(
     {
         Ok(duration) => Ok(text.connection_test_ok(duration.as_millis())),
         Err(error) => {
+            debug_log::error(
+                "connection_test",
+                format_args!(
+                    "connection test failed (id={}, name={}, error={error})",
+                    connection.id, connection.name
+                ),
+            );
             let diagnostics = state.db.diagnostics(&connection, &state.vault, &text);
             Err(format!(
                 "{}\n{}",
@@ -991,7 +1051,16 @@ pub async fn test_connection_input(
             .await
         {
             Ok(duration) => Ok(text.connection_test_ok(duration.as_millis())),
-            Err(error) => Err(to_jdbc_client_error(error, &text)),
+            Err(error) => {
+                debug_log::error(
+                    "connection_test",
+                    format_args!(
+                        "JDBC connection test failed (name={}, error={error})",
+                        connection.name
+                    ),
+                );
+                Err(to_jdbc_client_error(error, &text))
+            }
         };
     }
 
@@ -1001,7 +1070,16 @@ pub async fn test_connection_input(
         .await
     {
         Ok(duration) => Ok(text.connection_test_ok(duration.as_millis())),
-        Err(error) => Err(to_client_error(&error)),
+        Err(error) => {
+            debug_log::error(
+                "connection_test",
+                format_args!(
+                    "connection test failed (name={}, error={error})",
+                    connection.name
+                ),
+            );
+            Err(to_client_error(&error))
+        }
     }
 }
 
@@ -1172,6 +1250,36 @@ pub async fn open_data_directory(app: AppHandle) -> Result<(), String> {
     tauri_plugin_opener::open_path(&data_dir, None::<&str>).map_err(to_client_error)
 }
 
+/// Persist a front end error or unhandled promise rejection into the debug log.
+/// The message is sanitized before it is written so secrets embedded in error
+/// text never reach the log file.
+#[tauri::command]
+pub fn log_frontend_event(kind: String, message: String) {
+    // The sanitize pass allocates, so skip it entirely when logging is off.
+    if !debug_log::is_enabled() {
+        return;
+    }
+    let message = sanitize_text(&message);
+    match kind.as_str() {
+        "error" => debug_log::error("frontend", format_args!("{message}")),
+        "info" => debug_log::info("frontend", format_args!("{message}")),
+        _ => debug_log::warn("frontend", format_args!("{message}")),
+    }
+}
+
+/// Open the folder holding the debug log files in the system file manager.
+/// The path is resolved on the Rust side so the front end cannot open
+/// arbitrary locations.
+#[tauri::command]
+pub async fn open_debug_log_directory(app: AppHandle) -> Result<(), String> {
+    let log_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(to_client_error)?
+        .join("logs");
+    tauri_plugin_opener::open_path(&log_dir, None::<&str>).map_err(to_client_error)
+}
+
 async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
     let emergency_disconnect = state.is_emergency_disabled();
     let mut config = state.config.read().await.clone();
@@ -1223,6 +1331,13 @@ pub(crate) async fn record_startup_event(
     reason: String,
     elapsed: std::time::Duration,
 ) {
+    debug_log::error(
+        "startup",
+        format_args!(
+            "{tool} failed after {}ms: {reason}",
+            elapsed.as_millis()
+        ),
+    );
     let retention_days = state.config.read().await.settings.audit_retention_days;
     let _ = state
         .audit
@@ -1238,6 +1353,31 @@ pub(crate) async fn record_startup_event(
             retention_days,
         )
         .await;
+}
+
+/// Names of top-level settings keys whose serialized value differs between
+/// two snapshots. Values are intentionally never returned.
+fn changed_setting_keys(
+    previous: &SettingsConfig,
+    current: &SettingsConfig,
+) -> Vec<String> {
+    let (Ok(previous), Ok(current)) = (
+        serde_json::to_value(previous),
+        serde_json::to_value(current),
+    ) else {
+        return Vec::new();
+    };
+    let (Some(previous), Some(current)) = (previous.as_object(), current.as_object()) else {
+        return Vec::new();
+    };
+    let mut changed = Vec::new();
+    for key in current.keys() {
+        if previous.get(key) != current.get(key) {
+            changed.push(key.clone());
+        }
+    }
+    changed.sort();
+    changed
 }
 
 async fn commit_config<T>(
@@ -1516,7 +1656,7 @@ fn to_jdbc_client_error(error: impl std::fmt::Display, text: &BackendText) -> St
     text.jdbc_error(&sanitize_text(&error.to_string()))
 }
 
-fn sanitize_text(text: &str) -> String {
+pub(crate) fn sanitize_text(text: &str) -> String {
     let text = Regex::new(r"(?i)((?:[A-Za-z][A-Za-z0-9+.-]*:)+//)([^/@\s:]+):([^/@\s]+)@")
         .expect("valid JDBC URL sanitizer regex")
         .replace_all(text, "$1$2:REDACTED@");

@@ -595,7 +595,20 @@ impl DatabaseManager {
             close_pool(pool).await;
         }
 
-        let pool = connect_pool_with_password(config, vault, None, text).await?;
+        let pool = match connect_pool_with_password(config, vault, None, text).await {
+            Ok(pool) => pool,
+            Err(error) => {
+                crate::debug_log::error(
+                    "database",
+                    format_args!(
+                        "connection pool creation failed (id={}, kind={}, error={error})",
+                        config.id,
+                        kind_label(&config.kind)
+                    ),
+                );
+                return Err(error);
+            }
+        };
         let mut state = self.pools.write().await;
         match publish_pool(
             &mut state,
@@ -618,6 +631,15 @@ impl DatabaseManager {
                 ))
             }
         }
+    }
+}
+
+fn kind_label(kind: &DbKind) -> &'static str {
+    match kind {
+        DbKind::Sqlite => "sqlite",
+        DbKind::Mysql => "mysql",
+        DbKind::Postgres => "postgres",
+        DbKind::Jdbc => "jdbc",
     }
 }
 

@@ -88,7 +88,8 @@ const mockSnapshot: AppSnapshot = {
       jdbc_java_home: null,
       auto_circuit_breaker: false,
       auto_circuit_breaker_window_minutes: 10,
-      auto_circuit_breaker_threshold: 5
+      auto_circuit_breaker_threshold: 5,
+      debug_logging_enabled: false
     },
     tools: mockTools.map(({ name, enabled }) => ({ name, enabled })),
     connections: [
@@ -212,13 +213,14 @@ const mockJdbcStatus: JdbcStatus = {
 
 const mockJdbcStorageStatus: JdbcStorageStatus = {
   storage_root: "Preview",
-  total_bytes: 6.6 * 1024 * 1024 + 892 * 1024 + 44 * 1024 + 3 * 1024,
+  total_bytes: 6.6 * 1024 * 1024 + 892 * 1024 + 44 * 1024 + 3 * 1024 + 128 * 1024,
   items: [
     { id: "drivers", label: "JDBC drivers", path: "Preview/jdbc-drivers", bytes: 6.6 * 1024 * 1024 },
     { id: "maven", label: "Maven repository", path: "Preview/maven-repository", bytes: 0 },
     { id: "audit", label: "Audit database", path: "Preview/audit.db", bytes: 892 * 1024 },
     { id: "access", label: "Access control", path: "Preview/access-control.db", bytes: 44 * 1024 },
-    { id: "config", label: "Configuration", path: "Preview/config.toml", bytes: 3 * 1024 }
+    { id: "config", label: "Configuration", path: "Preview/config.toml", bytes: 3 * 1024 },
+    { id: "logs", label: "Debug logs", path: "Preview/logs", bytes: 128 * 1024 }
   ],
   runtimes: [
     { bundle_id: "00000000-0000-4000-8000-000000000021", display_name: "Oracle JDBC", status: "running", health: "healthy", process_count: 1, memory_bytes: 87.9 * 1024 * 1024, cpu_percent: 0.4 },
@@ -368,6 +370,12 @@ export const api = {
     command<AppSnapshot>("save_server_config", { server }, mockSnapshot),
   saveSettingsConfig: (settings: SettingsConfig, applyAutoStart = false) =>
     command<AppSnapshot>("save_settings_config", { settings, applyAutoStart }, withSettings(settings, applyAutoStart)),
+  logFrontendEvent: (kind: string, message: string) => {
+    // Silently dropped in browser preview mode; there is nothing to persist.
+    if (!isTauri) return Promise.resolve();
+    return invoke<void>("log_frontend_event", { kind, message });
+  },
+  openDebugLogDirectory: () => command<void>("open_debug_log_directory", undefined, undefined),
   exportConnections: async (locale: Locale) => {
     if (!isTauri) {
       throw new Error(formatMessage(previewText.desktopOnly, { name: "export_connections" }));

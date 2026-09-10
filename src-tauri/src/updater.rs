@@ -98,11 +98,23 @@ async fn check_jre_update(app: &AppHandle, force: bool) -> anyhow::Result<Option
         save_state(&state_path, &updater_state)?;
     }
     if checked {
-        if let Some(version) = version.clone() {
-            let _ = app.emit(
-                JRE_UPDATE_AVAILABLE_EVENT,
-                JreUpdateAvailablePayload { version },
-            );
+        match version.clone() {
+            Some(version) => {
+                crate::debug_log::info(
+                    "updater",
+                    format_args!("JRE runtime update available (version={version})"),
+                );
+                let _ = app.emit(
+                    JRE_UPDATE_AVAILABLE_EVENT,
+                    JreUpdateAvailablePayload { version },
+                );
+            }
+            None => {
+                crate::debug_log::info(
+                    "updater",
+                    format_args!("JRE runtime is up to date"),
+                );
+            }
         }
     }
     Ok(version)
@@ -168,7 +180,10 @@ fn compute_delay(state: &UpdaterState) -> Duration {
 pub fn spawn_updater_task(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let Some(state_path) = state_path(&app) else {
-            eprintln!("DataNexa updater: failed to resolve state path; background task exiting");
+            crate::debug_log::error(
+                "updater",
+                format_args!("failed to resolve state path; background task exiting"),
+            );
             return;
         };
 
@@ -214,13 +229,23 @@ pub fn spawn_updater_task(app: AppHandle) {
             let jre_result =
                 check_jre_if_due_locked(&app, state.inner(), &mut next_state, false).await;
             if let Err(error) = &jre_result {
-                eprintln!("DataNexa JRE update check failed: {error}");
+                crate::debug_log::error(
+                    "updater",
+                    format_args!("JRE update check failed: {error}"),
+                );
             }
 
             if let Some(Ok(update)) = &outcome {
                 next_state.last_check_at = Some(Utc::now());
                 match update {
                     Some(version) => {
+                        crate::debug_log::info(
+                            "updater",
+                            format_args!(
+                                "update available (current={}, available={version})",
+                                current_version
+                            ),
+                        );
                         next_state.available_version = Some(version.clone());
                         next_state.available_for_version = Some(current_version.clone());
                         let _ = app.emit(
@@ -232,18 +257,25 @@ pub fn spawn_updater_task(app: AppHandle) {
                         );
                     }
                     None => {
+                        crate::debug_log::info(
+                            "updater",
+                            format_args!("update check completed: up to date ({current_version})"),
+                        );
                         next_state.available_version = None;
                         next_state.available_for_version = None;
                     }
                 }
             } else if let Some(Err(error)) = &outcome {
                 next_state.last_check_at = Some(Utc::now());
-                eprintln!("DataNexa updater check failed: {error}");
+                crate::debug_log::error("updater", format_args!("update check failed: {error}"));
             }
 
             if jre_result.is_ok() || outcome.is_some() {
                 if let Err(error) = save_state(&state_path, &next_state) {
-                    eprintln!("DataNexa updater: failed to persist state: {error}");
+                    crate::debug_log::error(
+                        "updater",
+                        format_args!("failed to persist state: {error}"),
+                    );
                     break;
                 }
             }
@@ -280,6 +312,19 @@ pub async fn check_if_due(app: AppHandle) -> anyhow::Result<Option<String>> {
         state.last_check_at = Some(Utc::now());
         match result {
             Ok(update) => {
+                match &update {
+                    Some(update) => crate::debug_log::info(
+                        "updater",
+                        format_args!(
+                            "update available (current={}, available={})",
+                            current_version, update.version
+                        ),
+                    ),
+                    None => crate::debug_log::info(
+                        "updater",
+                        format_args!("update check completed: up to date ({current_version})"),
+                    ),
+                }
                 state.available_version = update.as_ref().map(|update| update.version.clone());
                 state.available_for_version = update.as_ref().map(|_| current_version);
                 Ok(update.map(|update| update.version))
@@ -292,13 +337,28 @@ pub async fn check_if_due(app: AppHandle) -> anyhow::Result<Option<String>> {
 
     let jre_result = check_jre_if_due_locked(&app, app_state.inner(), &mut state, false).await;
     if let Err(error) = &jre_result {
-        eprintln!("DataNexa JRE update check failed: {error}");
+        crate::debug_log::error("updater", format_args!("JRE update check failed: {error}"));
     }
-    if let Ok((Some(version), true)) = jre_result {
-        let _ = app.emit(
-            JRE_UPDATE_AVAILABLE_EVENT,
-            JreUpdateAvailablePayload { version },
-        );
+    match &jre_result {
+        Ok((Some(version), true)) => {
+            crate::debug_log::info(
+                "updater",
+                format_args!("JRE runtime update available (version={version})"),
+            );
+            let _ = app.emit(
+                JRE_UPDATE_AVAILABLE_EVENT,
+                JreUpdateAvailablePayload {
+                    version: version.clone(),
+                },
+            );
+        }
+        Ok((None, true)) => {
+            crate::debug_log::info(
+                "updater",
+                format_args!("JRE runtime is up to date"),
+            );
+        }
+        _ => {}
     }
     save_state(&state_path, &state)?;
     app_result

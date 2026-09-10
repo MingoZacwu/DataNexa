@@ -56,6 +56,11 @@ pub struct SettingsConfig {
     pub auto_circuit_breaker_window_minutes: u32,
     #[serde(default = "default_circuit_breaker_threshold")]
     pub auto_circuit_breaker_threshold: u32,
+    // Runtime debug logging writes sanitized internal diagnostics to a
+    // rotating file under the app log directory. Disabled by default so no
+    // log files are created for regular usage.
+    #[serde(default)]
+    pub debug_logging_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,6 +228,7 @@ impl Default for SettingsConfig {
             auto_circuit_breaker: false,
             auto_circuit_breaker_window_minutes: default_circuit_breaker_window_minutes(),
             auto_circuit_breaker_threshold: default_circuit_breaker_threshold(),
+            debug_logging_enabled: false,
         }
     }
 }

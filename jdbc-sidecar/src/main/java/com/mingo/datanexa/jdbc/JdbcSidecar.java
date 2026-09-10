@@ -146,6 +146,9 @@ public final class JdbcSidecar {
         if (jdbcUrl.trim().isEmpty() || !jdbcUrl.startsWith("jdbc:")) {
             throw new SidecarException("invalid_url", "A JDBC URL beginning with jdbc: is required");
         }
+        // The cached shared connection would answer instantly and hide both real
+        // connect latency and dead connections, so a test always reconnects.
+        closeSharedConnection();
         Connection connection = openConnection(request);
         DatabaseMetaData metadata = connection.getMetaData();
         ObjectNode response = success(requestId);

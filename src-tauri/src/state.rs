@@ -31,7 +31,20 @@ pub struct AppState {
 impl AppState {
     pub async fn new(app: tauri::AppHandle) -> anyhow::Result<Self> {
         let store = ConfigStore::new(&app)?;
-        let mut config = store.load()?;
+        // Startup failures are exactly when the debug log is needed, so a
+        // broken config force-enables logging even though the user preference
+        // cannot be read at this point.
+        let mut config = match store.load() {
+            Ok(config) => config,
+            Err(error) => {
+                crate::debug_log::set_enabled(true);
+                crate::debug_log::error(
+                    "startup",
+                    format_args!("failed to load configuration: {error}"),
+                );
+                return Err(error);
+            }
+        };
         let audit = AuditLogger::new(&app)?;
         let access = AccessControlStore::new(&app)?;
         access.initialize(&store, &mut config).await?;

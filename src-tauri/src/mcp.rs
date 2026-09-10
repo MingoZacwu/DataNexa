@@ -197,7 +197,10 @@ async fn activate_listener(
             .await;
 
         if let Err(error) = result {
-            eprintln!("DataNexa MCP server stopped with error: {error}");
+            crate::debug_log::error(
+                "mcp",
+                format_args!("MCP server stopped with error: {error}"),
+            );
         }
         let mut runtime = cleanup_app.mcp.write().await;
         if runtime.generation == generation {
@@ -213,6 +216,13 @@ async fn activate_listener(
     runtime.bound_endpoint = Some(format!("http://{}:{}/mcp", config.host, local_addr.port()));
     runtime.shutdown = Some(shutdown_tx);
     runtime.task = Some(task);
+    crate::debug_log::info(
+        "mcp",
+        format_args!(
+            "MCP server started (endpoint=http://{}:{}/mcp)",
+            config.host, local_addr.port()
+        ),
+    );
     Ok(status_from(config, &runtime))
 }
 
@@ -237,6 +247,7 @@ pub async fn stop(app: Arc<AppState>) -> ServerStatus {
 }
 
 async fn stop_locked(app: &Arc<AppState>) {
+    crate::debug_log::info("mcp", format_args!("MCP server stopping"));
     app.cancel_mcp_requests().await;
     app.db.close_all().await;
     let config = app.config.read().await.server.clone();
@@ -575,6 +586,11 @@ async fn validate_request(app: Arc<AppState>, headers: &HeaderMap) -> Result<Aud
                 identity.denied_tools,
             ));
         }
+        // Never log the supplied token value itself, only the outcome.
+        crate::debug_log::warn(
+            "mcp_auth",
+            format_args!("MCP request rejected: missing or invalid bearer token"),
+        );
         return Err((StatusCode::UNAUTHORIZED, "Missing or invalid bearer token").into_response());
     }
     Ok(AuditActor::unauthenticated())
@@ -720,7 +736,10 @@ fn emit_mcp_tool_call_completed(app: &Arc<AppState>, failed: bool) {
         MCP_TOOL_CALL_COMPLETED_EVENT,
         McpToolCallCompletedPayload { failed },
     ) {
-        eprintln!("failed to emit MCP tool-call completion event: {error}");
+        crate::debug_log::warn(
+            "mcp",
+            format_args!("failed to emit MCP tool-call completion event: {error}"),
+        );
     }
 }
 
@@ -956,6 +975,19 @@ async fn call_tool_audited(
         } else {
             AuditStatus::Error
         };
+        // Non-denied failures point at real backend problems (connectivity,
+        // SQL errors, sidecar faults) that users report without console
+        // access, so mirror them into the debug log with timing context.
+        if !matches!(status, AuditStatus::Denied) {
+            crate::debug_log::error(
+                "mcp_tool",
+                format_args!(
+                    "tool call failed (tool={name}, elapsed={}ms, error={})",
+                    started.elapsed().as_millis(),
+                    sanitize_error(error)
+                ),
+            );
+        }
         app.audit
             .record_with_actor(
                 actor,

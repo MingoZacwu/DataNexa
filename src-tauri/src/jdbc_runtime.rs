@@ -126,19 +126,55 @@ pub async fn check_update(app: &AppHandle) -> anyhow::Result<Option<RuntimeUpdat
 
 pub async fn install(app: &AppHandle) -> anyhow::Result<InstalledRuntime> {
     emit_progress(app, "preparing", 0, None, Some(0));
-    let manifest = fetch_manifest().await?;
+    crate::debug_log::info(
+        "jre_runtime",
+        format_args!("JRE runtime install started (target={})", target()),
+    );
+    let manifest = match fetch_manifest().await {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            crate::debug_log::error(
+                "jre_runtime",
+                format_args!("JRE manifest fetch failed: {error}"),
+            );
+            return Err(error);
+        }
+    };
     let target = target();
-    let artifact = manifest
-        .artifacts
-        .get(target)
-        .ok_or_else(|| anyhow::anyhow!("DataNexa JRE is not available for {target}"))?;
-    validate_artifact(artifact)?;
+    let artifact = match manifest.artifacts.get(target) {
+        Some(artifact) => artifact,
+        None => {
+            let error = anyhow::anyhow!("DataNexa JRE is not available for {target}");
+            crate::debug_log::error("jre_runtime", format_args!("{error}"));
+            return Err(error);
+        }
+    };
+    if let Err(error) = validate_artifact(artifact) {
+        crate::debug_log::error(
+            "jre_runtime",
+            format_args!("JRE artifact validation failed: {error}"),
+        );
+        return Err(error);
+    }
 
     let base = runtime_base(app)?;
     let target_dir = base.join(target);
     fs::create_dir_all(&target_dir)?;
     let temporary = target_dir.join(format!(".{}.part", uuid::Uuid::new_v4()));
-    download_archive(app, &artifact.url, &temporary, artifact.size).await?;
+    crate::debug_log::info(
+        "jre_runtime",
+        format_args!(
+            "JRE archive download started (url={}, expected_size={} bytes, version={})",
+            artifact.url, artifact.size, manifest.java_version
+        ),
+    );
+    if let Err(error) = download_archive(app, &artifact.url, &temporary, artifact.size).await {
+        crate::debug_log::error(
+            "jre_runtime",
+            format_args!("JRE archive download failed: {error}"),
+        );
+        return Err(error);
+    }
     emit_progress(
         app,
         "verifying",
@@ -148,6 +184,13 @@ pub async fn install(app: &AppHandle) -> anyhow::Result<InstalledRuntime> {
     );
     let actual_hash = sha256_file(&temporary)?;
     if !actual_hash.eq_ignore_ascii_case(&artifact.sha256) {
+        crate::debug_log::error(
+            "jre_runtime",
+            format_args!(
+                "JRE archive SHA-256 mismatch (expected={}, actual={})",
+                artifact.sha256, actual_hash
+            ),
+        );
         let _ = fs::remove_file(&temporary);
         return Err(anyhow::anyhow!(
             "Downloaded DataNexa JRE failed SHA-256 verification"
@@ -160,7 +203,13 @@ pub async fn install(app: &AppHandle) -> anyhow::Result<InstalledRuntime> {
     emit_progress(app, "extracting", artifact.size, Some(artifact.size), None);
     let extract_result = extract_archive(&temporary, &staging);
     let _ = fs::remove_file(&temporary);
-    extract_result?;
+    if let Err(error) = extract_result {
+        crate::debug_log::error(
+            "jre_runtime",
+            format_args!("JRE archive extraction failed: {error}"),
+        );
+        return Err(error);
+    }
 
     let final_dir = target_dir.join(&runtime_dir);
     if final_dir.exists() {
@@ -196,10 +245,21 @@ pub async fn install(app: &AppHandle) -> anyhow::Result<InstalledRuntime> {
         Some(artifact.size),
         Some(100),
     );
+    crate::debug_log::info(
+        "jre_runtime",
+        format_args!(
+            "JRE runtime installed (version={}, target={})",
+            metadata.version, metadata.target
+        ),
+    );
     Ok(metadata)
 }
 
 pub fn remove(app: &AppHandle) -> anyhow::Result<()> {
+    crate::debug_log::info(
+        "jre_runtime",
+        format_args!("JRE runtime removal started (target={})", target()),
+    );
     let target_dir = runtime_base(app)?.join(target());
     if target_dir.exists() {
         fs::remove_dir_all(&target_dir)?;
@@ -208,6 +268,7 @@ pub fn remove(app: &AppHandle) -> anyhow::Result<()> {
     if base.exists() && fs::read_dir(&base)?.next().is_none() {
         let _ = fs::remove_dir(&base);
     }
+    crate::debug_log::info("jre_runtime", format_args!("JRE runtime removed"));
     Ok(())
 }
 

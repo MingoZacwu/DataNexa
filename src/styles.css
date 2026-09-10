@@ -16,6 +16,7 @@
   --amber: #f59e0b;
   --red: #e5484d;
   --violet: #7c3aed;
+  --cyan: #0891b2;
   --card-radius: 8px;
   --control-height: 36px;
   --sidebar-content-width: 192px;
@@ -37,6 +38,7 @@
   --amber: #fbbf24;
   --red: #fb7185;
   --violet: #c4b5fd;
+  --cyan: #22d3ee;
   --shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
   --soft-shadow: 0 14px 38px rgba(0, 0, 0, 0.20);
 }
@@ -1168,6 +1170,8 @@ p {
 .storage-breakdown-dot.access { background: var(--green); }
 .storage-usage-segment.config,
 .storage-breakdown-dot.config { background: var(--blue-2); }
+.storage-usage-segment.logs,
+.storage-breakdown-dot.logs { background: var(--cyan); }
 .storage-usage-segment.other,
 .storage-breakdown-dot.other { background: var(--muted); }
 
@@ -2769,6 +2773,8 @@ pre {
   background: rgba(37, 99, 235, 0.08);
   font-size: 13px;
   font-weight: 700;
+  cursor: default;
+  user-select: none;
 }
 
 .about-hero p {
@@ -2782,6 +2788,29 @@ pre {
   margin-top: 22px;
   padding-top: 16px;
   border-top: 1px solid var(--line);
+}
+
+.debug-log-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.debug-log-folder-btn {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.debug-log-folder-btn:hover {
+  color: var(--blue);
+  background: rgba(37, 99, 235, 0.08);
 }
 
 .about-footer {
@@ -3451,6 +3480,10 @@ pre {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+
+.about-update-switch-row + .about-update-switch-row {
+  margin-top: 8px;
 }
 
 .about-update-switch-row > span {

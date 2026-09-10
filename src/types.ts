@@ -39,6 +39,7 @@ export interface SettingsConfig {
   auto_circuit_breaker: boolean;
   auto_circuit_breaker_window_minutes: number;
   auto_circuit_breaker_threshold: number;
+  debug_logging_enabled: boolean;
 }
 
 export interface ToolConfig {
@@ -223,6 +224,7 @@ export interface JdbcStorageStatus {
 export interface JdbcCacheSelection {
   maven: boolean;
   old_runtimes: boolean;
+  debug_logs: boolean;
 }
 
 export interface ConnectionDiagnostics {
