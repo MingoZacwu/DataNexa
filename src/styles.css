@@ -1369,6 +1369,23 @@ p {
   white-space: nowrap;
 }
 
+.jdbc-cache-clean {
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+  padding: 30px 12px 22px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.jdbc-cache-clean svg {
+  color: var(--green);
+}
+
+.jdbc-cache-clean p {
+  font-size: 13px;
+}
+
 .jdbc-cache-total {
   display: flex;
   justify-content: space-between;

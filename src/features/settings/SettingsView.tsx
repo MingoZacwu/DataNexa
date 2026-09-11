@@ -1360,6 +1360,7 @@ function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache, onOpe
   })) ?? [];
   const storageBreakdownById = new Map(storageBreakdown.map((item) => [item.id, item]));
   const debugLogBytes = status?.items.find((item) => item.id === "logs")?.bytes ?? 0;
+  const cacheAllClean = !status?.maven_cache_bytes && !status?.managed_runtime_old_bytes && !debugLogBytes;
   const cpuHistoryMax = Math.max(1, ...cpuHistory);
 
   return (
@@ -1432,17 +1433,26 @@ function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache, onOpe
                     </Dialog.Close>
                   </div>
                   <div className="jdbc-cache-options">
-                    <CacheOption label={t.settings.clearMavenCacheOption} size={status.maven_cache_bytes} checked={cacheSelection.maven} disabled={status.maven_cache_bytes === 0} onChange={(checked) => setCacheSelection((value) => ({ ...value, maven: checked }))} />
-                    <CacheOption label={t.settings.clearOldRuntimeOption} size={status.managed_runtime_old_bytes} checked={cacheSelection.old_runtimes} disabled={status.managed_runtime_old_bytes === 0} onChange={(checked) => setCacheSelection((value) => ({ ...value, old_runtimes: checked }))} />
-                    <CacheOption label={t.settings.clearDebugLogsOption} size={debugLogBytes} checked={cacheSelection.debug_logs} disabled={debugLogBytes === 0 || debugLoggingEnabled} onChange={(checked) => setCacheSelection((value) => ({ ...value, debug_logs: checked }))} />
-                    <div className="jdbc-cache-total"><span>{t.settings.selectedSpace}</span><strong>{formatBytes((cacheSelection.maven ? status.maven_cache_bytes : 0) + (cacheSelection.old_runtimes ? status.managed_runtime_old_bytes : 0) + (cacheSelection.debug_logs ? debugLogBytes : 0))}</strong></div>
+                    {cacheAllClean ? (
+                      <div className="jdbc-cache-clean">
+                        <MopSparklesIcon size={48} />
+                        <p>{t.settings.cacheAllClean}</p>
+                      </div>
+                    ) : <>
+                      {status.maven_cache_bytes > 0 && <CacheOption label={t.settings.clearMavenCacheOption} size={status.maven_cache_bytes} checked={cacheSelection.maven} onChange={(checked) => setCacheSelection((value) => ({ ...value, maven: checked }))} />}
+                      {status.managed_runtime_old_bytes > 0 && <CacheOption label={t.settings.clearOldRuntimeOption} size={status.managed_runtime_old_bytes} checked={cacheSelection.old_runtimes} onChange={(checked) => setCacheSelection((value) => ({ ...value, old_runtimes: checked }))} />}
+                      {debugLogBytes > 0 && <CacheOption label={t.settings.clearDebugLogsOption} size={debugLogBytes} checked={cacheSelection.debug_logs} disabled={debugLoggingEnabled} onChange={(checked) => setCacheSelection((value) => ({ ...value, debug_logs: checked }))} />}
+                      <div className="jdbc-cache-total"><span>{t.settings.selectedSpace}</span><strong>{formatBytes((cacheSelection.maven ? status.maven_cache_bytes : 0) + (cacheSelection.old_runtimes ? status.managed_runtime_old_bytes : 0) + (cacheSelection.debug_logs ? debugLogBytes : 0))}</strong></div>
+                    </>}
                   </div>
                   <footer>
                     <Dialog.Close asChild><button type="button" className="button ghost" disabled={busy}>{t.common.cancel}</button></Dialog.Close>
-                    <button type="button" className="button stop" disabled={busy || (!cacheSelection.maven && !cacheSelection.old_runtimes && !cacheSelection.debug_logs)} onClick={() => void onClearJdbcCache(cacheSelection).then((cleared) => cleared && setMavenCacheDialogOpen(false))}>
-                      <Trash2 size={16} />
-                      {t.settings.confirmClearJdbcCache}
-                    </button>
+                    {!cacheAllClean && (
+                      <button type="button" className="button stop" disabled={busy || (!cacheSelection.maven && !cacheSelection.old_runtimes && !cacheSelection.debug_logs)} onClick={() => void onClearJdbcCache(cacheSelection).then((cleared) => cleared && setMavenCacheDialogOpen(false))}>
+                        <Trash2 size={16} />
+                        {t.settings.confirmClearJdbcCache}
+                      </button>
+                    )}
                   </footer>
                 </Dialog.Content>
               </Dialog.Portal>
@@ -1466,7 +1476,24 @@ function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache, onOpe
   );
 }
 
-function CacheOption({ label, size, checked, disabled, onChange }: { label: string; size: number; checked: boolean; disabled: boolean; onChange: (checked: boolean) => void }) {
+function MopSparklesIcon({ size = 24 }: { size?: number }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10 22a3 3 0 01-3-3" />
+      <path d="M10 22c2.761 0 5-1.79 5-4-4.42 0-4.08-5-8.5-5a4.501 4.501 0 000 9z" />
+      <path d="M10 3H8" />
+      <path d="M12.5 11.5 22 2" />
+      <path d="M20 13v4" />
+      <path d="M22 15h-4" />
+      <path d="M4 5v4" />
+      <path d="M6 7H2" />
+      <path d="m6.98 13.02 2.665-2.664a1.21 1.21 0 011.71 0l2.29 2.288a1.21 1.21 0 010 1.712l-2.088 2.087" />
+      <path d="M9 2v2" />
+    </svg>
+  );
+}
+
+function CacheOption({ label, size, checked, disabled = false, onChange }: { label: string; size: number; checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void }) {
   return (
     <label className={clsx("jdbc-cache-option", disabled && "disabled")}>
       <input type="checkbox" checked={checked && !disabled} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />

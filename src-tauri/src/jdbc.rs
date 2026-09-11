@@ -704,10 +704,22 @@ impl JdbcManager {
         let drivers = self.list_drivers()?;
         let runtimes = self.collect_driver_runtime_info(&drivers).await;
         let maven_cache_bytes = path_size_bytes(&storage_root.join("maven-repository"));
-        let managed_runtime_bytes = path_size_bytes(&runtime_path);
-        let managed_runtime_current_bytes = current_runtime_path
-            .as_ref()
-            .map(|path| path_size_bytes(path))
+        // Old runtime bytes mirror what clear_jdbc_cache removes: every entry
+        // under the managed runtime directory except the current.json
+        // metadata and the runtime directory it points to.
+        let managed_runtime_old_bytes = fs::read_dir(&runtime_path)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|entry| {
+                        entry.file_name() != "current.json"
+                            && !current_runtime_path
+                                .as_ref()
+                                .is_some_and(|current| entry.path() == current.as_path())
+                    })
+                    .map(|entry| path_size_bytes(&entry.path()))
+                    .sum()
+            })
             .unwrap_or(0);
         Ok(JdbcStorageStatus {
             storage_root: storage_root.to_string_lossy().to_string(),
@@ -715,8 +727,7 @@ impl JdbcManager {
             items,
             runtimes,
             maven_cache_bytes,
-            managed_runtime_old_bytes: managed_runtime_bytes
-                .saturating_sub(managed_runtime_current_bytes),
+            managed_runtime_old_bytes,
         })
     }
 
