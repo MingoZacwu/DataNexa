@@ -22,6 +22,16 @@ DataNexa is a local database MCP service. It provides AI agents with a unified, 
 
 DataNexa natively supports SQLite, MySQL, and PostgreSQL, and connects to more databases through JDBC support (technical preview). Its desktop application is built with Tauri, React, and Rust.
 
+## Why DataNexa
+
+Connecting an AI agent to a database is not the hard part; keeping it controlled and trustworthy is. DataNexa was built around three simple goals:
+
+**One MCP configuration, many databases.** As databases multiply, configuring a separate MCP server for each one quickly becomes tedious and hard to maintain. DataNexa aggregates all connections behind a single local MCP service: the agent side needs only one MCP configuration to access as many enabled databases as needed.
+
+**A first line of defense when no read-only account is available.** Ideally, an agent should always query data through a read-only database account. In reality, developers often do not have a read-only account for enterprise data. DataNexa acts as a gateway in front of the database: every statement is validated against the SQL syntax tree and rejected unless it is read-only, with additional limits on returned rows, execution time, and connections — narrowing the risk surface as much as possible when account permissions cannot be changed.
+
+**See exactly what the AI did to your database.** The biggest unease about handing a database to an AI is not knowing what it actually executed. DataNexa keeps complete audit records locally: which SQL statement ran, when, through which tool, and what came back — so every data access is transparent and traceable.
+
 ## Features
 
 - Manage read-only SQLite, MySQL, and PostgreSQL connections in one place
