@@ -1,0 +1,63 @@
+name: "💡 建议反馈 / Feature Request"
+description: "提出新功能或改进建议 / Suggest a new feature or improvement"
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢提出建议!提交前请先[搜索已有 issue](https://github.com/MingoZacwu/DataNexa/issues?q=is%3Aissue),避免重复提交。
+
+        Thanks for the suggestion! Please [search existing issues](https://github.com/MingoZacwu/DataNexa/issues?q=is%3Aissue) first to avoid duplicates.
+
+  - type: input
+    id: summary
+    attributes:
+      label: 功能简述 / Feature Summary
+      description: 用一句话概括你想要的功能或改进。Summarize the feature or improvement you want in one sentence.
+      placeholder: "例如:希望支持导出查询结果为 CSV / e.g. Support exporting query results as CSV"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你想解决什么问题 / Problem or Use Case
+      description: "描述你遇到的场景:你在做什么?现在的用法哪里不方便?Describe your scenario: what are you trying to do, and what is inconvenient about it today?"
+      placeholder: |
+        我在使用 DataNexa 时经常需要... / I often need to... when using DataNexa
+        但目前只能... / but currently I can only...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: 期望的解决方案 / Proposed Solution
+      description: 你希望 DataNexa 怎么做?越具体越好(交互方式、期望的结果等)。How would you like DataNexa to behave? The more specific, the better (interaction, expected result, etc.).
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 备选方案或参考 / Alternatives or References(可选 / optional)
+      description: 你考虑过的其他做法,或其他工具的类似功能(欢迎附链接、截图)。Other approaches you have considered, or similar features in other tools (links and screenshots welcome).
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 截图或示意 / Screenshots or Mockups(可选 / optional)
+      description: 直接把图片拖拽或粘贴到下方输入框。Drag and drop or paste images into the box below.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: sensitive-info
+    attributes:
+      label: 敏感信息确认 / Sensitive Information Check
+      description: 即使是建议,也请勿在示例、配置或截图中包含真实连接信息。Even in suggestions, please do not include real connection details in examples, configs, or screenshots.
+      options:
+        - label: 我已确认以上全部内容(描述、示例、截图)不包含数据库主机地址、端口、用户名、密码、连接字符串或其他敏感信息。/ I confirm that everything submitted above (description, examples, screenshots) contains no sensitive information such as database hosts, ports, usernames, passwords, connection strings, or other secrets.
+          required: true

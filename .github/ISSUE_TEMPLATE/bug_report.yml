@@ -1,0 +1,117 @@
+name: "🐛 错误与异常反馈 / Bug Report"
+description: "报告运行错误、崩溃或与预期不符的行为 / Report an error, crash, or unexpected behavior"
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈问题!提交前请先[搜索已有 issue](https://github.com/MingoZacwu/DataNexa/issues?q=is%3Aissue),避免重复提交。
+
+        Thanks for reporting! Please [search existing issues](https://github.com/MingoZacwu/DataNexa/issues?q=is%3Aissue) first to avoid duplicates.
+
+  - type: input
+    id: summary
+    attributes:
+      label: 问题简述 / Issue Summary
+      description: 用一句话概括你遇到的问题 / Summarize the issue in one sentence.
+      placeholder: "例如:保存 MySQL 连接后立即断开 / e.g. Connection to MySQL drops right after saving"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: 版本号 / Version
+      description: 可在"设置 → 关于"中查看。You can find the version in Settings → About.
+      placeholder: "例如:v0.8.0 / e.g. v0.8.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: 操作系统 / Operating System
+      description: DataNexa 目前提供 Windows 和 macOS 的原生版本。DataNexa currently ships native builds for Windows and macOS only.
+      options:
+        - "Windows 11"
+        - "Windows 10"
+        - "Windows (其他版本 / other versions)"
+        - "macOS (Apple Silicon)"
+        - "macOS (Intel)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: database
+    attributes:
+      label: 涉及的数据源类型 / Database Type
+      description: 可选。问题与哪类数据源相关?与数据源无关时选择最后一项。Optional. Which database type does this involve? Pick the last option if it is not database-related.
+      options:
+        - "MySQL"
+        - "PostgreSQL"
+        - "SQLite"
+        - "JDBC 驱动 / JDBC driver"
+        - "不涉及数据源 / Not database-related"
+    validations:
+      required: false
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 问题详细说明 / Details
+      description: 实际发生了什么?你期望发生什么?如有报错,请粘贴完整的错误信息。What happened? What did you expect? Paste the full error message if there is one.
+      placeholder: |
+        实际行为 / What happened:
+
+        期望行为 / What you expected:
+
+        完整报错信息 / Full error message:
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤 / Steps to Reproduce
+      description: 按顺序描述如何从头触发这个问题。Describe step by step how to trigger the issue from scratch.
+      placeholder: |
+        1. 打开 / Open...
+        2. 点击 / Click...
+        3. 出现 / Then...
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 截图或录屏 / Screenshots or Recording(可选 / optional)
+      description: 直接把图片拖拽或粘贴到下方输入框。Drag and drop or paste images into the box below.
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志文件 / Log File(可选 / optional)
+      description: |
+        运行日志自 **v0.8.0** 起提供;更早版本请填写"不适用 / N/A"。Runtime logs are available since **v0.8.0**; for earlier versions, fill in "N/A".
+
+        抓取步骤 / How to collect logs:
+        1. 进入"设置 → 关于",连续点按版本号区域 5 次,打开隐藏的调试选项 / Go to **Settings → About** and tap the version number 5 times to reveal the hidden debug options
+        2. 开启"启用调试日志" / Turn on **Enable debug logging**
+        3. 重新执行复现步骤 / Reproduce the issue
+        4. 回到设置,点击"打开日志文件夹",将 `debug.log`(或相关片段)拖拽或粘贴到下方输入框 / Back in Settings, click **Open log folder** and drag `debug.log` (or the relevant part) into the box below
+
+        日志内容会自动脱敏,但仍请在提交前确认其中不含敏感信息。Log content is sanitized automatically, but please double-check that it contains no sensitive information.
+      placeholder: |
+        在此粘贴相关日志片段,或直接拖拽 debug.log 文件 / Paste the relevant log lines here, or drag the debug.log file into this box
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: sensitive-info
+    attributes:
+      label: 敏感信息确认 / Sensitive Information Check
+      options:
+        - label: 我已确认以上全部内容(说明、截图、日志)不包含数据库主机地址、端口、用户名、密码、连接字符串或其他敏感信息。/ I confirm that everything submitted above (details, screenshots, logs) contains no sensitive information such as database hosts, ports, usernames, passwords, connection strings, or other secrets.
+          required: true
