@@ -20,17 +20,18 @@
 
 DataNexa 是一个运行在本机的数据库 MCP 服务。它为 AI Agent 提供统一、受控且可审计的数据访问入口，在执行查询前应用只读策略，并对返回行数、执行时间和连接数量进行限制。
 
-项目目前支持 SQLite、MySQL 和 PostgreSQL，桌面端基于 Tauri、React 与 Rust 构建。
+DataNexa 原生支持 SQLite、MySQL 和 PostgreSQL，并通过 JDBC 支持(技术预览)连接更多数据库。桌面端基于 Tauri、React 与 Rust 构建。
 
 ## 功能特性
 
 - 统一管理 SQLite、MySQL 和 PostgreSQL 只读连接
+- 通过 JDBC 支持(技术预览)连接其他数据库：从 Maven 安装 JDBC 驱动并使用 JDBC URL 建立连接，同样受只读策略与审计约束
 - 提供表结构发现、字段描述、数据采样、只读 SQL 和查询计划等 MCP 工具
 - 基于 SQL 语法树校验查询，限制为只读语句
-- 支持 Bearer Token 鉴权和手动轮换
+- 支持 Bearer Token 鉴权、手动轮换与访问令牌自动熔断
 - 数据库密码保存到操作系统凭证库，不写入常规配置文件
 - 支持最大返回行数、查询超时和连接池上限
-- 保留本地审计记录，并可对 SQL 字面量进行脱敏
+- 保留本地审计记录，支持按保存天数自动清理，并可对 SQL 字面量进行脱敏
 - 提供连接诊断、工具开关、紧急禁用和连接导入/导出
 - 支持简体中文、英文以及浅色/深色主题
 
@@ -57,6 +58,7 @@ DataNexa 是一个运行在本机的数据库 MCP 服务。它为 AI Agent 提�
 - [Node.js 20](https://nodejs.org/) 或更高版本
 - [pnpm 9](https://pnpm.io/)
 - [Rust stable](https://www.rust-lang.org/tools/install)
+- [Java SE 21 (JDK)](https://adoptium.net/) 和 [Maven 3.9](https://maven.apache.org/)，用于构建 JDBC sidecar
 - Tauri 2 所需的系统依赖
 
 各平台的系统依赖不同，完整说明见 [Tauri Prerequisites](https://v2.tauri.app/start/prerequisites/)：
@@ -78,10 +80,13 @@ pnpm install --frozen-lockfile
 ### 本地开发
 
 ```bash
+pnpm run build:jdbc-sidecar
 pnpm run dev:app
 ```
 
-该命令会启动 Vite 开发服务，并以 Tauri 桌面窗口运行应用。
+第一条命令构建 JDBC sidecar JAR(首次运行或 sidecar 代码变更后需要执行)。第二条命令会启动 Vite 开发服务，并以 Tauri 桌面窗口运行应用。
+
+如需在本地开发中使用 JDBC 功能，还需要一个 Java 运行时：可以在应用的设置页下载 DataNexa 托管运行时，或选择本机已安装的外部 Java 运行时。
 
 ### 编译可执行文件
 
@@ -89,7 +94,7 @@ pnpm run dev:app
 pnpm run build:portable
 ```
 
-编译结果位于 `src-tauri/target/release/`。Windows 下通常为 `datanexa.exe`，macOS 和 Linux 下为对应平台的 `datanexa` 可执行文件。
+该命令会先自动构建 JDBC sidecar(需要 JDK 和 Maven)，再编译应用。编译结果位于 `src-tauri/target/release/`。Windows 下通常为 `datanexa.exe`，macOS 和 Linux 下为对应平台的 `datanexa` 可执行文件。
 
 ### 构建安装包
 
@@ -97,11 +102,13 @@ pnpm run build:portable
 pnpm run build:installer
 ```
 
-安装包及平台相关产物位于：
+该命令同样会先自动构建 JDBC sidecar。安装包及平台相关产物位于：
 
 ```text
 src-tauri/target/release/bundle/
 ```
+
+安装包不内置 Java 运行时。JDBC 功能首次使用时，可在应用设置中下载 DataNexa 托管运行时，或选择本机已有的外部 Java 运行时。
 
 仅需检查前端类型和构建结果时，可运行：
 
@@ -127,7 +134,11 @@ pnpm run build
 
 ## 参与贡献
 
-欢迎通过 [Issues](https://github.com/MingoZacwu/DataNexa/issues) 提交问题和建议，也欢迎提交 Pull Request。提交代码前，请确保前端构建、Rust 格式检查、测试和 Clippy 检查均能通过：
+欢迎通过 [Issues](https://github.com/MingoZacwu/DataNexa/issues) 提交问题和建议，也欢迎提交 Pull Request。提交 Issue 时，请尽量附上问题的复现步骤与环境信息(操作系统、数据库类型与版本、驱动名称与版本)。
+
+如需协助定位问题，可以在“设置 → 关于”页面连续点按版本号区域 5 次，打开隐藏的调试日志选项；开启后复现问题，再在设置中打开日志文件夹获取日志文件。日志内容已经过脱敏处理，不会记录明文凭据，随 Issue 一并提交可以帮助我们更快定位问题。
+
+提交代码前，请确保前端构建、Rust 格式检查、测试和 Clippy 检查均能通过：
 
 ```bash
 pnpm run build

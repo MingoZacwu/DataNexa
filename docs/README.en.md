@@ -20,17 +20,18 @@
 
 DataNexa is a local database MCP service. It provides AI agents with a unified, controlled, and auditable data access gateway, applying read-only policies before queries are executed and enforcing limits on returned rows, execution time, and connection count.
 
-DataNexa currently supports SQLite, MySQL, and PostgreSQL. Its desktop application is built with Tauri, React, and Rust.
+DataNexa natively supports SQLite, MySQL, and PostgreSQL, and connects to more databases through JDBC support (technical preview). Its desktop application is built with Tauri, React, and Rust.
 
 ## Features
 
 - Manage read-only SQLite, MySQL, and PostgreSQL connections in one place
+- Connect to other databases through JDBC support (technical preview): install JDBC drivers from Maven and connect with a JDBC URL, still protected by the read-only policy and auditing
 - Provide MCP tools for schema discovery, column descriptions, data sampling, read-only SQL, and query plans
 - Validate queries against the SQL syntax tree and restrict them to read-only statements
-- Support Bearer token authentication and manual token rotation
+- Support Bearer token authentication, manual token rotation, and an access token auto circuit breaker
 - Store database passwords in the operating system credential vault instead of regular configuration files
 - Enforce limits on returned rows, query execution time, and connection pool size
-- Keep local audit records with optional redaction of SQL literals
+- Keep local audit records with day-based retention and optional redaction of SQL literals
 - Provide connection diagnostics, tool controls, emergency disable, and connection import/export
 - Support Simplified Chinese and English interfaces, as well as light and dark themes
 
@@ -57,6 +58,7 @@ After launching DataNexa for the first time, complete the setup in this order:
 - [Node.js 20](https://nodejs.org/) or later
 - [pnpm 9](https://pnpm.io/)
 - [Rust stable](https://www.rust-lang.org/tools/install)
+- [Java SE 21 (JDK)](https://adoptium.net/) and [Maven 3.9](https://maven.apache.org/) to build the JDBC sidecar
 - System dependencies required by Tauri 2
 
 System dependencies vary by platform. See [Tauri Prerequisites](https://v2.tauri.app/start/prerequisites/) for complete instructions:
@@ -78,10 +80,13 @@ pnpm install --frozen-lockfile
 ### Local Development
 
 ```bash
+pnpm run build:jdbc-sidecar
 pnpm run dev:app
 ```
 
-This command starts the Vite development server and runs the application in a Tauri desktop window.
+The first command builds the JDBC sidecar JAR (required on first run and after sidecar changes). The second command starts the Vite development server and runs the application in a Tauri desktop window.
+
+To use JDBC features during local development, a Java runtime is also required: download the DataNexa managed runtime from the app's settings page, or select an external Java runtime installed on your machine.
 
 ### Build the Executable
 
@@ -89,7 +94,7 @@ This command starts the Vite development server and runs the application in a Ta
 pnpm run build:portable
 ```
 
-The build output is written to `src-tauri/target/release/`. On Windows, the executable is typically named `datanexa.exe`; on macOS and Linux, it is the platform-specific `datanexa` executable.
+This command builds the JDBC sidecar automatically first (requires the JDK and Maven), then compiles the application. The build output is written to `src-tauri/target/release/`. On Windows, the executable is typically named `datanexa.exe`; on macOS and Linux, it is the platform-specific `datanexa` executable.
 
 ### Build an Installer
 
@@ -97,11 +102,13 @@ The build output is written to `src-tauri/target/release/`. On Windows, the exec
 pnpm run build:installer
 ```
 
-Installers and other platform-specific artifacts are written to:
+This command also builds the JDBC sidecar automatically first. Installers and other platform-specific artifacts are written to:
 
 ```text
 src-tauri/target/release/bundle/
 ```
+
+Installers do not bundle a Java runtime. When JDBC is first used, the DataNexa managed runtime can be downloaded from the app's settings, or an existing external Java runtime can be selected.
 
 To check only the frontend types and build output, run:
 
@@ -127,7 +134,11 @@ If you discover a security issue, do not disclose database information, access c
 
 ## Contributing
 
-Issues and suggestions are welcome through [Issues](https://github.com/MingoZacwu/DataNexa/issues), as are pull requests. Before submitting code, make sure the frontend build, Rust formatting check, tests, and Clippy checks all pass:
+Issues and suggestions are welcome through [Issues](https://github.com/MingoZacwu/DataNexa/issues), as are pull requests. When submitting an issue, please include steps to reproduce and details about your environment (operating system, database type and version, and driver name and version).
+
+To help us diagnose problems faster: on the Settings > About page, tap the version number area 5 times to reveal the hidden debug logging option. Enable it, reproduce the problem, then open the log folder from the settings to collect the log file. Log content is sanitized and never records plaintext credentials; attaching it to your issue can help us locate the problem faster.
+
+Before submitting code, make sure the frontend build, Rust formatting check, tests, and Clippy checks all pass:
 
 ```bash
 pnpm run build
