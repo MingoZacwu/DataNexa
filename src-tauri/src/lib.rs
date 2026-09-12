@@ -1,9 +1,13 @@
 mod access_control;
 mod audit;
+mod circuit_breaker;
 mod commands;
 mod config;
 mod db;
+mod debug_log;
 mod i18n;
+mod jdbc;
+mod jdbc_runtime;
 mod mcp;
 mod policy;
 mod startup;
@@ -18,15 +22,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use commands::{
-    check_updates_if_due, clear_audit_events, clear_legacy_audit_log, create_access_token,
-    delete_access_token, delete_connection, diagnose_connection, disable_all_connections,
-    export_connections, get_access_token_secret, get_app_snapshot, hide_main_window,
-    import_connections, minimize_main_window, open_project_homepage, open_project_releases,
-    open_project_site, policy_check, rename_access_token, retry_audit_migration,
-    rotate_access_token, save_server_config, save_settings_config, set_access_token_enabled,
-    set_connection_enabled, set_mcp_tool_enabled, set_token_connection_allowed,
-    set_token_tool_allowed, set_window_material_theme, start_mcp_server, start_window_drag,
-    stop_mcp_server, test_connection, test_connection_input, upsert_connection,
+    check_jdbc_runtime_update, check_jdbc_runtime_update_if_due, check_updates_if_due,
+    clear_audit_events, clear_jdbc_cache, clear_legacy_audit_log, create_access_token,
+    delete_access_token, delete_connection, delete_jdbc_driver, diagnose_connection,
+    disable_all_connections, export_connections, get_access_token_secret, get_app_snapshot,
+    get_jdbc_status, get_jdbc_storage_status, hide_main_window, import_connections,
+    import_jdbc_driver, install_jdbc_driver, install_jdbc_runtime, log_frontend_event,
+    minimize_main_window, open_data_directory, open_debug_log_directory, open_project_homepage,
+    open_project_releases, open_project_site, policy_check, remove_jdbc_runtime,
+    rename_access_token, retry_audit_migration, rotate_access_token, save_server_config,
+    save_settings_config, set_access_token_enabled, set_connection_enabled, set_mcp_tool_enabled,
+    set_token_connection_allowed, set_token_tool_allowed, set_window_material_theme,
+    start_mcp_server, start_window_drag, stop_mcp_server, test_connection, test_connection_input,
+    upsert_connection,
 };
 use i18n::{backend_text, BackendText};
 use state::AppState;
@@ -50,7 +58,12 @@ pub(crate) fn apply_system_material(
     #[cfg(target_os = "windows")]
     {
         if let Err(error) = window_vibrancy::apply_mica(window, dark) {
-            eprintln!("Windows Mica unavailable, using the standard CSS appearance: {error}");
+            debug_log::warn(
+                "window",
+                format_args!(
+                    "Windows Mica unavailable, using the standard CSS appearance: {error}"
+                ),
+            );
             let _ = window_vibrancy::clear_acrylic(window);
             let _ = window.set_shadow(true);
             return Ok(false);
@@ -346,7 +359,12 @@ fn show_main_window(app: &AppHandle) {
         }
 
         if app.get_webview_window("main").is_some() {
-            eprintln!("failed to recreate main window: previous window is still being destroyed");
+            debug_log::error(
+                "window",
+                format_args!(
+                    "failed to recreate main window: previous window is still being destroyed"
+                ),
+            );
             return;
         }
 
@@ -357,24 +375,42 @@ fn show_main_window(app: &AppHandle) {
             .iter()
             .find(|config| config.label == "main")
         else {
-            eprintln!("failed to recreate main window: main window config is missing");
+            debug_log::error(
+                "window",
+                format_args!("failed to recreate main window: main window config is missing"),
+            );
             return;
         };
 
         match WebviewWindowBuilder::from_config(&app, config).and_then(|builder| builder.build()) {
             Ok(window) => {
                 if let Err(error) = apply_system_material(&window, None) {
-                    eprintln!("failed to apply system window material: {error}");
+                    debug_log::error(
+                        "window",
+                        format_args!("failed to apply system window material: {error}"),
+                    );
                 }
                 window_state
                     .lightweight_active
                     .store(false, Ordering::Release);
+                debug_log::info(
+                    "window",
+                    format_args!("main window recreated from lightweight mode"),
+                );
                 reveal_main_window(&window);
                 if let Err(error) = refresh_tray_from_state(&app, &app_state).await {
-                    eprintln!("failed to refresh tray after recreating main window: {error}");
+                    debug_log::error(
+                        "window",
+                        format_args!(
+                            "failed to refresh tray after recreating main window: {error}"
+                        ),
+                    );
                 }
             }
-            Err(error) => eprintln!("failed to recreate main window: {error}"),
+            Err(error) => debug_log::error(
+                "window",
+                format_args!("failed to recreate main window: {error}"),
+            ),
         }
     });
 }
@@ -398,7 +434,10 @@ async fn activate_lightweight_mode(app: AppHandle, generation: u64, automatic: b
         let _ = startup::set_activation_policy(false);
         let _ = set_dock_visibility(&app, false);
         if let Err(error) = window.destroy() {
-            eprintln!("failed to activate lightweight mode: {error}");
+            debug_log::error(
+                "lightweight",
+                format_args!("failed to activate lightweight mode: {error}"),
+            );
             return;
         }
     }
@@ -406,8 +445,15 @@ async fn activate_lightweight_mode(app: AppHandle, generation: u64, automatic: b
     window_state
         .lightweight_active
         .store(true, Ordering::Release);
+    debug_log::info(
+        "lightweight",
+        format_args!("lightweight mode activated (automatic={automatic})"),
+    );
     if let Err(error) = refresh_tray_from_state(&app, &app_state).await {
-        eprintln!("failed to refresh tray after activating lightweight mode: {error}");
+        debug_log::error(
+            "lightweight",
+            format_args!("failed to refresh tray after activating lightweight mode: {error}"),
+        );
     }
 }
 
@@ -460,15 +506,40 @@ pub fn run() {
 
     builder
         .setup(|app| {
+            // Resolve the debug log directory before anything else so early
+            // startup failures can be captured once the setting is applied.
+            debug_log::init(app.handle());
+
             if let Some(window) = app.get_webview_window("main") {
                 if let Err(error) = apply_system_material(&window, None) {
-                    eprintln!("failed to apply system window material: {error}");
+                    debug_log::error(
+                        "window",
+                        format_args!("failed to apply system window material: {error}"),
+                    );
                 }
             }
 
             let mut state = tauri::async_runtime::block_on(AppState::new(app.handle().clone()))?;
             let tray_text = backend_text(&state.config.get_mut().settings.language);
             let state = Arc::new(state);
+            // Honor the persisted debug logging preference from the very
+            // beginning of the session.
+            if state
+                .config
+                .try_read()
+                .map(|config| config.settings.debug_logging_enabled)
+                .unwrap_or(false)
+            {
+                debug_log::set_enabled(true);
+            }
+            debug_log::info(
+                "startup",
+                format_args!(
+                    "DataNexa started (version={}, platform={})",
+                    app.package_info().version,
+                    std::env::consts::OS
+                ),
+            );
             app.manage(state);
             app.manage(Arc::new(MainWindowState::default()));
 
@@ -515,19 +586,36 @@ pub fn run() {
             {
                 if configured {
                     if let Err(error) = startup::enable() {
-                        eprintln!("failed to restore auto-start registry: {error}");
+                        debug_log::error(
+                            "startup",
+                            format_args!("failed to restore auto-start registry: {error}"),
+                        );
                     }
                 } else {
                     if let Err(error) = startup::disable() {
-                        eprintln!("failed to clear auto-start registry: {error}");
+                        debug_log::error(
+                            "startup",
+                            format_args!("failed to clear auto-start registry: {error}"),
+                        );
                     }
                 }
             }
             let app_handle = app.handle().clone();
             let state_for_task = state.clone();
             tauri::async_runtime::spawn(async move {
-                let max_events = state_for_task.config.read().await.settings.audit_max_events;
-                let migration_result = state_for_task.audit.initialize(max_events).await;
+                let retention_days = state_for_task
+                    .config
+                    .read()
+                    .await
+                    .settings
+                    .audit_retention_days;
+                let migration_result = state_for_task.audit.initialize(retention_days).await;
+                if let Err(error) = &migration_result {
+                    debug_log::error(
+                        "audit",
+                        format_args!("audit log initialization failed: {error}"),
+                    );
+                }
                 if migration_result.is_ok() && configured && login_launch {
                     let started = std::time::Instant::now();
                     if let Err(error) = mcp::start(state_for_task.clone()).await {
@@ -603,7 +691,10 @@ pub fn run() {
                     };
 
                     if let Err(error) = result {
-                        eprintln!("failed to toggle MCP server from tray: {error}");
+                        debug_log::error(
+                            "tray",
+                            format_args!("failed to toggle MCP server from tray: {error}"),
+                        );
                     }
 
                     let running = mcp::status(&state).await.running;
@@ -616,7 +707,10 @@ pub fn run() {
                         startup_error,
                         state.audit.is_ready().await,
                     ) {
-                        eprintln!("failed to refresh tray menu: {error}");
+                        debug_log::error(
+                            "tray",
+                            format_args!("failed to refresh tray menu: {error}"),
+                        );
                     }
                 });
             }
@@ -629,7 +723,10 @@ pub fn run() {
                     api.prevent_close();
                     if let Some(main_window) = window.app_handle().get_webview_window("main") {
                         if let Err(error) = hide_main_window_to_tray(&main_window) {
-                            eprintln!("failed to hide main window: {error}");
+                            debug_log::error(
+                                "window",
+                                format_args!("failed to hide main window: {error}"),
+                            );
                         }
                     }
                 }
@@ -637,6 +734,16 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_app_snapshot,
+            get_jdbc_status,
+            install_jdbc_runtime,
+            remove_jdbc_runtime,
+            check_jdbc_runtime_update,
+            check_jdbc_runtime_update_if_due,
+            get_jdbc_storage_status,
+            clear_jdbc_cache,
+            install_jdbc_driver,
+            import_jdbc_driver,
+            delete_jdbc_driver,
             create_access_token,
             rename_access_token,
             set_access_token_enabled,
@@ -647,6 +754,8 @@ pub fn run() {
             set_token_tool_allowed,
             save_server_config,
             save_settings_config,
+            log_frontend_event,
+            open_debug_log_directory,
             export_connections,
             import_connections,
             set_mcp_tool_enabled,
@@ -666,6 +775,7 @@ pub fn run() {
             minimize_main_window,
             hide_main_window,
             start_window_drag,
+            open_data_directory,
             open_project_homepage,
             open_project_releases,
             open_project_site,
@@ -678,6 +788,8 @@ pub fn run() {
             if let tauri::RunEvent::ExitRequested { code, api, .. } = &event {
                 if code.is_none() {
                     api.prevent_exit();
+                } else {
+                    debug_log::info("startup", format_args!("DataNexa exiting"));
                 }
             }
 

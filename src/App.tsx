@@ -1,7 +1,7 @@
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import clsx from "clsx";
-import { AlertTriangle, Database, Filter, Home, Logs, Plus, RefreshCw, Settings, ShieldCheck, Trash2, Wrench, X } from "lucide-react";
+import { AlertTriangle, Coffee, Database, Filter, Home, Logs, Plus, RefreshCw, Settings, ShieldCheck, Trash2, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import brandLogoUrl from "../resources/datanexa.png";
@@ -9,10 +9,10 @@ import { detectLocale, formatMessage, messages, normalizeLocale, persistLocale }
 import type { Locale } from "./i18n";
 import { api } from "./lib/tauri";
 import { useAppUpdater } from "./lib/updater";
-import type { AppSnapshot, AuditEvent, ConnectionConfig, DatabaseType, PolicyCheckResult, ServerConfig, SettingsConfig } from "./types";
+import type { AppSnapshot, AuditEvent, ConnectionConfig, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcInstallProgress, JdbcRuntimeInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "./types";
 import { detectThemeMode, persistThemeMode, resolveTheme, systemTheme } from "./app/theme";
 import type { AuditFilters, EffectiveTheme, SettingsTab, ThemeMode, ToastMessage, ToastTone, View } from "./app/types";
-import { buildAgentPrompt, compactConnectionError, formatConnectionTest, formatDiagnostics, toolDisplayName, updateScrollFade, viewTitle } from "./app/utils";
+import { buildAgentPrompt, compactConnectionError, formatConnectionTest, formatDiagnostics, toolDisplayName, updateScrollFade, useScrollFade, viewTitle } from "./app/utils";
 import { AuditMigrationDialog, AuditMigrationReminder, NavButton, SidebarFooter, SidebarUpdateReminder, WindowControls, WindowDragRegion } from "./components/chrome";
 import { IconTooltip, ToastViewport } from "./components/ui";
 import { OverviewView } from "./features/overview/OverviewView";
@@ -24,6 +24,7 @@ import { SettingsView } from "./features/settings/SettingsView";
 
 type McpActivityTone = "success" | "error";
 type McpToolCallCompletedPayload = { failed: boolean };
+type JreUpdateAvailablePayload = { version: string };
 
 const MCP_ACTIVITY_DURATION_MS = 1750;
 const MCP_ACTIVITY_REDUCED_DURATION_MS = 200;
@@ -39,6 +40,9 @@ const defaultConnection = (name: string): ConnectionConfig => ({
   username: "",
   credential_ref: null,
   ssl_mode: "prefer",
+  jdbc_bundle_id: null,
+  jdbc_url: null,
+  jdbc_driver_class: null,
   max_rows: 500,
   query_timeout_ms: 8000,
   max_connections: 1,
@@ -65,10 +69,16 @@ function App() {
   const [promptTokenDialogOpen, setPromptTokenDialogOpen] = useState(false);
   const [showAuditClear, setShowAuditClear] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
+  const [jdbcStatus, setJdbcStatus] = useState<JdbcStatus | null>(null);
+  const [jdbcStorageStatus, setJdbcStorageStatus] = useState<JdbcStorageStatus | null>(null);
+  const [jdbcInstallProgress, setJdbcInstallProgress] = useState<JdbcInstallProgress | null>(null);
+  const [jdbcRuntimeProgress, setJdbcRuntimeProgress] = useState<JdbcRuntimeInstallProgress | null>(null);
   const [locale, setLocale] = useState<Locale>(detectLocale);
   const [theme, setTheme] = useState<ThemeMode>(detectThemeMode);
   const [systemThemeMode, setSystemThemeMode] = useState<EffectiveTheme>(systemTheme);
   const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string | null>(null);
+  const [jreUpdateVersion, setJreUpdateVersion] = useState<string | null>(null);
+  const [dismissedJreUpdateVersion, setDismissedJreUpdateVersion] = useState<string | null>(null);
   const [migrationDialogOpen, setMigrationDialogOpen] = useState(false);
   const [migrationRecoveryBusy, setMigrationRecoveryBusy] = useState(false);
   const [mcpActivitySequence, setMcpActivitySequence] = useState(0);
@@ -82,6 +92,7 @@ function App() {
   const mcpActivityEffectsEnabledRef = useRef(mcpActivityEffectsEnabled);
   const mcpActivityPlayingRef = useRef(false);
   const mcpActivityTimerRef = useRef<number | undefined>(undefined);
+  const stageScrollFadeRef = useScrollFade();
 
   useEffect(() => {
     activeViewRef.current = activeView;
@@ -109,7 +120,102 @@ function App() {
   );
   useEffect(() => {
     void refresh();
+    void refreshJdbcStatus();
   }, []);
+
+  useEffect(() => {
+    if (snapshot?.config.settings.auto_check_updates !== true) return;
+
+    const checkJreUpdateIfDue = () => {
+      void api.checkJdbcRuntimeUpdateIfDue()
+        .then((version) => {
+          setJreUpdateVersion(version);
+          if (version) void refreshJdbcStatus();
+        })
+        .catch(() => undefined);
+    };
+
+    checkJreUpdateIfDue();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") checkJreUpdateIfDue();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [snapshot?.config.settings.auto_check_updates]);
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    let cancelled = false;
+    void (async () => {
+      try {
+        unlisten = await listen<JdbcRuntimeInstallProgress>("jdbc://runtime-install-progress", (event) => {
+          setJdbcRuntimeProgress(event.payload);
+        });
+        if (cancelled) {
+          unlisten();
+          unlisten = undefined;
+        }
+      } catch {
+        // Preview mode and older runtimes may not provide event delivery.
+      }
+    })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    let cancelled = false;
+    void (async () => {
+      try {
+        unlisten = await listen<JdbcInstallProgress>("jdbc://driver-install-progress", (event) => {
+          setJdbcInstallProgress(event.payload);
+        });
+        if (cancelled) {
+          unlisten();
+          unlisten = undefined;
+        }
+      } catch {
+        // Preview mode and older runtimes may not provide event delivery.
+      }
+    })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    let cancelled = false;
+    void (async () => {
+      try {
+        unlisten = await listen<JreUpdateAvailablePayload>("jdbc://runtime-update-available", (event) => {
+          setJreUpdateVersion(event.payload.version);
+          void refreshJdbcStatus();
+        });
+        if (cancelled) {
+          unlisten();
+          unlisten = undefined;
+        }
+      } catch {
+        // Event delivery is best-effort; the runtime settings can still check manually.
+      }
+    })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [t]);
+
+  useEffect(() => {
+    if (activeView === "settings" && (settingsTab === "drivers" || settingsTab === "storage")) {
+      void refreshJdbcStatus();
+      if (settingsTab === "storage") void refreshJdbcStorageStatus();
+    }
+  }, [activeView, settingsTab]);
 
   useEffect(() => {
     if (hasAuditFilters) {
@@ -471,6 +577,143 @@ function App() {
     }
   }
 
+  async function refreshJdbcStatus() {
+    try {
+      setJdbcStatus(await api.jdbcStatus());
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  async function installJdbcRuntime(): Promise<boolean> {
+    setBusy(true);
+    setJdbcRuntimeProgress({ phase: "preparing", downloaded_bytes: 0, total_bytes: null, progress: 0 });
+    try {
+      await api.installJdbcRuntime();
+      await refreshJdbcStatus();
+      setJreUpdateVersion(null);
+      pushToast(t.toast.jdbcRuntimeInstalled, "info");
+      return true;
+    } catch (error) {
+      showError(error);
+      return false;
+    } finally {
+      setJdbcRuntimeProgress(null);
+      setBusy(false);
+    }
+  }
+
+  async function removeJdbcRuntime(): Promise<boolean> {
+    setBusy(true);
+    try {
+      await api.removeJdbcRuntime();
+      await refreshJdbcStatus();
+      await refreshJdbcStorageStatus();
+      setJreUpdateVersion(null);
+      pushToast(t.toast.jdbcRuntimeRemoved, "info");
+      return true;
+    } catch (error) {
+      showError(error);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function checkJdbcRuntimeUpdate(): Promise<string | null> {
+    setBusy(true);
+    try {
+      const version = await api.checkJdbcRuntimeUpdate();
+      setJreUpdateVersion(version);
+      if (version) {
+        pushToast(formatMessage(t.toast.jdbcRuntimeUpdateAvailable, { version }), "info");
+      } else if (jdbcStatus?.runtime.source === "managed") {
+        pushToast(t.toast.jdbcRuntimeUpToDate, "info");
+      }
+      await refreshJdbcStatus();
+      return version;
+    } catch (error) {
+      showError(error);
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function checkAllUpdates() {
+    await updater.checkForUpdates();
+    await checkJdbcRuntimeUpdate();
+  }
+
+  async function refreshJdbcStorageStatus() {
+    try {
+      setJdbcStorageStatus(await api.jdbcStorageStatus());
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  async function clearJdbcCache(selection: JdbcCacheSelection): Promise<boolean> {
+    setBusy(true);
+    try {
+      await api.clearJdbcCache(selection);
+      await refreshJdbcStorageStatus();
+      pushToast(t.toast.jdbcCacheCleared, "info");
+      return true;
+    } catch (error) {
+      showError(error);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function installJdbcDriver(input: InstallJdbcDriverInput): Promise<boolean> {
+    setBusy(true);
+    setJdbcInstallProgress({ operation: "install", phase: "preparing", progress: 0 });
+    try {
+      await api.installJdbcDriver(input);
+      setJdbcStatus(await api.jdbcStatus());
+      pushToast(t.toast.jdbcDriverInstalled);
+      return true;
+    } catch (error) {
+      showError(error);
+      return false;
+    } finally {
+      setBusy(false);
+      setJdbcInstallProgress(null);
+    }
+  }
+
+  async function importJdbcDriver(input: ImportJdbcDriverInput): Promise<boolean> {
+    setBusy(true);
+    setJdbcInstallProgress({ operation: "import", phase: "preparing", progress: 0 });
+    try {
+      await api.importJdbcDriver(input);
+      setJdbcStatus(await api.jdbcStatus());
+      pushToast(t.toast.jdbcDriverInstalled);
+      return true;
+    } catch (error) {
+      showError(error);
+      return false;
+    } finally {
+      setBusy(false);
+      setJdbcInstallProgress(null);
+    }
+  }
+
+  async function deleteJdbcDriver(bundleId: string) {
+    setBusy(true);
+    try {
+      setJdbcStatus(await api.deleteJdbcDriver(bundleId));
+      pushToast(t.toast.jdbcDriverDeleted);
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function updateAccess(action: () => Promise<AppSnapshot>, message: string): Promise<boolean> {
     setBusy(true);
     try {
@@ -569,7 +812,10 @@ function App() {
       const result = await api.importConnections(locale);
       if (result) {
         setSnapshot(result.snapshot);
-        pushToast(formatMessage(t.toast.connectionsImported, { count: result.imported_count }));
+        pushToast(formatMessage(
+          result.skipped_count > 0 ? t.toast.connectionsImportedPartial : t.toast.connectionsImported,
+          { count: result.imported_count, skipped: result.skipped_count }
+        ));
       }
     } catch (error) {
       showError(error);
@@ -627,6 +873,12 @@ function App() {
   const recentEvents = snapshot?.audit_events.slice(0, 8) ?? [];
   const availableUpdateVersion = updater.state.kind === "available" ? updater.state.version : null;
   const showUpdateReminder = availableUpdateVersion !== null && dismissedUpdateVersion !== availableUpdateVersion;
+  const managedJreVersion = jdbcStatus?.runtime.managed_version ?? null;
+  const showJreUpdateReminder = jreUpdateVersion !== null
+    && dismissedJreUpdateVersion !== jreUpdateVersion
+    && !snapshot?.config.settings.jdbc_java_home
+    && managedJreVersion !== null
+    && managedJreVersion !== jreUpdateVersion;
   const migrationReady = snapshot?.audit_migration.status === "ready";
   const emergencyDisconnect = Boolean(snapshot?.emergency_disconnect);
 
@@ -659,17 +911,35 @@ function App() {
             <div className="sidebar-bottom">
               {snapshot && snapshot.audit_migration.status !== "ready" ? (
                 <AuditMigrationReminder t={t} state={snapshot.audit_migration} onOpen={() => setMigrationDialogOpen(true)} />
-              ) : showUpdateReminder && availableUpdateVersion ? (
-                <SidebarUpdateReminder
-                  t={t}
-                  version={availableUpdateVersion}
-                  onOpenAbout={() => {
-                    setActiveView("settings");
-                    setSettingsTab("about");
-                  }}
-                  onDismiss={() => setDismissedUpdateVersion(availableUpdateVersion)}
-                />
-              ) : null}
+              ) : (
+                <>
+                  {showUpdateReminder && availableUpdateVersion && (
+                    <SidebarUpdateReminder
+                      t={t}
+                      version={availableUpdateVersion}
+                      onOpenAbout={() => {
+                        setActiveView("settings");
+                        setSettingsTab("about");
+                      }}
+                      onDismiss={() => setDismissedUpdateVersion(availableUpdateVersion)}
+                    />
+                  )}
+                  {showJreUpdateReminder && jreUpdateVersion && (
+                    <SidebarUpdateReminder
+                      t={t}
+                      version={jreUpdateVersion}
+                      icon={<Coffee size={16} />}
+                      title={t.updates.runtimeUpdateTitle}
+                      compact={formatMessage(t.updates.runtimeUpdateCompact, { version: jreUpdateVersion })}
+                      onOpenAbout={() => {
+                        setActiveView("settings");
+                        setSettingsTab("drivers");
+                      }}
+                      onDismiss={() => setDismissedJreUpdateVersion(jreUpdateVersion)}
+                    />
+                  )}
+                </>
+              )}
               <SidebarFooter
                 t={t}
                 running={Boolean(snapshot?.server_status.running)}
@@ -747,7 +1017,7 @@ function App() {
             {!snapshot ? (
               <div className="loading-panel">{t.overview.loading}</div>
             ) : (
-              <div className={clsx("view-stage", `view-${activeView}`)} key={activeView} onScroll={updateScrollFade}>
+              <div className={clsx("view-stage", `view-${activeView}`)} key={activeView} ref={stageScrollFadeRef} onScroll={updateScrollFade}>
                 {activeView === "overview" && (
                   <OverviewView
                     t={t}
@@ -794,15 +1064,32 @@ function App() {
                     autoStartStatus={snapshot.auto_start_status}
                     busy={busy}
                     tab={settingsTab}
+                    auditEvents={snapshot.audit_events}
+                    jdbcStatus={jdbcStatus}
+                    jdbcStorageStatus={jdbcStorageStatus}
+                    jdbcInstallProgress={jdbcInstallProgress}
+                    jdbcRuntimeProgress={jdbcRuntimeProgress}
                     policySql={policySql}
                     policyKind={policyKind}
                     policyResult={policyResult}
                     updaterEnabled={snapshot.updater_enabled}
                     updateState={updater.state}
-                    onCheckUpdate={() => void updater.checkForUpdates()}
+                    onCheckUpdate={() => void checkAllUpdates()}
                     onUpdate={() => void updater.installUpdate()}
                     onOpenProjectReleases={() => void api.openProjectReleases().catch(showError)}
+                    onOpenAudit={() => setActiveView("audit")}
                     onTabChange={setSettingsTab}
+                    onRefreshJdbcStatus={() => void refreshJdbcStatus()}
+                    onInstallJdbcRuntime={installJdbcRuntime}
+                    onRemoveJdbcRuntime={removeJdbcRuntime}
+                    onCheckJdbcRuntimeUpdate={checkJdbcRuntimeUpdate}
+                    onRefreshJdbcStorageStatus={() => void refreshJdbcStorageStatus()}
+                    onClearJdbcCache={clearJdbcCache}
+                    onOpenDataDirectory={() => void api.openDataDirectory().catch(showError)}
+                    onOpenDebugLogFolder={() => void api.openDebugLogDirectory().catch(showError)}
+                    onInstallJdbcDriver={installJdbcDriver}
+                    onImportJdbcDriver={importJdbcDriver}
+                    onDeleteJdbcDriver={(bundleId) => void deleteJdbcDriver(bundleId)}
                     onThemeChange={setTheme}
                     onPolicyKindChange={setPolicyKind}
                     onSqlChange={setPolicySql}
@@ -836,6 +1123,7 @@ function App() {
           onEditingChange={setEditing}
           onTest={testEditingConnection}
           migrationReady={migrationReady}
+          jdbcDrivers={jdbcStatus?.drivers ?? []}
           onSubmit={saveConnection}
           onClose={() => setEditing(null)}
         />

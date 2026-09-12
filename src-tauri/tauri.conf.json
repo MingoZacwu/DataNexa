@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "DataNexa",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "identifier": "com.mingo.datanexa",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "DataNexa",
@@ -45,6 +46,9 @@
     ],
     "publisher": "Mingo Technology",
     "copyright": "(C) 2026 Zachary Wu All Rights Reserved",
-    "category": "DeveloperTool"
+    "category": "DeveloperTool",
+    "resources": {
+      "../resources/datanexa-jdbc-sidecar.jar": "datanexa-jdbc-sidecar.jar"
+    }
   }
 }

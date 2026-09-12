@@ -1,4 +1,4 @@
-export type DatabaseType = "sqlite" | "mysql" | "postgres";
+export type DatabaseType = "sqlite" | "mysql" | "postgres" | "jdbc";
 
 export interface ServerConfig {
   host: string;
@@ -18,6 +18,9 @@ export interface ConnectionConfig {
   username?: string | null;
   credential_ref?: string | null;
   ssl_mode?: string | null;
+  jdbc_bundle_id?: string | null;
+  jdbc_url?: string | null;
+  jdbc_driver_class?: string | null;
   max_rows: number;
   query_timeout_ms: number;
   max_connections: number;
@@ -25,13 +28,18 @@ export interface ConnectionConfig {
 }
 
 export interface SettingsConfig {
-  audit_max_events: number;
+  audit_retention_days: number;
   audit_redact_sql_literals: boolean;
   auto_check_updates: boolean;
   auto_start_mcp: boolean;
   auto_lightweight_mode: boolean;
   mcp_activity_effects: boolean;
   language: string;
+  jdbc_java_home?: string | null;
+  auto_circuit_breaker: boolean;
+  auto_circuit_breaker_window_minutes: number;
+  auto_circuit_breaker_threshold: number;
+  debug_logging_enabled: boolean;
 }
 
 export interface ToolConfig {
@@ -123,6 +131,100 @@ export interface ConnectionInput {
 export interface ImportConnectionsResult {
   snapshot: AppSnapshot;
   imported_count: number;
+  skipped_count: number;
+}
+
+export interface JdbcDriverFile {
+  name: string;
+  size: number;
+  sha256: string;
+}
+
+export interface JdbcDriverBundle {
+  schema_version: number;
+  bundle_id: string;
+  display_name: string;
+  maven_coordinate: string;
+  repository_url: string;
+  installed_at: string;
+  driver_classes: string[];
+  files: JdbcDriverFile[];
+  total_size: number;
+  source?: "maven" | "local" | string;
+}
+
+export interface JdbcRuntimeStatus {
+  available: boolean;
+  source: "managed" | "embedded" | "external" | "unavailable" | string;
+  target: string;
+  java_version?: string | null;
+  managed_version?: string | null;
+  update_available?: string | null;
+  sidecar_available: boolean;
+}
+
+export interface JdbcRuntimeInstallProgress {
+  phase: "preparing" | "downloading" | "verifying" | "extracting" | "finalizing";
+  downloaded_bytes: number;
+  total_bytes?: number | null;
+  progress?: number | null;
+}
+
+export interface JdbcStatus {
+  runtime: JdbcRuntimeStatus;
+  drivers: JdbcDriverBundle[];
+}
+
+export type JdbcInstallOperation = "install" | "import";
+export type JdbcInstallPhase = "preparing" | "downloading" | "copying" | "verifying" | "inspecting" | "finalizing";
+
+export interface JdbcInstallProgress {
+  operation: JdbcInstallOperation;
+  phase: JdbcInstallPhase;
+  progress: number | null;
+}
+
+export interface InstallJdbcDriverInput {
+  display_name: string;
+  maven_coordinate: string;
+  repository_url?: string;
+}
+
+export interface ImportJdbcDriverInput {
+  display_name: string;
+  paths: string[];
+}
+
+export interface JdbcStorageItem {
+  id: string;
+  label: string;
+  path: string;
+  bytes: number;
+}
+
+export interface JdbcDriverRuntimeInfo {
+  bundle_id: string;
+  display_name: string;
+  status: string;
+  health: string;
+  process_count: number;
+  memory_bytes: number;
+  cpu_percent: number;
+}
+
+export interface JdbcStorageStatus {
+  storage_root: string;
+  total_bytes: number;
+  items: JdbcStorageItem[];
+  runtimes: JdbcDriverRuntimeInfo[];
+  maven_cache_bytes: number;
+  managed_runtime_old_bytes: number;
+}
+
+export interface JdbcCacheSelection {
+  maven: boolean;
+  old_runtimes: boolean;
+  debug_logs: boolean;
 }
 
 export interface ConnectionDiagnostics {

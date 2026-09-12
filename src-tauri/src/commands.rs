@@ -7,7 +7,7 @@ use std::time::Instant;
 use chrono::Utc;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State, WebviewWindow};
+use tauri::{AppHandle, Manager, State, WebviewWindow};
 use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -17,7 +17,12 @@ use crate::config::{
     ServerConfig, SettingsConfig,
 };
 use crate::db::ConnectionDiagnostics;
+use crate::debug_log;
 use crate::i18n::{backend_text, BackendText, ConnectionDiagnosticText};
+use crate::jdbc::{
+    ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcDriverBundle,
+    JdbcStatus, JdbcStorageStatus,
+};
 use crate::mcp::{self, McpToolInfo, ServerStatus};
 use crate::policy::{PolicyCheckResult, PolicyEngine};
 use crate::startup;
@@ -79,6 +84,12 @@ struct PortableConnection {
     password: Option<String>,
     #[serde(default)]
     ssl_mode: Option<String>,
+    #[serde(default)]
+    jdbc_bundle_id: Option<String>,
+    #[serde(default)]
+    jdbc_url: Option<String>,
+    #[serde(default)]
+    jdbc_driver_class: Option<String>,
     max_rows: u32,
     query_timeout_ms: u64,
     max_connections: u32,
@@ -98,16 +109,148 @@ impl Drop for PortableConnection {
 pub struct ImportConnectionsResult {
     pub snapshot: AppSnapshot,
     pub imported_count: usize,
+    pub skipped_count: usize,
 }
 
 const CONNECTION_TRANSFER_FORMAT: &str = "datanexa-connections";
-const CONNECTION_TRANSFER_VERSION: u16 = 2;
+const CONNECTION_TRANSFER_VERSION: u16 = 3;
 const MAX_CONNECTION_IMPORT_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_CONNECTION_IMPORT_COUNT: usize = 1000;
 
 #[tauri::command]
 pub async fn get_app_snapshot(state: State<'_, Arc<AppState>>) -> Result<AppSnapshot, String> {
     snapshot(state.inner()).await.map_err(to_client_error)
+}
+
+#[tauri::command]
+pub async fn get_jdbc_status(state: State<'_, Arc<AppState>>) -> Result<JdbcStatus, String> {
+    let text = text_for_state(state.inner()).await;
+    state
+        .jdbc
+        .status()
+        .await
+        .map_err(|error| to_jdbc_client_error(error, &text))
+}
+
+#[tauri::command]
+pub async fn install_jdbc_runtime(
+    state: State<'_, Arc<AppState>>,
+) -> Result<crate::jdbc::JdbcRuntimeStatus, String> {
+    let _lifecycle = state.jdbc_lifecycle.lock().await;
+    let text = text_for_state(state.inner()).await;
+    state
+        .jdbc
+        .install_runtime()
+        .await
+        .map_err(|error| to_jdbc_client_error(error, &text))
+}
+
+#[tauri::command]
+pub async fn remove_jdbc_runtime(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    let _lifecycle = state.jdbc_lifecycle.lock().await;
+    let text = text_for_state(state.inner()).await;
+    state
+        .jdbc
+        .remove_runtime()
+        .await
+        .map_err(|error| to_jdbc_client_error(error, &text))
+}
+
+#[tauri::command]
+pub async fn check_jdbc_runtime_update(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Option<String>, String> {
+    let text = text_for_state(state.inner()).await;
+    #[cfg(feature = "updater")]
+    {
+        crate::updater::check_jre_now(app)
+            .await
+            .map_err(|error| to_jdbc_client_error(error, &text))
+    }
+    #[cfg(not(feature = "updater"))]
+    {
+        let _ = app;
+        state
+            .jdbc
+            .check_runtime_update()
+            .await
+            .map_err(|error| to_jdbc_client_error(error, &text))
+    }
+}
+
+#[tauri::command]
+pub async fn install_jdbc_driver(
+    state: State<'_, Arc<AppState>>,
+    input: InstallJdbcDriverInput,
+) -> Result<JdbcDriverBundle, String> {
+    let _lifecycle = state.jdbc_lifecycle.lock().await;
+    let text = text_for_state(state.inner()).await;
+    state
+        .jdbc
+        .install_driver(input)
+        .await
+        .map_err(|error| to_jdbc_client_error(error, &text))
+}
+
+#[tauri::command]
+pub async fn import_jdbc_driver(
+    state: State<'_, Arc<AppState>>,
+    input: ImportJdbcDriverInput,
+) -> Result<JdbcDriverBundle, String> {
+    let _lifecycle = state.jdbc_lifecycle.lock().await;
+    let text = text_for_state(state.inner()).await;
+    state
+        .jdbc
+        .import_driver(input)
+        .await
+        .map_err(|error| to_jdbc_client_error(error, &text))
+}
+
+#[tauri::command]
+pub async fn get_jdbc_storage_status(
+    state: State<'_, Arc<AppState>>,
+) -> Result<JdbcStorageStatus, String> {
+    let text = text_for_state(state.inner()).await;
+    state
+        .jdbc
+        .storage_status()
+        .await
+        .map_err(|error| to_jdbc_client_error(error, &text))
+}
+
+#[tauri::command]
+pub async fn clear_jdbc_cache(
+    state: State<'_, Arc<AppState>>,
+    selection: JdbcCacheSelection,
+) -> Result<(), String> {
+    let _lifecycle = state.jdbc_lifecycle.lock().await;
+    let text = text_for_state(state.inner()).await;
+    state
+        .jdbc
+        .clear_jdbc_cache(selection)
+        .await
+        .map_err(|error| to_jdbc_client_error(error, &text))
+}
+
+#[tauri::command]
+pub async fn delete_jdbc_driver(
+    state: State<'_, Arc<AppState>>,
+    bundle_id: String,
+) -> Result<JdbcStatus, String> {
+    let _lifecycle = state.jdbc_lifecycle.lock().await;
+    let text = text_for_state(state.inner()).await;
+    let connections = state.config.read().await.connections.clone();
+    state.jdbc.shutdown_sessions().await;
+    state
+        .jdbc
+        .delete_driver(&bundle_id, &connections)
+        .map_err(|error| to_jdbc_client_error(error, &text))?;
+    state
+        .jdbc
+        .status()
+        .await
+        .map_err(|error| to_jdbc_client_error(error, &text))
 }
 
 #[tauri::command]
@@ -264,6 +407,7 @@ pub async fn save_settings_config(
     apply_auto_start: bool,
 ) -> Result<AppSnapshot, String> {
     let previous_auto_start = state.config.read().await.settings.auto_start_mcp;
+    let previous_settings = state.config.read().await.settings.clone();
     let text = commit_config(state.inner(), |config| {
         let mut settings = normalize_settings(settings);
         if !apply_auto_start {
@@ -275,6 +419,21 @@ pub async fn save_settings_config(
     })
     .await
     .map_err(to_client_error)?;
+    if debug_log::is_enabled() {
+        // Record which setting keys changed, never the values, so the log
+        // stays useful as a timeline without capturing sensitive state.
+        let changed = changed_setting_keys(&previous_settings, &state.config.read().await.settings);
+        if changed.is_empty() {
+            debug_log::info("settings", format_args!("settings saved (no changes)"));
+        } else {
+            debug_log::info(
+                "settings",
+                format_args!("settings updated (changed: {})", changed.join(", ")),
+            );
+        }
+    }
+    // Apply the debug logging switch immediately so no restart is required.
+    debug_log::set_enabled(state.config.read().await.settings.debug_logging_enabled);
     if apply_auto_start {
         let auto_start = state.config.read().await.settings.auto_start_mcp;
         let startup_started = Instant::now();
@@ -300,10 +459,10 @@ pub async fn save_settings_config(
             return Err(reason);
         }
     }
-    let audit_max_events = state.config.read().await.settings.audit_max_events;
+    let audit_retention_days = state.config.read().await.settings.audit_retention_days;
     state
         .audit
-        .trim(audit_max_events)
+        .trim(audit_retention_days)
         .await
         .map_err(to_client_error)?;
 
@@ -357,6 +516,9 @@ pub async fn export_connections(
             username: connection.username,
             password,
             ssl_mode: connection.ssl_mode,
+            jdbc_bundle_id: connection.jdbc_bundle_id,
+            jdbc_url: connection.jdbc_url,
+            jdbc_driver_class: connection.jdbc_driver_class,
             max_rows: connection.max_rows,
             query_timeout_ms: connection.query_timeout_ms,
             max_connections: connection.max_connections,
@@ -393,14 +555,15 @@ pub async fn import_connections(
     let contents = Zeroizing::new(fs::read(path).map_err(to_client_error)?);
     let mut transfer: ConnectionTransferFile =
         serde_json::from_slice(contents.as_slice()).map_err(to_client_error)?;
-    if transfer.format != CONNECTION_TRANSFER_FORMAT || !matches!(transfer.version, 1 | 2) {
+    if transfer.format != CONNECTION_TRANSFER_FORMAT || !matches!(transfer.version, 1..=3) {
         return Err("Unsupported DataNexa connection import file.".to_string());
     }
     if transfer.connections.len() > MAX_CONNECTION_IMPORT_COUNT {
         return Err("A connection import file can contain at most 1000 connections.".to_string());
     }
 
-    let imported_count = transfer.connections.len();
+    let total_count = transfer.connections.len();
+    let mut imported_count = 0;
     let _transaction = state.config_transaction.write().await;
     let mut candidate = state.config.read().await.clone();
     let text = backend_text(&candidate.settings.language);
@@ -432,20 +595,33 @@ pub async fn import_connections(
             username: portable.username.take(),
             credential_ref: credential_ref.clone(),
             ssl_mode: portable.ssl_mode.take(),
+            jdbc_bundle_id: portable.jdbc_bundle_id.take(),
+            jdbc_url: portable.jdbc_url.take(),
+            jdbc_driver_class: portable.jdbc_driver_class.take(),
             max_rows: portable.max_rows,
             query_timeout_ms: portable.query_timeout_ms,
             max_connections: portable.max_connections,
             max_result_bytes: portable.max_result_bytes,
         };
-        validate_connection(&connection, &text).map_err(to_client_error)?;
-        candidate.connections.push(normalize_connection(connection));
+        if !append_importable_connection(&mut candidate, connection, &text, |bundle_id| {
+            state.jdbc.ensure_bundle_exists(bundle_id)
+        }) {
+            continue;
+        }
+        imported_count += 1;
         if let (Some(credential_ref), Some(password)) = (credential_ref, password) {
             credentials.push((credential_ref, password));
         }
     }
-    candidate
-        .normalize_and_validate()
-        .map_err(to_client_error)?;
+
+    if imported_count == 0 {
+        drop(_transaction);
+        return Ok(ImportConnectionsResult {
+            snapshot: snapshot(state.inner()).await.map_err(to_client_error)?,
+            imported_count,
+            skipped_count: total_count,
+        });
+    }
 
     let mut saved_credential_refs = Vec::with_capacity(credentials.len());
     for (credential_ref, password) in credentials {
@@ -473,6 +649,7 @@ pub async fn import_connections(
     Ok(ImportConnectionsResult {
         snapshot: snapshot(state.inner()).await.map_err(to_client_error)?,
         imported_count,
+        skipped_count: total_count - imported_count,
     })
 }
 
@@ -508,6 +685,18 @@ pub async fn upsert_connection(
     validate_password_input(input.clear_password, input.password.as_deref())?;
     let text = text_for_state(state.inner()).await;
     validate_connection(&input.connection, &text).map_err(to_client_error)?;
+    if input.connection.kind == DbKind::Jdbc {
+        state
+            .jdbc
+            .ensure_bundle_exists(
+                input
+                    .connection
+                    .jdbc_bundle_id
+                    .as_deref()
+                    .ok_or_else(|| text.jdbc_driver_required().to_string())?,
+            )
+            .map_err(|error| to_jdbc_client_error(error, &text))?;
+    }
     let clear_password = input.clear_password;
     let mut connection = normalize_connection(input.connection);
     let password = input.password.filter(|value| !value.is_empty());
@@ -552,7 +741,7 @@ pub async fn upsert_connection(
         }
         candidate
             .normalize_and_validate()
-            .map_err(to_client_error)?;
+            .map_err(|error| to_jdbc_client_error(error, &text))?;
         let credential_to_delete = candidate
             .connections
             .iter()
@@ -613,6 +802,20 @@ pub async fn upsert_connection(
             })?;
         }
     }
+    debug_log::info(
+        "connection",
+        format_args!(
+            "connection saved (id={}, name={}, kind={})",
+            connection.id,
+            connection.name,
+            match connection.kind {
+                DbKind::Sqlite => "sqlite",
+                DbKind::Mysql => "mysql",
+                DbKind::Postgres => "postgres",
+                DbKind::Jdbc => "jdbc",
+            }
+        ),
+    );
     snapshot(state.inner()).await.map_err(to_client_error)
 }
 
@@ -623,6 +826,11 @@ pub async fn delete_connection(
 ) -> Result<AppSnapshot, String> {
     let _transaction = state.config_transaction.write().await;
     let mut candidate = state.config.read().await.clone();
+    let connection_name = candidate
+        .connections
+        .iter()
+        .find(|connection| connection.id == id)
+        .map(|connection| connection.name.clone());
     let credential_ref = candidate
         .connections
         .iter()
@@ -652,6 +860,14 @@ pub async fn delete_connection(
         })?;
     }
     drop(_transaction);
+    debug_log::info(
+        "connection",
+        format_args!(
+            "connection deleted (id={}, name={})",
+            id,
+            connection_name.as_deref().unwrap_or("unknown")
+        ),
+    );
 
     snapshot(state.inner()).await.map_err(to_client_error)
 }
@@ -722,10 +938,10 @@ pub async fn retry_audit_migration(
     ) {
         return Err("Audit log migration can only be retried after a failure.".to_string());
     }
-    let max_events = state.config.read().await.settings.audit_max_events;
+    let retention_days = state.config.read().await.settings.audit_retention_days;
     state
         .audit
-        .retry(max_events)
+        .retry(retention_days)
         .await
         .map_err(to_client_error)?;
     let language = state.config.read().await.settings.language.clone();
@@ -762,6 +978,25 @@ pub async fn test_connection(
     let connection = find_connection(state.inner(), &id)
         .await
         .map_err(to_client_error)?;
+    if connection.kind == DbKind::Jdbc {
+        return match state
+            .jdbc
+            .test_connection(&connection, &state.vault, None)
+            .await
+        {
+            Ok(duration) => Ok(text.connection_test_ok(duration.as_millis())),
+            Err(error) => {
+                debug_log::error(
+                    "connection_test",
+                    format_args!(
+                        "JDBC connection test failed (id={}, name={}, error={error})",
+                        connection.id, connection.name
+                    ),
+                );
+                Err(to_jdbc_client_error(error, &text))
+            }
+        };
+    }
     state.db.close(&id).await;
     match state
         .db
@@ -770,6 +1005,13 @@ pub async fn test_connection(
     {
         Ok(duration) => Ok(text.connection_test_ok(duration.as_millis())),
         Err(error) => {
+            debug_log::error(
+                "connection_test",
+                format_args!(
+                    "connection test failed (id={}, name={}, error={error})",
+                    connection.id, connection.name
+                ),
+            );
             let diagnostics = state.db.diagnostics(&connection, &state.vault, &text);
             Err(format!(
                 "{}\n{}",
@@ -802,13 +1044,42 @@ pub async fn test_connection_input(
         password.as_deref().filter(|value| !value.is_empty())
     };
 
+    if connection.kind == DbKind::Jdbc {
+        return match state
+            .jdbc
+            .test_connection(&connection, &state.vault, password_override)
+            .await
+        {
+            Ok(duration) => Ok(text.connection_test_ok(duration.as_millis())),
+            Err(error) => {
+                debug_log::error(
+                    "connection_test",
+                    format_args!(
+                        "JDBC connection test failed (name={}, error={error})",
+                        connection.name
+                    ),
+                );
+                Err(to_jdbc_client_error(error, &text))
+            }
+        };
+    }
+
     match state
         .db
         .test_connection_once(&connection, &state.vault, password_override, &text)
         .await
     {
         Ok(duration) => Ok(text.connection_test_ok(duration.as_millis())),
-        Err(error) => Err(to_client_error(&error)),
+        Err(error) => {
+            debug_log::error(
+                "connection_test",
+                format_args!(
+                    "connection test failed (name={}, error={error})",
+                    connection.name
+                ),
+            );
+            Err(to_client_error(&error))
+        }
     }
 }
 
@@ -944,6 +1215,23 @@ pub async fn check_updates_if_due(app: AppHandle) -> Result<Option<String>, Stri
     }
 }
 
+/// Return the cached JRE update result, refreshing it only when its 24-hour
+/// check window has elapsed.
+#[tauri::command]
+pub async fn check_jdbc_runtime_update_if_due(app: AppHandle) -> Result<Option<String>, String> {
+    #[cfg(feature = "updater")]
+    {
+        crate::updater::check_jre_if_due(app)
+            .await
+            .map_err(to_client_error)
+    }
+    #[cfg(not(feature = "updater"))]
+    {
+        let _ = app;
+        Ok(None)
+    }
+}
+
 #[tauri::command]
 pub fn open_project_releases() -> Result<(), String> {
     tauri_plugin_opener::open_url(
@@ -951,6 +1239,45 @@ pub fn open_project_releases() -> Result<(), String> {
         None::<&str>,
     )
     .map_err(to_client_error)
+}
+
+/// Open the DataNexa application data directory in the system file manager.
+/// The path is resolved on the Rust side so the front end cannot open
+/// arbitrary locations.
+#[tauri::command]
+pub async fn open_data_directory(app: AppHandle) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(to_client_error)?;
+    tauri_plugin_opener::open_path(&data_dir, None::<&str>).map_err(to_client_error)
+}
+
+/// Persist a front end error or unhandled promise rejection into the debug log.
+/// The message is sanitized before it is written so secrets embedded in error
+/// text never reach the log file.
+#[tauri::command]
+pub fn log_frontend_event(kind: String, message: String) {
+    // The sanitize pass allocates, so skip it entirely when logging is off.
+    if !debug_log::is_enabled() {
+        return;
+    }
+    let message = sanitize_text(&message);
+    match kind.as_str() {
+        "error" => debug_log::error("frontend", format_args!("{message}")),
+        "info" => debug_log::info("frontend", format_args!("{message}")),
+        _ => debug_log::warn("frontend", format_args!("{message}")),
+    }
+}
+
+/// Open the folder holding the debug log files in the system file manager.
+/// The path is resolved on the Rust side so the front end cannot open
+/// arbitrary locations.
+#[tauri::command]
+pub async fn open_debug_log_directory(app: AppHandle) -> Result<(), String> {
+    let log_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(to_client_error)?
+        .join("logs");
+    tauri_plugin_opener::open_path(&log_dir, None::<&str>).map_err(to_client_error)
 }
 
 async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
@@ -964,7 +1291,10 @@ async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
     config.server.token = None;
     let audit_ready = state.audit.is_ready().await;
     if audit_ready {
-        state.audit.trim(config.settings.audit_max_events).await?;
+        state
+            .audit
+            .trim(config.settings.audit_retention_days)
+            .await?;
     }
     let mut audit_events = if audit_ready {
         state.audit.list().await?
@@ -1004,7 +1334,11 @@ pub(crate) async fn record_startup_event(
     reason: String,
     elapsed: std::time::Duration,
 ) {
-    let max_events = state.config.read().await.settings.audit_max_events;
+    debug_log::error(
+        "startup",
+        format_args!("{tool} failed after {}ms: {reason}", elapsed.as_millis()),
+    );
+    let retention_days = state.config.read().await.settings.audit_retention_days;
     let _ = state
         .audit
         .record_with_limit(
@@ -1016,9 +1350,31 @@ pub(crate) async fn record_startup_event(
             Some(elapsed.as_millis().try_into().unwrap_or(u64::MAX)),
             None,
             None,
-            max_events,
+            retention_days,
         )
         .await;
+}
+
+/// Names of top-level settings keys whose serialized value differs between
+/// two snapshots. Values are intentionally never returned.
+fn changed_setting_keys(previous: &SettingsConfig, current: &SettingsConfig) -> Vec<String> {
+    let (Ok(previous), Ok(current)) = (
+        serde_json::to_value(previous),
+        serde_json::to_value(current),
+    ) else {
+        return Vec::new();
+    };
+    let (Some(previous), Some(current)) = (previous.as_object(), current.as_object()) else {
+        return Vec::new();
+    };
+    let mut changed = Vec::new();
+    for key in current.keys() {
+        if previous.get(key) != current.get(key) {
+            changed.push(key.clone());
+        }
+    }
+    changed.sort();
+    changed
 }
 
 async fn commit_config<T>(
@@ -1131,6 +1487,35 @@ fn import_failure_with_rollback(
     }
 }
 
+fn append_importable_connection(
+    candidate: &mut AppConfig,
+    connection: ConnectionConfig,
+    text: &BackendText,
+    ensure_jdbc_bundle: impl FnOnce(&str) -> anyhow::Result<()>,
+) -> bool {
+    let connection = normalize_connection(connection);
+    if validate_connection(&connection, text).is_err() {
+        return false;
+    }
+
+    if connection.kind == DbKind::Jdbc {
+        let Some(bundle_id) = connection.jdbc_bundle_id.as_deref() else {
+            return false;
+        };
+        if ensure_jdbc_bundle(bundle_id).is_err() {
+            return false;
+        }
+    }
+
+    let mut next = candidate.clone();
+    next.connections.push(connection);
+    if next.normalize_and_validate().is_err() {
+        return false;
+    }
+    *candidate = next;
+    true
+}
+
 fn validate_connection(connection: &ConnectionConfig, text: &BackendText) -> anyhow::Result<()> {
     let id_re = Regex::new(r"^[A-Za-z_][A-Za-z0-9_-]{1,63}$").expect("valid connection id regex");
     if !id_re.is_match(&connection.id) {
@@ -1139,10 +1524,10 @@ fn validate_connection(connection: &ConnectionConfig, text: &BackendText) -> any
     if connection.name.trim().is_empty() {
         return Err(anyhow::anyhow!(text.connection_name_required()));
     }
-    if connection.database.trim().is_empty() {
+    if connection.kind != DbKind::Jdbc && connection.database.trim().is_empty() {
         return Err(anyhow::anyhow!(text.database_required()));
     }
-    if connection.kind != DbKind::Sqlite
+    if matches!(connection.kind, DbKind::Mysql | DbKind::Postgres)
         && connection
             .host
             .as_deref()
@@ -1151,6 +1536,24 @@ fn validate_connection(connection: &ConnectionConfig, text: &BackendText) -> any
             .is_empty()
     {
         return Err(anyhow::anyhow!(text.host_required()));
+    }
+    if connection.kind == DbKind::Jdbc {
+        if connection
+            .jdbc_bundle_id
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+        {
+            return Err(anyhow::anyhow!(text.jdbc_driver_required()));
+        }
+        if !connection
+            .jdbc_url
+            .as_deref()
+            .is_some_and(|value| value.trim().starts_with("jdbc:"))
+        {
+            return Err(anyhow::anyhow!(text.jdbc_url_required()));
+        }
     }
     Ok(())
 }
@@ -1171,8 +1574,24 @@ fn normalize_connection(mut connection: ConnectionConfig) -> ConnectionConfig {
         connection.port = None;
         connection.username = None;
         connection.ssl_mode = None;
-    } else if connection.port.is_none() {
+        connection.jdbc_bundle_id = None;
+        connection.jdbc_url = None;
+        connection.jdbc_driver_class = None;
+    } else if matches!(connection.kind, DbKind::Mysql | DbKind::Postgres)
+        && connection.port.is_none()
+    {
         connection.port = default_port(&connection.kind);
+    }
+
+    if connection.kind == DbKind::Jdbc {
+        connection.database.clear();
+        connection.host = None;
+        connection.port = None;
+        connection.ssl_mode = None;
+    } else if connection.kind != DbKind::Sqlite {
+        connection.jdbc_bundle_id = None;
+        connection.jdbc_url = None;
+        connection.jdbc_driver_class = None;
     }
 
     connection.host = connection
@@ -1187,16 +1606,37 @@ fn normalize_connection(mut connection: ConnectionConfig) -> ConnectionConfig {
         .ssl_mode
         .map(|ssl_mode| ssl_mode.trim().to_ascii_lowercase())
         .filter(|ssl_mode| !ssl_mode.is_empty());
+    connection.jdbc_bundle_id = connection
+        .jdbc_bundle_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    connection.jdbc_url = connection
+        .jdbc_url
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    connection.jdbc_driver_class = connection
+        .jdbc_driver_class
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
 
     connection
 }
 
 fn normalize_settings(mut settings: SettingsConfig) -> SettingsConfig {
-    settings.audit_max_events = settings.audit_max_events.clamp(1, 5000);
+    settings.audit_retention_days =
+        crate::audit::normalize_retention_days(settings.audit_retention_days);
     settings.language = settings.language.trim().to_string();
     if settings.language.is_empty() {
         settings.language = "zh-CN".to_string();
     }
+    settings.jdbc_java_home = settings
+        .jdbc_java_home
+        .take()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    settings.auto_circuit_breaker_window_minutes =
+        settings.auto_circuit_breaker_window_minutes.clamp(1, 60);
+    settings.auto_circuit_breaker_threshold = settings.auto_circuit_breaker_threshold.clamp(1, 50);
     settings
 }
 
@@ -1209,10 +1649,17 @@ fn to_client_error(error: impl std::fmt::Display) -> String {
     sanitize_text(&error.to_string())
 }
 
-fn sanitize_text(text: &str) -> String {
-    let text = Regex::new(r"(?i)(password|token|secret)=([^&\s]+)")
+fn to_jdbc_client_error(error: impl std::fmt::Display, text: &BackendText) -> String {
+    text.jdbc_error(&sanitize_text(&error.to_string()))
+}
+
+pub(crate) fn sanitize_text(text: &str) -> String {
+    let text = Regex::new(r"(?i)((?:[A-Za-z][A-Za-z0-9+.-]*:)+//)([^/@\s:]+):([^/@\s]+)@")
+        .expect("valid JDBC URL sanitizer regex")
+        .replace_all(text, "$1$2:REDACTED@");
+    let text = Regex::new(r"(?i)(password|passwd|pwd|token|secret)=([^&\s]+)")
         .expect("valid secret sanitizer regex")
-        .replace_all(text, "$1=REDACTED")
+        .replace_all(&text, "$1=REDACTED")
         .to_string();
     text.replace('\n', " ")
 }
@@ -1336,6 +1783,9 @@ mod tests {
             username: Some("readonly".to_string()),
             credential_ref: Some("vault://transition_db".to_string()),
             ssl_mode: None,
+            jdbc_bundle_id: None,
+            jdbc_url: None,
+            jdbc_driver_class: None,
             max_rows: 100,
             query_timeout_ms: 1_000,
             max_connections: 1,
@@ -1352,5 +1802,64 @@ mod tests {
             .as_deref(),
             Some("vault://transition_db")
         );
+    }
+
+    #[test]
+    fn connection_import_skips_jdbc_connection_with_missing_driver() {
+        let text = backend_text("en");
+        let mut candidate = AppConfig::default();
+        let sqlite = ConnectionConfig {
+            id: "imported_sqlite".to_string(),
+            name: "Imported SQLite".to_string(),
+            kind: DbKind::Sqlite,
+            enabled: true,
+            database: "imported.db".to_string(),
+            host: None,
+            port: None,
+            username: None,
+            credential_ref: None,
+            ssl_mode: None,
+            jdbc_bundle_id: None,
+            jdbc_url: None,
+            jdbc_driver_class: None,
+            max_rows: 100,
+            query_timeout_ms: 1_000,
+            max_connections: 1,
+            max_result_bytes: default_max_result_bytes(),
+        };
+        let jdbc = ConnectionConfig {
+            id: "imported_jdbc".to_string(),
+            name: "Imported JDBC".to_string(),
+            kind: DbKind::Jdbc,
+            enabled: true,
+            database: String::new(),
+            host: None,
+            port: None,
+            username: None,
+            credential_ref: None,
+            ssl_mode: None,
+            jdbc_bundle_id: Some("missing-driver".to_string()),
+            jdbc_url: Some("jdbc:vendor://localhost/database".to_string()),
+            jdbc_driver_class: None,
+            max_rows: 100,
+            query_timeout_ms: 1_000,
+            max_connections: 1,
+            max_result_bytes: default_max_result_bytes(),
+        };
+
+        assert!(append_importable_connection(
+            &mut candidate,
+            sqlite,
+            &text,
+            |_| Ok(())
+        ));
+        assert!(!append_importable_connection(
+            &mut candidate,
+            jdbc,
+            &text,
+            |_| Err(anyhow::anyhow!("JDBC driver bundle was not found"))
+        ));
+        assert_eq!(candidate.connections.len(), 1);
+        assert_eq!(candidate.connections[0].id, "imported_sqlite");
     }
 }

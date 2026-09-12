@@ -30,8 +30,8 @@ pub struct ServerConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsConfig {
-    #[serde(default = "default_audit_max_events")]
-    pub audit_max_events: usize,
+    #[serde(default = "default_audit_retention_days")]
+    pub audit_retention_days: u32,
     // Enable this explicitly when audit logs must not retain SQL literal values.
     #[serde(default)]
     pub audit_redact_sql_literals: bool,
@@ -45,6 +45,22 @@ pub struct SettingsConfig {
     pub mcp_activity_effects: bool,
     #[serde(default = "default_language")]
     pub language: String,
+    /// Explicitly selected external Java home. When unset, the bundled runtime is always used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jdbc_java_home: Option<String>,
+    // Auto-disable an access token once it accumulates enough denied audit
+    // events within the configured window. Requires bearer authentication.
+    #[serde(default)]
+    pub auto_circuit_breaker: bool,
+    #[serde(default = "default_circuit_breaker_window_minutes")]
+    pub auto_circuit_breaker_window_minutes: u32,
+    #[serde(default = "default_circuit_breaker_threshold")]
+    pub auto_circuit_breaker_threshold: u32,
+    // Runtime debug logging writes sanitized internal diagnostics to a
+    // rotating file under the app log directory. Disabled by default so no
+    // log files are created for regular usage.
+    #[serde(default)]
+    pub debug_logging_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +76,7 @@ pub enum DbKind {
     Sqlite,
     Mysql,
     Postgres,
+    Jdbc,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,6 +97,12 @@ pub struct ConnectionConfig {
     pub credential_ref: Option<String>,
     #[serde(default)]
     pub ssl_mode: Option<String>,
+    #[serde(default)]
+    pub jdbc_bundle_id: Option<String>,
+    #[serde(default)]
+    pub jdbc_url: Option<String>,
+    #[serde(default)]
+    pub jdbc_driver_class: Option<String>,
     #[serde(default = "default_max_rows")]
     pub max_rows: u32,
     #[serde(default = "default_query_timeout_ms")]
@@ -163,10 +186,8 @@ impl AppConfig {
         }
 
         self.normalize();
-        self.settings.audit_max_events = self
-            .settings
-            .audit_max_events
-            .clamp(1, crate::audit::MAX_AUDIT_MAX_EVENTS);
+        self.settings.audit_retention_days =
+            crate::audit::normalize_retention_days(self.settings.audit_retention_days);
 
         let mut connection_ids = HashSet::new();
         for connection in &mut self.connections {
@@ -196,13 +217,18 @@ impl Default for ServerConfig {
 impl Default for SettingsConfig {
     fn default() -> Self {
         Self {
-            audit_max_events: default_audit_max_events(),
+            audit_retention_days: default_audit_retention_days(),
             audit_redact_sql_literals: false,
             auto_check_updates: true,
             auto_start_mcp: false,
             auto_lightweight_mode: false,
             mcp_activity_effects: true,
             language: default_language(),
+            jdbc_java_home: None,
+            auto_circuit_breaker: false,
+            auto_circuit_breaker_window_minutes: default_circuit_breaker_window_minutes(),
+            auto_circuit_breaker_threshold: default_circuit_breaker_threshold(),
+            debug_logging_enabled: false,
         }
     }
 }
@@ -212,6 +238,7 @@ pub fn default_port(kind: &DbKind) -> Option<u16> {
         DbKind::Sqlite => None,
         DbKind::Mysql => Some(3306),
         DbKind::Postgres => Some(5432),
+        DbKind::Jdbc => None,
     }
 }
 
@@ -234,12 +261,20 @@ pub fn default_max_result_bytes() -> usize {
     1024 * 1024
 }
 
-fn default_audit_max_events() -> usize {
-    300
+fn default_audit_retention_days() -> u32 {
+    crate::audit::DEFAULT_AUDIT_RETENTION_DAYS
 }
 
 fn default_language() -> String {
     "zh-CN".to_string()
+}
+
+fn default_circuit_breaker_window_minutes() -> u32 {
+    10
+}
+
+fn default_circuit_breaker_threshold() -> u32 {
+    5
 }
 
 fn normalize_settings(settings: &mut SettingsConfig) {
@@ -247,6 +282,14 @@ fn normalize_settings(settings: &mut SettingsConfig) {
     if settings.language.is_empty() {
         settings.language = default_language();
     }
+    settings.jdbc_java_home = settings
+        .jdbc_java_home
+        .take()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    settings.auto_circuit_breaker_window_minutes =
+        settings.auto_circuit_breaker_window_minutes.clamp(1, 60);
+    settings.auto_circuit_breaker_threshold = settings.auto_circuit_breaker_threshold.clamp(1, 50);
 }
 
 pub const MCP_TOOL_NAMES: [&str; 7] = [
@@ -319,6 +362,21 @@ fn normalize_connection(connection: &mut ConnectionConfig) -> anyhow::Result<()>
         .take()
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| !value.is_empty());
+    connection.jdbc_bundle_id = connection
+        .jdbc_bundle_id
+        .take()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    connection.jdbc_url = connection
+        .jdbc_url
+        .take()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    connection.jdbc_driver_class = connection
+        .jdbc_driver_class
+        .take()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
     connection.max_rows = connection.max_rows.clamp(1, 5000);
     connection.query_timeout_ms = connection.query_timeout_ms.clamp(500, 60_000);
     connection.max_connections = connection.max_connections.clamp(1, 3);
@@ -337,19 +395,28 @@ fn normalize_connection(connection: &mut ConnectionConfig) -> anyhow::Result<()>
     {
         return Err(anyhow::anyhow!("invalid connection id"));
     }
-    if connection.name.is_empty() || connection.database.is_empty() {
-        return Err(anyhow::anyhow!("connection name and database are required"));
+    if connection.name.is_empty() {
+        return Err(anyhow::anyhow!("connection name is required"));
     }
 
     match connection.kind {
         DbKind::Sqlite => {
+            if connection.database.is_empty() {
+                return Err(anyhow::anyhow!("connection database is required"));
+            }
             connection.credential_ref = None;
             connection.host = None;
             connection.port = None;
             connection.username = None;
             connection.ssl_mode = None;
+            connection.jdbc_bundle_id = None;
+            connection.jdbc_url = None;
+            connection.jdbc_driver_class = None;
         }
         DbKind::Mysql | DbKind::Postgres => {
+            if connection.database.is_empty() {
+                return Err(anyhow::anyhow!("connection database is required"));
+            }
             if let Some(credential_ref) = connection.credential_ref.as_deref() {
                 let expected = crate::vault::CredentialVault::credential_ref(&connection.id);
                 if credential_ref != expected {
@@ -392,11 +459,38 @@ fn normalize_connection(connection: &mut ConnectionConfig) -> anyhow::Result<()>
                         | "verify_full"
                         | "verify-full"
                 ),
-                DbKind::Sqlite => true,
+                DbKind::Sqlite | DbKind::Jdbc => true,
             };
             if !valid_ssl {
                 return Err(anyhow::anyhow!("unsupported database ssl_mode"));
             }
+            connection.jdbc_bundle_id = None;
+            connection.jdbc_url = None;
+            connection.jdbc_driver_class = None;
+        }
+        DbKind::Jdbc => {
+            if let Some(credential_ref) = connection.credential_ref.as_deref() {
+                let expected = crate::vault::CredentialVault::credential_ref(&connection.id);
+                if credential_ref != expected {
+                    return Err(anyhow::anyhow!(
+                        "credential_ref must match the connection id"
+                    ));
+                }
+            }
+            if connection.jdbc_bundle_id.is_none() {
+                return Err(anyhow::anyhow!("JDBC driver bundle is required"));
+            }
+            if !connection
+                .jdbc_url
+                .as_deref()
+                .is_some_and(|value| value.starts_with("jdbc:"))
+            {
+                return Err(anyhow::anyhow!("a valid JDBC URL is required"));
+            }
+            connection.database.clear();
+            connection.host = None;
+            connection.port = None;
+            connection.ssl_mode = None;
         }
     }
     Ok(())
@@ -461,13 +555,13 @@ require_token = true
         assert!(config.normalize_and_validate().is_err());
 
         let mut config = AppConfig::default();
-        config.settings.audit_max_events = usize::MAX;
+        config.settings.audit_retention_days = 10;
         config
             .normalize_and_validate()
             .expect("valid defaults normalize");
         assert_eq!(
-            config.settings.audit_max_events,
-            crate::audit::MAX_AUDIT_MAX_EVENTS
+            config.settings.audit_retention_days,
+            crate::audit::DEFAULT_AUDIT_RETENTION_DAYS
         );
     }
 
@@ -485,6 +579,9 @@ require_token = true
             username: Some("readonly".to_string()),
             credential_ref: Some("vault://other_db".to_string()),
             ssl_mode: None,
+            jdbc_bundle_id: None,
+            jdbc_url: None,
+            jdbc_driver_class: None,
             max_rows: 100,
             query_timeout_ms: 1_000,
             max_connections: 1,

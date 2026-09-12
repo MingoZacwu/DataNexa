@@ -8,6 +8,9 @@ import type { AppSnapshot, AuditEvent } from "../../types";
 import { EventList, IconTooltip, PanelHeader, PanelIconAction, QuickStep } from "../../components/ui";
 import { ConnectionListItem } from "../connections/ConnectionsView";
 
+// Must match the backend snapshot list limit (audit.rs MAX_AUDIT_LIST_EVENTS).
+const AUDIT_LIST_LIMIT = 5000;
+
 export function OverviewView({
   t,
   snapshot,
@@ -48,7 +51,7 @@ export function OverviewView({
     event.tool.startsWith("datanexa_") && new Date(event.timestamp).getTime() >= callsCutoff
   )).length;
   const oldestAuditEvent = snapshot.audit_events[snapshot.audit_events.length - 1];
-  const callsPossiblyTruncated = snapshot.audit_events.length >= snapshot.config.settings.audit_max_events
+  const callsPossiblyTruncated = snapshot.audit_events.length >= AUDIT_LIST_LIMIT
     && Boolean(oldestAuditEvent && new Date(oldestAuditEvent.timestamp).getTime() >= callsCutoff);
   const startupFailed = Boolean(snapshot.startup_error);
   const emergencyDisconnect = snapshot.emergency_disconnect;
@@ -118,7 +121,7 @@ export function OverviewView({
           )}
         />
         <div className="compact-list">
-          {snapshot.config.connections.slice(0, 5).map((connection) => (
+          {snapshot.config.connections.map((connection) => (
             <ConnectionListItem t={t} key={connection.id} connection={connection} compact />
           ))}
         </div>

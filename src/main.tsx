@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { api } from "./lib/tauri";
 import "./styles.css";
 import "./future-glass.css";
 
@@ -17,6 +18,18 @@ document.documentElement.dataset.platform = /Mac|iPhone|iPad|iPod/i.test(navigat
 document.documentElement.dataset.systemMaterial = "fallback";
 document.documentElement.dataset.theme = themeMode;
 document.documentElement.classList.toggle("dark", themeMode === "dark" || (themeMode === "system" && systemPrefersDark));
+
+// Forward global script errors and unhandled promise rejections to the Rust
+// debug log so runtime failures are captured even when no toast is shown.
+window.addEventListener("error", (event) => {
+  void api.logFrontendEvent("error", `${event.message} (${event.filename}:${event.lineno}:${event.colno})`);
+});
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event.reason instanceof Error
+    ? `${event.reason.name}: ${event.reason.message}`
+    : String(event.reason);
+  void api.logFrontendEvent("unhandledrejection", reason);
+});
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

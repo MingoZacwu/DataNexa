@@ -16,6 +16,7 @@
   --amber: #f59e0b;
   --red: #e5484d;
   --violet: #7c3aed;
+  --cyan: #0891b2;
   --card-radius: 8px;
   --control-height: 36px;
   --sidebar-content-width: 192px;
@@ -37,6 +38,7 @@
   --amber: #fbbf24;
   --red: #fb7185;
   --violet: #c4b5fd;
+  --cyan: #22d3ee;
   --shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
   --soft-shadow: 0 14px 38px rgba(0, 0, 0, 0.20);
 }
@@ -1073,9 +1075,660 @@ p {
   box-shadow: var(--soft-shadow);
 }
 
+.settings-tabs .jdbc-support-tab {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.settings-tab-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--blue) 20%, transparent);
+  border-radius: 999px;
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 8%, transparent);
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 700;
+}
+
 .settings-stack {
   display: grid;
   gap: 12px;
+}
+
+.driver-heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.local-driver-picker { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: .82rem; }
+
+.storage-overview-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.storage-selector-card {
+  width: 100%;
+  min-width: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.storage-selector-card:hover,
+.storage-selector-card.selected {
+  border-color: rgba(36, 107, 254, 0.28);
+  background: color-mix(in srgb, var(--surface) 92%, var(--blue));
+}
+
+.storage-selector-card.green:hover,
+.storage-selector-card.green.selected {
+  border-color: rgba(22, 160, 100, 0.28);
+  background: color-mix(in srgb, var(--surface) 92%, var(--green));
+}
+
+.storage-selector-card:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--blue) 65%, transparent);
+  outline-offset: 2px;
+}
+
+.storage-usage-bar {
+  display: flex;
+  width: 100%;
+  height: 8px;
+  margin-top: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 65%, transparent);
+}
+
+.storage-usage-segment {
+  min-width: 2px;
+  height: 100%;
+}
+
+.storage-usage-segment.runtime,
+.storage-breakdown-dot.runtime { background: var(--red); }
+.storage-usage-segment.drivers,
+.storage-breakdown-dot.drivers { background: var(--amber); }
+.storage-usage-segment.maven,
+.storage-breakdown-dot.maven { background: var(--violet); }
+.storage-usage-segment.audit,
+.storage-breakdown-dot.audit { background: var(--blue); }
+.storage-usage-segment.access,
+.storage-breakdown-dot.access { background: var(--green); }
+.storage-usage-segment.config,
+.storage-breakdown-dot.config { background: var(--blue-2); }
+.storage-usage-segment.logs,
+.storage-breakdown-dot.logs { background: var(--cyan); }
+.storage-usage-segment.other,
+.storage-breakdown-dot.other { background: var(--muted); }
+
+.storage-breakdown-dot {
+  flex: 0 0 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.storage-details-panel > .storage-usage-bar {
+  margin-top: 0;
+  margin-bottom: 14px;
+}
+
+.runtime-cpu-overview {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--card-radius);
+  background: var(--surface-strong);
+}
+
+.runtime-cpu-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.runtime-cpu-heading > div {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.runtime-cpu-heading span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.runtime-cpu-heading small {
+  color: var(--green);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.runtime-cpu-heading > strong {
+  flex: 0 0 auto;
+  color: var(--green);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.runtime-cpu-meter {
+  width: 100%;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 65%, transparent);
+}
+
+.runtime-cpu-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--green);
+  transition: width 300ms ease;
+}
+
+.runtime-cpu-history {
+  height: 42px;
+  display: flex;
+  align-items: end;
+  gap: 3px;
+}
+
+.runtime-cpu-history > span {
+  flex: 1 1 0;
+  min-width: 3px;
+  border-radius: 3px 3px 1px 1px;
+  background: color-mix(in srgb, var(--green) 72%, transparent);
+  transition: height 300ms ease;
+}
+
+.storage-detail-list {
+  display: grid;
+  gap: 6px;
+}
+
+.storage-detail-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(190px, 0.42fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--card-radius);
+  background: var(--surface-strong);
+}
+
+.storage-detail-label {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.storage-detail-label strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.storage-percent-badge {
+  flex: 0 0 auto;
+  min-height: 20px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--surface-strong) 84%, var(--line));
+  font-size: 10px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.storage-detail-row code { min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.storage-detail-row > span { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+.jdbc-cache-dialog {
+  width: min(480px, calc(100vw - 40px));
+}
+
+.jdbc-remove-dialog {
+  width: min(420px, calc(100vw - 40px));
+}
+
+.jdbc-remove-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.jdbc-cache-options {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.jdbc-cache-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--surface-strong) 84%, var(--line));
+  cursor: pointer;
+}
+
+.jdbc-cache-option.disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.jdbc-cache-option input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--blue);
+}
+
+.jdbc-cache-option span {
+  min-width: 0;
+  font-size: 13px;
+}
+
+.jdbc-cache-option strong,
+.jdbc-cache-total strong {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.jdbc-cache-clean {
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+  padding: 30px 12px 22px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.jdbc-cache-clean svg {
+  color: var(--green);
+}
+
+.jdbc-cache-clean p {
+  font-size: 13px;
+}
+
+.jdbc-cache-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 2px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.jdbc-cache-total strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.jdbc-cache-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.runtime-driver-list { display: grid; gap: 8px; }
+.runtime-driver-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 90px 120px;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--card-radius);
+  background: var(--surface-strong);
+}
+.runtime-driver-identity { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.runtime-driver-identity > div:last-child { min-width: 0; display: grid; gap: 3px; }
+.runtime-driver-identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.runtime-driver-identity span,
+.runtime-driver-stat span { color: var(--muted); font-size: 11px; }
+.runtime-driver-stat { display: grid; gap: 3px; text-align: right; }
+.runtime-driver-stat strong { font-size: 12px; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 720px) {
+  .storage-overview-grid { grid-template-columns: 1fr; }
+  .storage-management .driver-section-heading { align-items: flex-start; }
+  .storage-detail-row { grid-template-columns: 1fr auto; gap: 4px 10px; }
+  .storage-detail-row code { grid-column: 1 / -1; grid-row: 2; }
+  .runtime-driver-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .runtime-driver-stat { text-align: left; }
+}
+
+.driver-management {
+  min-height: 0;
+}
+
+.driver-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.driver-section-heading h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.driver-section-heading p {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.runtime-heading-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.runtime-status-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--card-radius);
+  background: var(--surface-strong);
+}
+
+.runtime-status-row code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-status-meta {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.runtime-status-meta > span {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.runtime-status-action {
+  white-space: nowrap;
+}
+
+.runtime-status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.runtime-status-badge.available {
+  color: var(--green);
+  background: rgba(22, 160, 100, 0.1);
+}
+
+.runtime-status-badge.unavailable {
+  color: var(--red);
+  background: rgba(229, 72, 77, 0.1);
+}
+
+.runtime-status-badge.neutral {
+  color: var(--muted);
+  background: rgba(100, 116, 139, 0.1);
+}
+
+.driver-list {
+  display: grid;
+  gap: 8px;
+}
+
+.driver-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--card-radius);
+  background: var(--surface-strong);
+}
+
+.driver-row-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.driver-row-main code,
+.driver-row-main span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.driver-row-main code {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.driver-row-main span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.jdbc-risk-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin-top: 0;
+  padding: 11px 12px;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: var(--card-radius);
+  background: rgba(245, 158, 11, 0.07);
+  box-shadow: var(--soft-shadow);
+  backdrop-filter: blur(22px);
+}
+
+.jdbc-risk-panel {
+  min-width: 0;
+}
+
+.jdbc-risk-summary-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  color: var(--amber);
+  background: rgba(245, 158, 11, 0.14);
+}
+
+.jdbc-risk-summary p {
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.jdbc-risk-details-button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding-inline: 10px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.jdbc-risk-dialog {
+  width: min(640px, calc(100vw - 32px));
+}
+
+.jdbc-risk-detail-body {
+  display: grid;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.jdbc-risk-detail-body p {
+  margin: 0;
+}
+
+.jdbc-risk-detail-body ul {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding-left: 20px;
+  list-style: disc;
+}
+
+.jdbc-risk-detail-body li::marker {
+  color: var(--amber);
+}
+
+.jdbc-risk-detail-recommendation {
+  padding: 10px 12px;
+  border-left: 3px solid var(--amber);
+  color: var(--ink);
+  background: rgba(245, 158, 11, 0.07);
+}
+
+.jdbc-risk-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
+@media (max-width: 720px) {
+  .jdbc-risk-summary {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .jdbc-risk-details-button {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
+.jdbc-install-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.jdbc-install-form {
+  display: grid;
+  gap: 12px;
+}
+
+.jdbc-install-progress {
+  display: grid;
+  gap: 7px;
+  padding: 10px 12px;
+  border: 1px solid rgba(37, 99, 235, 0.2);
+  border-radius: var(--card-radius);
+  background: rgba(37, 99, 235, 0.06);
+}
+
+.jdbc-install-progress-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.jdbc-install-progress .update-progress {
+  width: 100%;
+}
+
+.jdbc-runtime-progress {
+  margin-top: 10px;
+}
+
+.jdbc-install-form footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.driver-security-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: var(--card-radius);
+  color: var(--muted);
+  background: rgba(245, 158, 11, 0.07);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.driver-security-note svg {
+  flex: 0 0 auto;
+  color: var(--amber);
+}
+
+.db-badge.jdbc {
+  color: var(--blue);
+  background: rgba(37, 99, 235, 0.1);
 }
 
 .settings-grid {
@@ -2005,14 +2658,6 @@ pre {
   color: var(--ink);
 }
 
-.safety-panel .panel-header {
-  margin-bottom: 12px;
-}
-
-.safety-panel .button {
-  flex: 0 0 auto;
-}
-
 .policy-dialog {
   position: fixed;
   top: 50%;
@@ -2145,6 +2790,8 @@ pre {
   background: rgba(37, 99, 235, 0.08);
   font-size: 13px;
   font-weight: 700;
+  cursor: default;
+  user-select: none;
 }
 
 .about-hero p {
@@ -2158,6 +2805,29 @@ pre {
   margin-top: 22px;
   padding-top: 16px;
   border-top: 1px solid var(--line);
+}
+
+.debug-log-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.debug-log-folder-btn {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.debug-log-folder-btn:hover {
+  color: var(--blue);
+  background: rgba(37, 99, 235, 0.08);
 }
 
 .about-footer {
@@ -2229,6 +2899,18 @@ pre {
   color: #fcd34d;
   border-color: rgba(251, 191, 36, 0.32);
   background: rgba(251, 191, 36, 0.11);
+}
+
+.security-list li.security-info {
+  grid-column: 1 / -1;
+  color: var(--blue);
+  border-color: rgba(37, 99, 235, 0.28);
+  background: rgba(37, 99, 235, 0.07);
+}
+
+:root.dark .security-list li.security-info {
+  border-color: rgba(96, 165, 250, 0.30);
+  background: rgba(96, 165, 250, 0.10);
 }
 
 .empty-state {
@@ -2815,6 +3497,10 @@ pre {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+
+.about-update-switch-row + .about-update-switch-row {
+  margin-top: 8px;
 }
 
 .about-update-switch-row > span {

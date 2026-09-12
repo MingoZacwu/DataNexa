@@ -76,7 +76,8 @@ const MAX_MCP_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_MCP_RESULT_BYTES: usize = MAX_MCP_RESPONSE_BYTES - 64 * 1024;
 const MCP_TOOL_CALL_COMPLETED_EVENT: &str = "mcp://tool-call-completed";
 const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
-const SUPPORTED_PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", LATEST_PROTOCOL_VERSION];
+const SUPPORTED_PROTOCOL_VERSIONS: [&str; 3] =
+    ["2025-03-26", "2025-06-18", LATEST_PROTOCOL_VERSION];
 
 struct ToolRateLimit {
     tokens: f64,
@@ -196,7 +197,10 @@ async fn activate_listener(
             .await;
 
         if let Err(error) = result {
-            eprintln!("DataNexa MCP server stopped with error: {error}");
+            crate::debug_log::error(
+                "mcp",
+                format_args!("MCP server stopped with error: {error}"),
+            );
         }
         let mut runtime = cleanup_app.mcp.write().await;
         if runtime.generation == generation {
@@ -212,6 +216,14 @@ async fn activate_listener(
     runtime.bound_endpoint = Some(format!("http://{}:{}/mcp", config.host, local_addr.port()));
     runtime.shutdown = Some(shutdown_tx);
     runtime.task = Some(task);
+    crate::debug_log::info(
+        "mcp",
+        format_args!(
+            "MCP server started (endpoint=http://{}:{}/mcp)",
+            config.host,
+            local_addr.port()
+        ),
+    );
     Ok(status_from(config, &runtime))
 }
 
@@ -236,6 +248,7 @@ pub async fn stop(app: Arc<AppState>) -> ServerStatus {
 }
 
 async fn stop_locked(app: &Arc<AppState>) {
+    crate::debug_log::info("mcp", format_args!("MCP server stopping"));
     app.cancel_mcp_requests().await;
     app.db.close_all().await;
     let config = app.config.read().await.server.clone();
@@ -428,6 +441,14 @@ async fn handle_mcp_post(
         return StatusCode::ACCEPTED.into_response();
     }
 
+    let result = if request.method == "tools/call"
+        && protocol_version_header(&headers).is_none_or(|version| version == "2025-03-26")
+    {
+        result.map(strip_unsupported_structured_content)
+    } else {
+        result
+    };
+
     match result {
         Ok(value) => Json(json!({
             "jsonrpc": "2.0",
@@ -502,18 +523,28 @@ fn validate_transport_headers(headers: &HeaderMap) -> Result<(), Response> {
 
 #[allow(clippy::result_large_err)]
 fn validate_protocol_header(headers: &HeaderMap) -> Result<(), Response> {
-    let version = headers
-        .get("mcp-protocol-version")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
+    let Some(version) = protocol_version_header(headers) else {
+        // Older HTTP MCP clients did not send this header. Treat them as the
+        // deprecated 2025-03-26 transport for interoperability.
+        return Ok(());
+    };
     if !SUPPORTED_PROTOCOL_VERSIONS.contains(&version) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Missing or unsupported MCP-Protocol-Version",
-        )
-            .into_response());
+        return Err((StatusCode::BAD_REQUEST, "Unsupported MCP-Protocol-Version").into_response());
     }
     Ok(())
+}
+
+fn protocol_version_header(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get("mcp-protocol-version")
+        .and_then(|value| value.to_str().ok())
+}
+
+fn strip_unsupported_structured_content(mut result: Value) -> Value {
+    if let Some(object) = result.as_object_mut() {
+        object.remove("structuredContent");
+    }
+    result
 }
 
 #[allow(clippy::result_large_err)]
@@ -556,6 +587,11 @@ async fn validate_request(app: Arc<AppState>, headers: &HeaderMap) -> Result<Aud
                 identity.denied_tools,
             ));
         }
+        // Never log the supplied token value itself, only the outcome.
+        crate::debug_log::warn(
+            "mcp_auth",
+            format_args!("MCP request rejected: missing or invalid bearer token"),
+        );
         return Err((StatusCode::UNAUTHORIZED, "Missing or invalid bearer token").into_response());
     }
     Ok(AuditActor::unauthenticated())
@@ -701,7 +737,10 @@ fn emit_mcp_tool_call_completed(app: &Arc<AppState>, failed: bool) {
         MCP_TOOL_CALL_COMPLETED_EVENT,
         McpToolCallCompletedPayload { failed },
     ) {
-        eprintln!("failed to emit MCP tool-call completion event: {error}");
+        crate::debug_log::warn(
+            "mcp",
+            format_args!("failed to emit MCP tool-call completion event: {error}"),
+        );
     }
 }
 
@@ -728,7 +767,11 @@ fn tools(tool_configs: &[ToolConfig]) -> Vec<Value> {
         tool(
             "datanexa_list_connections",
             tool_description("datanexa_list_connections"),
-            json!({ "type": "object", "properties": {} }),
+            json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
         ),
         tool(
             "datanexa_get_schema",
@@ -795,7 +838,7 @@ fn tool_description(name: &str) -> &'static str {
         }
         "datanexa_explain_sql" => "Run EXPLAIN for a read-only SQL statement.",
         "datanexa_policy_check" => {
-            "Validate SQL against DataNexa read-only policy without executing it."
+            "Validate SQL against DataNexa read-only policy without executing it. Provide either kind (sqlite, mysql, or postgres) or connection_id."
         }
         _ => "Unknown DataNexa MCP tool.",
     }
@@ -812,6 +855,7 @@ fn tool(name: &str, description: &str, input_schema: Value) -> Value {
 fn connection_schema() -> Value {
     json!({
         "type": "object",
+        "additionalProperties": false,
         "required": ["connection_id"],
         "properties": {
             "connection_id": { "type": "string" }
@@ -822,6 +866,7 @@ fn connection_schema() -> Value {
 fn table_schema() -> Value {
     json!({
         "type": "object",
+        "additionalProperties": false,
         "required": ["connection_id", "table"],
         "properties": {
             "connection_id": { "type": "string" },
@@ -834,6 +879,7 @@ fn table_schema() -> Value {
 fn sample_schema() -> Value {
     json!({
         "type": "object",
+        "additionalProperties": false,
         "required": ["connection_id", "table"],
         "properties": {
             "connection_id": { "type": "string" },
@@ -847,6 +893,7 @@ fn sample_schema() -> Value {
 fn sql_schema() -> Value {
     json!({
         "type": "object",
+        "additionalProperties": false,
         "required": ["connection_id", "sql"],
         "properties": {
             "connection_id": { "type": "string" },
@@ -858,11 +905,8 @@ fn sql_schema() -> Value {
 fn policy_check_schema() -> Value {
     json!({
         "type": "object",
+        "additionalProperties": false,
         "required": ["sql"],
-        "anyOf": [
-            { "required": ["kind"] },
-            { "required": ["connection_id"] }
-        ],
         "properties": {
             "connection_id": { "type": "string" },
             "kind": {
@@ -898,9 +942,26 @@ async fn call_tool_audited(
     let audit_connection_id = optional_string(&args, "connection_id");
     let audit_connection_name = connection_name(&app, audit_connection_id.as_deref()).await;
     let audit_sql = audit_sql_for_args(&app, &args).await;
+    let text = text_for_app(&app).await;
+    let is_jdbc = if let Some(connection_id) = audit_connection_id.as_deref() {
+        app.config
+            .read()
+            .await
+            .connections
+            .iter()
+            .any(|connection| connection.id == connection_id && connection.kind == DbKind::Jdbc)
+    } else {
+        false
+    };
     let result = call_tool(app.clone(), actor.clone(), params).await;
+    let result = if is_jdbc {
+        result.map_err(|error| anyhow::anyhow!(text.jdbc_error(&sanitize_error(&error))))
+    } else {
+        result
+    };
+    let breaker_token_id = actor.token_id.clone();
     if let Err(error) = &result {
-        let max_events = audit_limit(&app).await;
+        let retention_days = audit_retention_days(&app).await;
         let denied = error.to_string().contains("disabled in DataNexa")
             || error
                 .to_string()
@@ -915,6 +976,19 @@ async fn call_tool_audited(
         } else {
             AuditStatus::Error
         };
+        // Non-denied failures point at real backend problems (connectivity,
+        // SQL errors, sidecar faults) that users report without console
+        // access, so mirror them into the debug log with timing context.
+        if !matches!(status, AuditStatus::Denied) {
+            crate::debug_log::error(
+                "mcp_tool",
+                format_args!(
+                    "tool call failed (tool={name}, elapsed={}ms, error={})",
+                    started.elapsed().as_millis(),
+                    sanitize_error(error)
+                ),
+            );
+        }
         app.audit
             .record_with_actor(
                 actor,
@@ -926,12 +1000,25 @@ async fn call_tool_audited(
                 Some(started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)),
                 None,
                 audit_sql,
-                max_events,
+                retention_days,
             )
             .await
             .map_err(|audit_error| {
                 anyhow::anyhow!("audit storage unavailable: {audit_error}; request failed")
             })?;
+        // Evaluate the circuit breaker after the denial is persisted so the
+        // count query includes the event that was just recorded.
+        if denied {
+            if let Some(token_id) = &breaker_token_id {
+                crate::circuit_breaker::evaluate(app.clone(), token_id.clone()).await;
+            }
+        }
+    } else if let Ok(outcome) = &result {
+        if outcome.denied {
+            if let Some(token_id) = &breaker_token_id {
+                crate::circuit_breaker::evaluate(app.clone(), token_id.clone()).await;
+            }
+        }
     }
     result
 }
@@ -991,7 +1078,7 @@ async fn call_tool(
             }
         }
     }
-    let max_events = audit_limit(&app).await;
+    let retention_days = audit_retention_days(&app).await;
     let text = text_for_app(&app).await;
     let mut denied = false;
 
@@ -1003,7 +1090,7 @@ async fn call_tool(
                     .connections
                     .iter()
                     .filter(|connection| connection.enabled)
-                    .map(public_connection)
+                    .map(|connection| public_connection(connection, &text))
                     .collect::<Vec<Value>>()
             };
             let connections = if actor.token_id.is_some() {
@@ -1030,7 +1117,7 @@ async fn call_tool(
                     None,
                     Some(connections.len()),
                     None,
-                    max_events,
+                    retention_days,
                 )
                 .await?;
             json!({ "connections": connections })
@@ -1038,7 +1125,11 @@ async fn call_tool(
         "datanexa_get_schema" => {
             let connection_id = required_string(&args, "connection_id")?;
             let connection = connection(app.clone(), connection_id.clone()).await?;
-            let schema = app.db.list_schema(&connection, &app.vault, &text).await?;
+            let schema = if connection.kind == DbKind::Jdbc {
+                app.jdbc.list_schema(&connection, &app.vault).await?
+            } else {
+                app.db.list_schema(&connection, &app.vault, &text).await?
+            };
             app.audit
                 .record_with_actor(
                     actor.clone(),
@@ -1050,7 +1141,7 @@ async fn call_tool(
                     None,
                     Some(schema.len()),
                     None,
-                    max_events,
+                    retention_days,
                 )
                 .await?;
             json!({ "schema": schema })
@@ -1060,10 +1151,15 @@ async fn call_tool(
             let table = required_string(&args, "table")?;
             let schema = optional_string(&args, "schema");
             let connection = connection(app.clone(), connection_id.clone()).await?;
-            let columns = app
-                .db
-                .describe_table(&connection, &app.vault, schema.as_deref(), &table, &text)
-                .await?;
+            let columns = if connection.kind == DbKind::Jdbc {
+                app.jdbc
+                    .describe_table(&connection, &app.vault, schema.as_deref(), &table)
+                    .await?
+            } else {
+                app.db
+                    .describe_table(&connection, &app.vault, schema.as_deref(), &table, &text)
+                    .await?
+            };
             app.audit
                 .record_with_actor(
                     actor.clone(),
@@ -1075,7 +1171,7 @@ async fn call_tool(
                     None,
                     Some(columns.len()),
                     None,
-                    max_events,
+                    retention_days,
                 )
                 .await?;
             json!({ "columns": columns })
@@ -1089,45 +1185,74 @@ async fn call_tool(
                 .and_then(Value::as_u64)
                 .map(|value| value as u32);
             let connection = connection(app.clone(), connection_id.clone()).await?;
-            let result = app
-                .db
-                .sample_rows(
-                    &connection,
-                    &app.vault,
-                    schema.as_deref(),
-                    &table,
-                    limit,
-                    &text,
-                )
-                .await?;
-            app.audit
-                .record_with_actor(
-                    actor.clone(),
-                    Some(connection_id),
-                    Some(connection.name.clone()),
-                    name,
-                    if result.truncated {
-                        AuditStatus::Truncated
-                    } else {
-                        AuditStatus::Allowed
-                    },
-                    None,
-                    Some(result.elapsed_ms),
-                    Some(result.row_count),
-                    Some(audit_sql(&app, &connection.kind, &result.rewritten_sql).await),
-                    max_events,
-                )
-                .await?;
-            json!(result)
+            if connection.kind == DbKind::Jdbc {
+                let reason = text.jdbc_sample_rows_unsupported();
+                app.audit
+                    .record_with_actor(
+                        actor.clone(),
+                        Some(connection_id.clone()),
+                        Some(connection.name.clone()),
+                        name,
+                        AuditStatus::Error,
+                        Some(reason.to_string()),
+                        None,
+                        None,
+                        None,
+                        retention_days,
+                    )
+                    .await?;
+                denied = true;
+                json!(unsupported_tool(
+                    "datanexa_sample_rows",
+                    &connection_id,
+                    reason,
+                ))
+            } else {
+                let result = app
+                    .db
+                    .sample_rows(
+                        &connection,
+                        &app.vault,
+                        schema.as_deref(),
+                        &table,
+                        limit,
+                        &text,
+                    )
+                    .await?;
+                app.audit
+                    .record_with_actor(
+                        actor.clone(),
+                        Some(connection_id),
+                        Some(connection.name.clone()),
+                        name,
+                        if result.truncated {
+                            AuditStatus::Truncated
+                        } else {
+                            AuditStatus::Allowed
+                        },
+                        None,
+                        Some(result.elapsed_ms),
+                        Some(result.row_count),
+                        Some(audit_sql(&app, &connection.kind, &result.rewritten_sql).await),
+                        retention_days,
+                    )
+                    .await?;
+                json!(result)
+            }
         }
         "datanexa_execute_readonly_sql" => {
             let connection_id = required_string(&args, "connection_id")?;
             let sql = required_string(&args, "sql")?;
             let connection = connection(app.clone(), connection_id.clone()).await?;
-            let (policy, result) = app
-                .db
-                .execute_readonly(&connection, &app.vault, &sql, &text)
-                .await?;
+            let (policy, result) = if connection.kind == DbKind::Jdbc {
+                app.jdbc
+                    .execute_readonly(&connection, &app.vault, &sql, &text)
+                    .await?
+            } else {
+                app.db
+                    .execute_readonly(&connection, &app.vault, &sql, &text)
+                    .await?
+            };
             if !policy.allowed {
                 denied = true;
                 app.audit
@@ -1141,7 +1266,7 @@ async fn call_tool(
                         None,
                         None,
                         Some(audit_sql(&app, &connection.kind, &sql).await),
-                        max_events,
+                        retention_days,
                     )
                     .await?;
                 json!({ "policy": policy, "result": null })
@@ -1162,7 +1287,7 @@ async fn call_tool(
                         Some(result.elapsed_ms),
                         Some(result.row_count),
                         Some(audit_sql(&app, &connection.kind, &result.rewritten_sql).await),
-                        max_events,
+                        retention_days,
                     )
                     .await?;
                 json!({ "policy": policy, "result": result })
@@ -1172,48 +1297,72 @@ async fn call_tool(
             let connection_id = required_string(&args, "connection_id")?;
             let sql = required_string(&args, "sql")?;
             let connection = connection(app.clone(), connection_id.clone()).await?;
-            let (policy, result) = app
-                .db
-                .explain_sql(&connection, &app.vault, &sql, &text)
-                .await?;
-            if !policy.allowed {
-                denied = true;
+            if connection.kind == DbKind::Jdbc {
+                let reason = text.jdbc_explain_unsupported();
                 app.audit
                     .record_with_actor(
                         actor.clone(),
-                        Some(connection_id),
+                        Some(connection_id.clone()),
                         Some(connection.name.clone()),
                         name,
-                        AuditStatus::Denied,
-                        Some(policy.reason.clone()),
+                        AuditStatus::Error,
+                        Some(reason.to_string()),
                         None,
                         None,
                         Some(audit_sql(&app, &connection.kind, &sql).await),
-                        max_events,
+                        retention_days,
                     )
                     .await?;
-                json!({ "policy": policy, "result": null })
+                denied = true;
+                json!(unsupported_tool(
+                    "datanexa_explain_sql",
+                    &connection_id,
+                    reason,
+                ))
             } else {
-                let result = result.ok_or_else(|| anyhow::anyhow!("missing query result"))?;
-                app.audit
-                    .record_with_actor(
-                        actor.clone(),
-                        Some(connection_id),
-                        Some(connection.name.clone()),
-                        name,
-                        if result.truncated {
-                            AuditStatus::Truncated
-                        } else {
-                            AuditStatus::Allowed
-                        },
-                        None,
-                        Some(result.elapsed_ms),
-                        Some(result.row_count),
-                        Some(audit_sql(&app, &connection.kind, &result.rewritten_sql).await),
-                        max_events,
-                    )
+                let (policy, result) = app
+                    .db
+                    .explain_sql(&connection, &app.vault, &sql, &text)
                     .await?;
-                json!({ "policy": policy, "result": result })
+                if !policy.allowed {
+                    denied = true;
+                    app.audit
+                        .record_with_actor(
+                            actor.clone(),
+                            Some(connection_id),
+                            Some(connection.name.clone()),
+                            name,
+                            AuditStatus::Denied,
+                            Some(policy.reason.clone()),
+                            None,
+                            None,
+                            Some(audit_sql(&app, &connection.kind, &sql).await),
+                            retention_days,
+                        )
+                        .await?;
+                    json!({ "policy": policy, "result": null })
+                } else {
+                    let result = result.ok_or_else(|| anyhow::anyhow!("missing query result"))?;
+                    app.audit
+                        .record_with_actor(
+                            actor.clone(),
+                            Some(connection_id),
+                            Some(connection.name.clone()),
+                            name,
+                            if result.truncated {
+                                AuditStatus::Truncated
+                            } else {
+                                AuditStatus::Allowed
+                            },
+                            None,
+                            Some(result.elapsed_ms),
+                            Some(result.row_count),
+                            Some(audit_sql(&app, &connection.kind, &result.rewritten_sql).await),
+                            retention_days,
+                        )
+                        .await?;
+                    json!({ "policy": policy, "result": result })
+                }
             }
         }
         "datanexa_policy_check" => {
@@ -1250,7 +1399,7 @@ async fn call_tool(
                     None,
                     None,
                     Some(audit_sql(&app, &kind, &sql).await),
-                    max_events,
+                    retention_days,
                 )
                 .await?;
             json!({ "policy": policy })
@@ -1266,14 +1415,15 @@ async fn call_tool(
                     "text": serde_json::to_string_pretty(&payload)?
                 }
             ],
+            "structuredContent": payload,
             "isError": false
         }),
         denied,
     })
 }
 
-async fn audit_limit(app: &Arc<AppState>) -> usize {
-    app.config.read().await.settings.audit_max_events
+async fn audit_retention_days(app: &Arc<AppState>) -> u32 {
+    app.config.read().await.settings.audit_retention_days
 }
 
 async fn connection_name(app: &Arc<AppState>, connection_id: Option<&str>) -> Option<String> {
@@ -1319,7 +1469,7 @@ async fn connection(app: Arc<AppState>, connection_id: String) -> anyhow::Result
     Ok(connection)
 }
 
-fn public_connection(connection: &ConnectionConfig) -> Value {
+fn public_connection(connection: &ConnectionConfig, text: &BackendText) -> Value {
     json!({
         "id": connection.id,
         "name": connection.name,
@@ -1327,7 +1477,51 @@ fn public_connection(connection: &ConnectionConfig) -> Value {
         "enabled": connection.enabled,
         "max_rows": connection.max_rows,
         "query_timeout_ms": connection.query_timeout_ms,
-        "max_result_bytes": connection.max_result_bytes
+        "max_result_bytes": connection.max_result_bytes,
+        "capabilities": connection_capabilities(&connection.kind, text)
+    })
+}
+
+fn connection_capabilities(kind: &DbKind, text: &BackendText) -> Value {
+    let mut supported_tools = vec![
+        Value::from("datanexa_get_schema"),
+        Value::from("datanexa_describe_table"),
+        Value::from("datanexa_execute_readonly_sql"),
+        Value::from("datanexa_policy_check"),
+    ];
+    let mut unsupported_tools = Vec::new();
+    if matches!(kind, DbKind::Jdbc) {
+        unsupported_tools.push(json!({
+            "name": "datanexa_sample_rows",
+            "reason": text.jdbc_sample_rows_unsupported()
+        }));
+        unsupported_tools.push(json!({
+            "name": "datanexa_explain_sql",
+            "reason": text.jdbc_explain_unsupported()
+        }));
+    } else {
+        supported_tools.push(Value::from("datanexa_sample_rows"));
+        supported_tools.push(Value::from("datanexa_explain_sql"));
+    }
+    json!({
+        "profile": if matches!(kind, DbKind::Jdbc) {
+            "generic_jdbc"
+        } else {
+            db_kind(kind)
+        },
+        "supported_tools": supported_tools,
+        "unsupported_tools": unsupported_tools
+    })
+}
+
+fn unsupported_tool(tool: &str, connection_id: &str, reason: &str) -> Value {
+    json!({
+        "unsupported": {
+            "tool": tool,
+            "connection_id": connection_id,
+            "profile": "generic_jdbc",
+            "reason": reason
+        }
     })
 }
 
@@ -1336,6 +1530,7 @@ fn db_kind(kind: &DbKind) -> &'static str {
         DbKind::Sqlite => "sqlite",
         DbKind::Mysql => "mysql",
         DbKind::Postgres => "postgres",
+        DbKind::Jdbc => "jdbc",
     }
 }
 
@@ -1359,6 +1554,7 @@ fn parse_db_kind(kind: &str) -> anyhow::Result<DbKind> {
         "sqlite" => Ok(DbKind::Sqlite),
         "mysql" => Ok(DbKind::Mysql),
         "postgres" | "postgresql" => Ok(DbKind::Postgres),
+        "jdbc" => Ok(DbKind::Jdbc),
         _ => Err(anyhow::anyhow!("unsupported database kind: {kind}")),
     }
 }
@@ -1430,6 +1626,8 @@ mod tests {
             audit: AuditLogger::for_test(audit_path.to_path_buf()),
             access,
             db: DatabaseManager::default(),
+            jdbc: crate::jdbc::JdbcManager::for_test(),
+            jdbc_lifecycle: tokio::sync::Mutex::new(()),
             mcp: tokio::sync::RwLock::new(McpRuntime::default()),
             mcp_lifecycle: tokio::sync::Mutex::new(()),
             mcp_cancellation: tokio::sync::RwLock::new(tokio_util::sync::CancellationToken::new()),
@@ -1451,6 +1649,8 @@ mod tests {
             audit: AuditLogger::for_test(root.join("audit.json")),
             access: AccessControlStore::for_test(root.join("access-control.db")),
             db: DatabaseManager::default(),
+            jdbc: crate::jdbc::JdbcManager::for_test(),
+            jdbc_lifecycle: tokio::sync::Mutex::new(()),
             mcp: tokio::sync::RwLock::new(McpRuntime::default()),
             mcp_lifecycle: tokio::sync::Mutex::new(()),
             mcp_cancellation: tokio::sync::RwLock::new(tokio_util::sync::CancellationToken::new()),
@@ -1518,13 +1718,70 @@ mod tests {
 
     #[test]
     fn protocol_negotiation_preserves_supported_client_versions() {
+        let legacy = json!({ "protocolVersion": "2025-03-26" });
         let supported = json!({ "protocolVersion": "2025-06-18" });
         let unsupported = json!({ "protocolVersion": "1900-01-01" });
+        assert_eq!(negotiated_protocol_version(Some(&legacy)), "2025-03-26");
         assert_eq!(negotiated_protocol_version(Some(&supported)), "2025-06-18");
         assert_eq!(
             negotiated_protocol_version(Some(&unsupported)),
             "2025-11-25"
         );
+    }
+
+    #[test]
+    fn tool_input_schemas_are_strict_object_schemas() {
+        for tool in tools(&AppConfig::default().tools) {
+            let schema = tool
+                .get("inputSchema")
+                .expect("tool input schema")
+                .as_object()
+                .expect("input schema is an object");
+            assert_eq!(
+                schema.get("type"),
+                Some(&Value::String("object".to_string()))
+            );
+            assert_eq!(
+                schema.get("additionalProperties"),
+                Some(&Value::Bool(false))
+            );
+            assert!(schema.get("anyOf").is_none());
+            assert!(schema.get("oneOf").is_none());
+        }
+    }
+
+    #[test]
+    fn legacy_protocol_results_omit_structured_content() {
+        let result = strip_unsupported_structured_content(json!({
+            "content": [{ "type": "text", "text": "{}" }],
+            "structuredContent": { "value": 1 },
+            "isError": false
+        }));
+        assert!(result.get("structuredContent").is_none());
+        assert_eq!(result.get("isError"), Some(&Value::Bool(false)));
+    }
+
+    #[tokio::test]
+    async fn missing_protocol_header_uses_legacy_http_compatibility() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let state = test_state(
+            directory.path(),
+            17321,
+            &directory.path().join("audit.json"),
+        )
+        .await;
+        let mut request = mcp_request(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list"
+        }));
+        request.headers_mut().remove("mcp-protocol-version");
+        let response = mcp_router(state)
+            .oneshot(request)
+            .await
+            .expect("legacy request response");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response_json(response).await.get("result").is_some());
     }
 
     #[tokio::test]
@@ -1549,6 +1806,19 @@ mod tests {
         .expect("allowed policy check");
         assert!(!allowed.denied);
         assert_eq!(allowed.response.get("isError"), Some(&Value::Bool(false)));
+        assert!(allowed
+            .response
+            .get("structuredContent")
+            .is_some_and(Value::is_object));
+        let text = allowed
+            .response
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .expect("structured result text");
+        assert_eq!(
+            serde_json::from_str::<Value>(text).expect("result text is JSON"),
+            allowed.response["structuredContent"]
+        );
 
         let denied = call_tool(
             state,

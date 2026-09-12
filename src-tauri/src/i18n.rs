@@ -300,6 +300,17 @@ impl BackendText {
         }
     }
 
+    pub fn circuit_breaker_reason(self, window_minutes: u32, threshold: u32, count: u64) -> String {
+        match self.locale {
+            Locale::ZhCn => format!(
+                "访问令牌在 {window_minutes} 分钟内触发 {count} 次拦截（阈值 {threshold} 次），已自动熔断停用。可在访问控制中手动重新启用。"
+            ),
+            Locale::En => format!(
+                "Access token auto-disabled after {count} denials within {window_minutes} minutes (threshold {threshold}). Re-enable it manually in access control."
+            ),
+        }
+    }
+
     pub fn tray_show(self) -> &'static str {
         match self.locale {
             Locale::ZhCn => "显示 DataNexa",
@@ -311,6 +322,221 @@ impl BackendText {
         match self.locale {
             Locale::ZhCn => "MCP 服务",
             Locale::En => "MCP Server",
+        }
+    }
+
+    pub fn jdbc_error(self, raw: &str) -> String {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            return match self.locale {
+                Locale::ZhCn => "JDBC 操作失败。".to_string(),
+                Locale::En => "JDBC operation failed.".to_string(),
+            };
+        }
+        if matches!(self.locale, Locale::En) {
+            return raw.to_string();
+        }
+
+        let exact = match raw {
+            "Maven coordinate must use groupId:artifactId:version" => "Maven 坐标必须使用 groupId:artifactId:version 格式。",
+            "Driver display name must contain between 1 and 80 characters" => "驱动显示名称长度必须在 1 到 80 个字符之间。",
+            "Maven completed without producing JDBC driver JAR files" => "Maven 完成后没有生成 JDBC 驱动 JAR 文件。",
+            "Maven repository path must not be a symbolic link" => "Maven 仓库路径不能是符号链接。",
+            "Maven repository path is not a directory" => "Maven 仓库路径不是目录。",
+            "The installed bundle does not expose any JDBC Driver implementations" => "已安装的 Bundle 未提供任何 JDBC Driver 实现。",
+            "Select at least one JDBC driver JAR or directory" => "请至少选择一个 JDBC 驱动 JAR 文件或目录。",
+            "Local JDBC driver files exceed the 1 GiB limit" => "本地 JDBC 驱动文件超过 1 GiB 限制。",
+            "The imported bundle does not expose any JDBC Driver implementations" => "导入的 Bundle 未提供任何 JDBC Driver 实现。",
+            "JDBC manager is unavailable in this test context" => "当前测试环境无法使用 JDBC 管理器。",
+            "Invalid JDBC driver bundle ID" => "JDBC 驱动 Bundle ID 无效。",
+            "This JDBC driver is referenced by a saved connection and cannot be deleted" => "该 JDBC 驱动仍被已保存的连接引用，无法删除。",
+            "JDBC driver bundle was not found" => "未找到 JDBC 驱动 Bundle。",
+            "JDBC driver bundle is incomplete or damaged" => "JDBC 驱动 Bundle 不完整或已损坏。",
+            "Connection is not a JDBC connection" => "该连接不是 JDBC 连接。",
+            "connection not found" => "未找到数据库连接。",
+            "connection is disabled" => "数据库连接已禁用。",
+            "JDBC driver is required" => "必须选择 JDBC 驱动 Bundle。",
+            "JDBC URL is required" => "必须填写 JDBC URL。",
+            "a valid JDBC URL is required" => "必须填写有效的 JDBC URL。",
+            "JDBC connection did not return database metadata" => "JDBC 连接未返回数据库元数据。",
+            "JDBC driver JAR has an invalid file name" => "JDBC 驱动 JAR 文件名无效。",
+            "JDBC driver bundle path is not valid UTF-8" => "JDBC 驱动 Bundle 路径不是有效的 UTF-8 文本。",
+            "JDBC sidecar stdin was unavailable" => "JDBC sidecar 的标准输入不可用。",
+            "JDBC sidecar stdout was unavailable" => "JDBC sidecar 的标准输出不可用。",
+            "JDBC operation timed out" => "JDBC 操作超时。",
+            "JDBC sidecar response exceeded the size limit" => "JDBC sidecar 响应超过大小限制。",
+            "JDBC sidecar returned an invalid response" => "JDBC sidecar 返回了无效响应。",
+            "JDBC sidecar protocol validation failed" => "JDBC sidecar 协议校验失败。",
+            "JDBC operation failed" => "JDBC 操作失败。",
+            "The selected external Java Runtime is unavailable" => "选定的外部 Java 运行时不可用。",
+            "JDBC sidecar is unavailable. Build jdbc-sidecar/pom.xml or prepare the bundled runtime." => "JDBC sidecar 不可用。请构建 jdbc-sidecar/pom.xml，或准备内置 Java 运行时。",
+            "DataNexa Java Runtime is not installed. Download it or select an external Java Runtime." => "DataNexa Java 运行时尚未安装。请下载或选择外部 Java 运行时。",
+            "DataNexa JRE public key is not configured" => "DataNexa JRE 公钥尚未配置。",
+            "Downloaded DataNexa JRE failed SHA-256 verification" => "下载的 DataNexa JRE 未通过 SHA-256 校验。",
+            "DataNexa JRE manifest signature verification failed" => "DataNexa JRE 清单签名校验失败。",
+            "Unsupported DataNexa JRE manifest" => "不支持的 DataNexa JRE 清单。",
+            "DataNexa JRE archive size is invalid" => "DataNexa JRE 压缩包大小无效。",
+            "DataNexa JRE archive SHA-256 is invalid" => "DataNexa JRE 压缩包 SHA-256 值无效。",
+            "DataNexa JRE archive URL is not trusted" => "DataNexa JRE 压缩包下载地址不受信任。",
+            "DataNexa JRE archive is too large" => "DataNexa JRE 压缩包过大。",
+            "DataNexa JRE archive contains an unsafe path" => "DataNexa JRE 压缩包包含不安全路径。",
+            "DataNexa JRE archive contains an unsupported entry" => "DataNexa JRE 压缩包包含不支持的文件项。",
+            "DataNexa JRE archive format is unsupported" => "不支持的 DataNexa JRE 压缩包格式。",
+            "Downloaded DataNexa JRE is incomplete" => "下载的 DataNexa JRE 不完整。",
+            "DataNexa JRE archive exceeded its declared size" => "DataNexa JRE 压缩包超过清单声明的大小。",
+            "DataNexa JRE archive size does not match its manifest" => "DataNexa JRE 压缩包大小与清单不一致。",
+            "Managed Java Runtime metadata is invalid" => "DataNexa Java 运行时元数据无效。",
+            "Managed Java Runtime is incomplete" => "DataNexa Java 运行时不完整。",
+            "Cannot remove DataNexa Java Runtime while JDBC sessions are running" => "JDBC 会话运行期间不能删除 DataNexa Java 运行时。",
+            "Unsupported JDBC driver bundle manifest" => "不支持的 JDBC 驱动 Bundle 清单。",
+            "Maven repository must be an HTTPS URL" => "Maven 仓库必须使用 HTTPS URL。",
+            "No .jar files were found in the selected paths" => "所选路径中没有找到 .jar 文件。",
+            "Local JDBC driver import contains too many JAR files" => "本地 JDBC 驱动导入包含过多 JAR 文件。",
+            "JDBC driver bundle contains no driver files" => "JDBC 驱动 Bundle 不包含驱动文件。",
+            "JDBC driver bundle contains an invalid file name" => "JDBC 驱动 Bundle 包含无效文件名。",
+            "JDBC driver bundle manifest contains duplicate files" => "JDBC 驱动 Bundle 清单包含重复文件。",
+            "JDBC driver bundle does not contain a jars directory" => "JDBC 驱动 Bundle 不包含 jars 目录。",
+            "JDBC driver bundle contains an unexpected directory entry" => "JDBC 驱动 Bundle 包含意外的目录项。",
+            "JDBC driver bundle contains an unlisted file" => "JDBC 驱动 Bundle 包含清单未列出的文件。",
+            "JDBC driver bundle is missing a manifest file" => "JDBC 驱动 Bundle 缺少清单文件。",
+            "JDBC driver bundle total size does not match its manifest" => "JDBC 驱动 Bundle 总大小与清单不一致。",
+            "invalid table identifier" => "表标识符无效。",
+            "policy accepted SQL without a rewritten statement" => "策略已允许 SQL，但未生成重写后的语句。",
+            _ => "",
+        };
+        if !exact.is_empty() {
+            return exact.to_string();
+        }
+
+        for (prefix, label) in [
+            (
+                "JDBC driver JAR has an invalid file name",
+                "JDBC 驱动 JAR 文件名无效",
+            ),
+            ("JDBC driver path does not exist: ", "JDBC 驱动路径不存在："),
+            (
+                "JDBC driver bundle is missing file ",
+                "JDBC 驱动 Bundle 缺少文件：",
+            ),
+            (
+                "JDBC driver bundle contains duplicate file names: ",
+                "JDBC 驱动文件名重复：",
+            ),
+            (
+                "JDBC runtime could not be started: ",
+                "JDBC Java 运行时启动失败：",
+            ),
+            (
+                "JDBC sidecar exited unexpectedly: ",
+                "JDBC sidecar 意外退出：",
+            ),
+            ("JDBC sidecar stdin failed: ", "JDBC sidecar 标准输入失败："),
+            (
+                "JDBC sidecar stdin flush failed: ",
+                "JDBC sidecar 刷新标准输入失败：",
+            ),
+            (
+                "JDBC sidecar stdout failed: ",
+                "JDBC sidecar 标准输出失败：",
+            ),
+            (
+                "Invalid DataNexa JRE public key: ",
+                "DataNexa JRE 公钥无效：",
+            ),
+            (
+                "Invalid DataNexa JRE manifest signature: ",
+                "DataNexa JRE 清单签名无效：",
+            ),
+            (
+                "DataNexa JRE manifest signature verification failed: ",
+                "DataNexa JRE 清单签名校验失败：",
+            ),
+            (
+                "DataNexa JRE is not available for ",
+                "当前平台没有可用的 DataNexa JRE：",
+            ),
+        ] {
+            if let Some(detail) = raw.strip_prefix(prefix) {
+                return format!("{label}{detail}");
+            }
+        }
+
+        if let Some(detail) = raw.strip_prefix("JDBC driver bundle file ") {
+            if let Some(name) = detail.strip_suffix(" has an unexpected size") {
+                return format!("JDBC 驱动 Bundle 文件 {name} 大小不符合预期。");
+            }
+            if let Some(name) = detail.strip_suffix(" failed SHA-256 verification") {
+                return format!("JDBC 驱动 Bundle 文件 {name} 未通过 SHA-256 校验。");
+            }
+        }
+
+        if let Some((code, detail)) = raw
+            .strip_prefix("JDBC ")
+            .and_then(|value| value.split_once(": "))
+        {
+            let label = match code {
+                "invalid_url" => "JDBC URL 无效",
+                "url_not_accepted" => "已安装的 JDBC 驱动不接受此 JDBC URL",
+                "driver_not_found" => "未发现 JDBC 驱动。请为此连接填写 Driver Class",
+                "driver_load_failed" => "JDBC 驱动加载失败",
+                "authentication_failed" => "JDBC 认证失败",
+                "connection_lost" => "JDBC 连接已断开",
+                "jdbc_error" => "JDBC 数据库操作失败",
+                "invalid_bundle" => "JDBC 驱动 Bundle 无效",
+                "invalid_table" => "表名无效",
+                "invalid_sql" => "SQL 无效",
+                "protocol_mismatch" => "JDBC sidecar 协议版本不兼容",
+                "unsupported_action" => "JDBC sidecar 不支持此操作",
+                "maven_resolution_failed" => "Maven 依赖解析失败",
+                _ => "JDBC 操作失败",
+            };
+            let detail = match detail {
+                "A JDBC URL beginning with jdbc: is required" => "JDBC URL 必须以 jdbc: 开头。",
+                "The installed JDBC driver does not accept this JDBC URL" => "已安装的 JDBC 驱动不接受此 JDBC URL。",
+                "No JDBC driver was discovered. Configure Driver Class explicitly for this connection." => "未发现 JDBC 驱动，请为此连接填写 Driver Class。",
+                "Configured Driver Class does not implement java.sql.Driver" => "配置的 Driver Class 未实现 java.sql.Driver。",
+                "JDBC driver bundle path is required" => "必须提供 JDBC 驱动 Bundle 路径。",
+                "JDBC driver bundle does not contain a jars directory" => "JDBC 驱动 Bundle 不包含 jars 目录。",
+                "JDBC driver bundle contains no JAR files" => "JDBC 驱动 Bundle 不包含 JAR 文件。",
+                "A table name is required" => "必须填写表名。",
+                "A SQL statement is required" => "必须填写 SQL 语句。",
+                "JDBC operation failed" => "JDBC 操作失败。",
+                _ => detail,
+            };
+            return if detail.is_empty() {
+                format!("{label}。")
+            } else {
+                format!("{label}：{detail}")
+            };
+        }
+        format!("JDBC 操作失败：{raw}")
+    }
+
+    pub fn jdbc_sample_rows_unsupported(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "通用 JDBC 配置不支持采样行，因为 DataNexa 无法保证采样 SQL 在不同数据库间可移植。",
+            Locale::En => "Sample rows are unsupported for the generic JDBC profile because DataNexa cannot guarantee portable sampling SQL.",
+        }
+    }
+
+    pub fn jdbc_explain_unsupported(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "通用 JDBC 配置不支持 Explain SQL，因为 Explain 语法和计划获取方式依赖具体数据库。",
+            Locale::En => "Explain SQL is unsupported for the generic JDBC profile because Explain syntax and plan retrieval are database-specific.",
+        }
+    }
+
+    pub fn jdbc_driver_required(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "必须选择 JDBC 驱动 Bundle。",
+            Locale::En => "A JDBC driver bundle is required.",
+        }
+    }
+
+    pub fn jdbc_url_required(self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "JDBC URL 必须以 jdbc: 开头。",
+            Locale::En => "A JDBC URL beginning with jdbc: is required.",
         }
     }
 

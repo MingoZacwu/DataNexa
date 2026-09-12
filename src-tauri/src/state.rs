@@ -7,6 +7,7 @@ use crate::access_control::AccessControlStore;
 use crate::audit::AuditLogger;
 use crate::config::{AppConfig, ConfigStore};
 use crate::db::DatabaseManager;
+use crate::jdbc::JdbcManager;
 use crate::mcp::McpRuntime;
 use crate::vault::CredentialVault;
 
@@ -19,6 +20,8 @@ pub struct AppState {
     pub audit: AuditLogger,
     pub access: AccessControlStore,
     pub db: DatabaseManager,
+    pub jdbc: JdbcManager,
+    pub jdbc_lifecycle: Mutex<()>,
     pub mcp: RwLock<McpRuntime>,
     pub mcp_lifecycle: Mutex<()>,
     pub mcp_cancellation: RwLock<CancellationToken>,
@@ -28,13 +31,26 @@ pub struct AppState {
 impl AppState {
     pub async fn new(app: tauri::AppHandle) -> anyhow::Result<Self> {
         let store = ConfigStore::new(&app)?;
-        let mut config = store.load()?;
-        let audit = AuditLogger::new(&app, config.settings.audit_max_events)?;
+        // Startup failures are exactly when the debug log is needed, so a
+        // broken config force-enables logging even though the user preference
+        // cannot be read at this point.
+        let mut config = match store.load() {
+            Ok(config) => config,
+            Err(error) => {
+                crate::debug_log::set_enabled(true);
+                crate::debug_log::error(
+                    "startup",
+                    format_args!("failed to load configuration: {error}"),
+                );
+                return Err(error);
+            }
+        };
+        let audit = AuditLogger::new(&app)?;
         let access = AccessControlStore::new(&app)?;
         access.initialize(&store, &mut config).await?;
 
         Ok(Self {
-            app_handle: Some(app),
+            app_handle: Some(app.clone()),
             store,
             config: RwLock::new(config),
             config_transaction: RwLock::new(()),
@@ -42,6 +58,8 @@ impl AppState {
             audit,
             access,
             db: DatabaseManager::default(),
+            jdbc: JdbcManager::new(app),
+            jdbc_lifecycle: Mutex::new(()),
             mcp: RwLock::new(McpRuntime::default()),
             mcp_lifecycle: Mutex::new(()),
             mcp_cancellation: RwLock::new(CancellationToken::new()),

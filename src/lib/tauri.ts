@@ -7,6 +7,12 @@ import type {
   ConnectionInput,
   DatabaseType,
   ImportConnectionsResult,
+  ImportJdbcDriverInput,
+  InstallJdbcDriverInput,
+  JdbcDriverBundle,
+  JdbcCacheSelection,
+  JdbcStatus,
+  JdbcStorageStatus,
   McpToolInfo,
   PolicyCheckResult,
   ServerConfig,
@@ -72,16 +78,40 @@ const mockSnapshot: AppSnapshot = {
       token: null
     },
     settings: {
-      audit_max_events: 300,
+      audit_retention_days: 7,
       audit_redact_sql_literals: false,
       auto_check_updates: true,
       auto_start_mcp: false,
       auto_lightweight_mode: false,
       mcp_activity_effects: true,
-      language: "zh-CN"
+      language: "zh-CN",
+      jdbc_java_home: null,
+      auto_circuit_breaker: false,
+      auto_circuit_breaker_window_minutes: 10,
+      auto_circuit_breaker_threshold: 5,
+      debug_logging_enabled: false
     },
     tools: mockTools.map(({ name, enabled }) => ({ name, enabled })),
     connections: [
+      {
+        id: "oracle_reporting_jdbc",
+        name: "Oracle Reporting (JDBC)",
+        type: "jdbc",
+        enabled: true,
+        database: "",
+        host: null,
+        port: null,
+        username: "readonly_user",
+        credential_ref: "vault://oracle_reporting_jdbc",
+        ssl_mode: null,
+        jdbc_bundle_id: "00000000-0000-4000-8000-000000000021",
+        jdbc_url: "jdbc:oracle:thin:@//analytics-db.example.test:1521/analytics?ssl_server_dn_match=true&oracle.net.keepAlive=true",
+        jdbc_driver_class: "oracle.jdbc.OracleDriver",
+        max_rows: 300,
+        query_timeout_ms: 8000,
+        max_connections: 1,
+        max_result_bytes: 1048576
+      },
       {
         id: "local_mysql",
         name: "MySQL Local",
@@ -142,6 +172,77 @@ const mockSnapshot: AppSnapshot = {
     }
   ]
 };
+
+const mockJdbcStatus: JdbcStatus = {
+  runtime: {
+    available: true,
+    source: "managed",
+    target: "macos-aarch64",
+    java_version: "openjdk version \"21\"",
+    managed_version: "21.0.8+9",
+    update_available: null,
+    sidecar_available: true
+  },
+  drivers: [
+    {
+      schema_version: 1,
+      bundle_id: "00000000-0000-4000-8000-000000000021",
+      display_name: "Oracle JDBC",
+      maven_coordinate: "com.oracle.database.jdbc:ojdbc11:23.4.0.24.05",
+      repository_url: "https://repo.maven.apache.org/maven2/",
+      installed_at: "2026-08-22T09:15:00.000Z",
+      driver_classes: ["oracle.jdbc.OracleDriver"],
+      files: [],
+      total_size: 4.2 * 1024 * 1024,
+      source: "maven"
+    },
+    {
+      schema_version: 1,
+      bundle_id: "00000000-0000-4000-8000-000000000022",
+      display_name: "PostgreSQL JDBC",
+      maven_coordinate: "org.postgresql:postgresql:42.7.7",
+      repository_url: "https://maven.aliyun.com/repository/public",
+      installed_at: "2026-08-24T14:30:00.000Z",
+      driver_classes: ["org.postgresql.Driver"],
+      files: [],
+      total_size: 2.4 * 1024 * 1024,
+      source: "maven"
+    }
+  ]
+};
+
+const mockJdbcStorageStatus: JdbcStorageStatus = {
+  storage_root: "Preview",
+  total_bytes: 6.6 * 1024 * 1024 + 892 * 1024 + 44 * 1024 + 3 * 1024 + 128 * 1024,
+  items: [
+    { id: "drivers", label: "JDBC drivers", path: "Preview/jdbc-drivers", bytes: 6.6 * 1024 * 1024 },
+    { id: "maven", label: "Maven repository", path: "Preview/maven-repository", bytes: 0 },
+    { id: "audit", label: "Audit database", path: "Preview/audit.db", bytes: 892 * 1024 },
+    { id: "access", label: "Access control", path: "Preview/access-control.db", bytes: 44 * 1024 },
+    { id: "config", label: "Configuration", path: "Preview/config.toml", bytes: 3 * 1024 },
+    { id: "logs", label: "Debug logs", path: "Preview/logs", bytes: 128 * 1024 }
+  ],
+  runtimes: [
+    { bundle_id: "00000000-0000-4000-8000-000000000021", display_name: "Oracle JDBC", status: "running", health: "healthy", process_count: 1, memory_bytes: 87.9 * 1024 * 1024, cpu_percent: 0.4 },
+    { bundle_id: "00000000-0000-4000-8000-000000000022", display_name: "PostgreSQL JDBC", status: "stopped", health: "stopped", process_count: 0, memory_bytes: 0, cpu_percent: 0 }
+  ],
+  maven_cache_bytes: 0,
+  managed_runtime_old_bytes: 0
+};
+
+function getMockJdbcStorageStatus(): JdbcStorageStatus {
+  const seconds = Date.now() / 1000;
+  const pulse = Math.sin(seconds * 0.8) * 2.8 + Math.sin(seconds * 0.23) * 1.4;
+  const oracleCpu = Math.max(0.2, Math.min(6, Number((2.8 + pulse).toFixed(2))));
+  return {
+    ...mockJdbcStorageStatus,
+    runtimes: mockJdbcStorageStatus.runtimes.map((runtime) => (
+      runtime.bundle_id === "00000000-0000-4000-8000-000000000021"
+        ? { ...runtime, cpu_percent: oracleCpu }
+        : { ...runtime }
+    ))
+  };
+}
 
 async function command<T>(name: string, args?: Record<string, unknown>, fallback?: T): Promise<T> {
   if (!isTauri) {
@@ -221,6 +322,42 @@ function connectionTransferFileName() {
 
 export const api = {
   snapshot: () => command<AppSnapshot>("get_app_snapshot", undefined, mockSnapshot),
+  jdbcStatus: () => command<JdbcStatus>("get_jdbc_status", undefined, mockJdbcStatus),
+  installJdbcRuntime: () => command<JdbcStatus["runtime"]>("install_jdbc_runtime", undefined, mockJdbcStatus.runtime),
+  removeJdbcRuntime: () => command<void>("remove_jdbc_runtime", undefined, undefined),
+  checkJdbcRuntimeUpdate: () => command<string | null>("check_jdbc_runtime_update", undefined, null),
+  checkJdbcRuntimeUpdateIfDue: () => command<string | null>("check_jdbc_runtime_update_if_due", undefined, null),
+  jdbcStorageStatus: () => command<JdbcStorageStatus>("get_jdbc_storage_status", undefined, getMockJdbcStorageStatus()),
+  clearJdbcCache: (selection: JdbcCacheSelection) => command<boolean>("clear_jdbc_cache", { selection }, true),
+  openDataDirectory: () => command<void>("open_data_directory", undefined, undefined),
+  installJdbcDriver: (input: InstallJdbcDriverInput) =>
+    command<JdbcDriverBundle>("install_jdbc_driver", { input }, {
+      schema_version: 1,
+      bundle_id: crypto.randomUUID(),
+      display_name: input.display_name,
+      maven_coordinate: input.maven_coordinate,
+      repository_url: "https://repo.maven.apache.org/maven2/",
+      installed_at: new Date().toISOString(),
+      driver_classes: [],
+      files: [],
+      total_size: 0,
+      source: "maven"
+    }),
+  importJdbcDriver: (input: ImportJdbcDriverInput) =>
+    command<JdbcDriverBundle>("import_jdbc_driver", { input }, {
+      schema_version: 1,
+      bundle_id: crypto.randomUUID(),
+      display_name: input.display_name,
+      maven_coordinate: "",
+      repository_url: "",
+      installed_at: new Date().toISOString(),
+      driver_classes: [],
+      files: [],
+      total_size: 0,
+      source: "local"
+    }),
+  deleteJdbcDriver: (bundleId: string) =>
+    command<JdbcStatus>("delete_jdbc_driver", { bundleId }, mockJdbcStatus),
   createAccessToken: (name: string) => command<AccessTokenSecretResult>("create_access_token", { name }, { token_id: "preview-new-token", secret: "preview-new-secret" }),
   renameAccessToken: (id: string, name: string) => command<AppSnapshot>("rename_access_token", { id, name }, mockSnapshot),
   setAccessTokenEnabled: (id: string, enabled: boolean) => command<AppSnapshot>("set_access_token_enabled", { id, enabled }, mockSnapshot),
@@ -233,6 +370,12 @@ export const api = {
     command<AppSnapshot>("save_server_config", { server }, mockSnapshot),
   saveSettingsConfig: (settings: SettingsConfig, applyAutoStart = false) =>
     command<AppSnapshot>("save_settings_config", { settings, applyAutoStart }, withSettings(settings, applyAutoStart)),
+  logFrontendEvent: (kind: string, message: string) => {
+    // Silently dropped in browser preview mode; there is nothing to persist.
+    if (!isTauri) return Promise.resolve();
+    return invoke<void>("log_frontend_event", { kind, message });
+  },
+  openDebugLogDirectory: () => command<void>("open_debug_log_directory", undefined, undefined),
   exportConnections: async (locale: Locale) => {
     if (!isTauri) {
       throw new Error(formatMessage(previewText.desktopOnly, { name: "export_connections" }));

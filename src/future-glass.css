@@ -473,6 +473,8 @@ textarea:focus-visible,
 .view-stage.view-connections,
 .view-stage.view-settings {
   overflow: hidden;
+  /* These stages only clip; inner panels scroll, so never reserve the stable gutter inherited above. */
+  scrollbar-gutter: auto;
 }
 
 .view-stage.view-audit {
@@ -543,10 +545,6 @@ textarea:focus-visible,
 
 .quick-panel > h2 {
   font-size: 16px;
-}
-
-.safety-panel > h2 {
-  font-size: 14px;
 }
 
 .panel-icon-action,
@@ -1739,32 +1737,6 @@ textarea:focus-visible,
   overflow-y: auto;
   margin-inline: calc(-1 * var(--content-shadow-gutter));
   padding-inline: var(--content-shadow-gutter);
-  scrollbar-gutter: stable;
-}
-
-.policy-check-button {
-  width: 42px;
-  height: 32px;
-  display: inline-grid;
-  place-items: center;
-  flex: 0 0 auto;
-  border: 1px solid color-mix(in srgb, var(--blue) 24%, var(--line));
-  border-radius: 7px;
-  color: var(--blue);
-  background: color-mix(in srgb, var(--blue) 8%, var(--surface-strong));
-  box-shadow: inset 0 1px 0 var(--glass-edge);
-  transition: color 160ms ease, background 160ms ease, border-color 160ms ease, transform 160ms ease;
-}
-
-.policy-check-button:hover:not(:disabled) {
-  transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--blue) 42%, var(--line));
-  background: color-mix(in srgb, var(--blue) 13%, var(--surface-strong));
-}
-
-.policy-check-button:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
 }
 
 .settings-stack > .panel {
@@ -1772,6 +1744,14 @@ textarea:focus-visible,
   min-height: max-content;
   padding: 0;
   overflow: hidden;
+}
+
+.driver-management > .panel {
+  padding: 15px;
+}
+
+.storage-management > .panel {
+  padding: 15px;
 }
 
 .settings-stack > .panel > h2,
@@ -1795,6 +1775,296 @@ textarea:focus-visible,
 
 .settings-stack > .panel > .transfer-actions {
   padding: 0;
+}
+
+.security-hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 92px;
+  padding: 16px 18px 16px 22px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 43px 50%, color-mix(in srgb, var(--blue) 13%, transparent), transparent 46%),
+    var(--surface-strong);
+  box-shadow: inset 0 1px 0 var(--glass-edge);
+}
+
+.security-hero > * {
+  position: relative;
+  z-index: 2;
+}
+
+.security-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 43px 50%, transparent 33.1px, color-mix(in srgb, var(--blue) 11%, transparent) 33.1px 34.9px, transparent 34.9px),
+    radial-gradient(circle at 43px 50%, transparent 65.2px, color-mix(in srgb, var(--blue) 10%, transparent) 65.2px 66.8px, transparent 66.8px),
+    radial-gradient(circle at 43px 50%, transparent 97.3px, color-mix(in srgb, var(--blue) 9%, transparent) 97.3px 98.7px, transparent 98.7px),
+    radial-gradient(circle at 43px 50%, transparent 129.4px, color-mix(in srgb, var(--blue) 8%, transparent) 129.4px 130.6px, transparent 130.6px),
+    radial-gradient(circle at 43px 50%, transparent 161.4px, color-mix(in srgb, var(--blue) 7%, transparent) 161.4px 162.6px, transparent 162.6px),
+    radial-gradient(circle at 43px 50%, transparent 193.5px, color-mix(in srgb, var(--blue) 6%, transparent) 193.5px 194.5px, transparent 194.5px),
+    radial-gradient(circle at 43px 50%, transparent 225.5px, color-mix(in srgb, var(--blue) 5%, transparent) 225.5px 226.5px, transparent 226.5px),
+    radial-gradient(circle at 43px 50%, transparent 257.6px, color-mix(in srgb, var(--blue) 4%, transparent) 257.6px 258.4px, transparent 258.4px),
+    radial-gradient(circle at 43px 50%, transparent 289.6px, color-mix(in srgb, var(--blue) 3.5%, transparent) 289.6px 290.4px, transparent 290.4px),
+    radial-gradient(circle at 43px 50%, transparent 321.7px, color-mix(in srgb, var(--blue) 3%, transparent) 321.7px 322.3px, transparent 322.3px),
+    radial-gradient(circle at 43px 50%, transparent 353.7px, color-mix(in srgb, var(--blue) 2%, transparent) 353.7px 354.3px, transparent 354.3px);
+  -webkit-mask-image: radial-gradient(circle at 43px 50%, rgba(0, 0, 0, 1) 0, rgba(0, 0, 0, 0.7) 300px, transparent 600px);
+  mask-image: radial-gradient(circle at 43px 50%, rgba(0, 0, 0, 1) 0, rgba(0, 0, 0, 0.7) 300px, transparent 600px);
+}
+
+.security-hero::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--blue), color-mix(in srgb, var(--cyan) 55%, transparent));
+}
+
+.security-hero.alerted {
+  border-color: color-mix(in srgb, var(--red) 26%, var(--line));
+  background:
+    radial-gradient(circle at 43px 50%, color-mix(in srgb, var(--red) 11%, transparent), transparent 46%),
+    var(--surface-strong);
+}
+
+.security-hero.alerted::after {
+  background:
+    radial-gradient(circle at 43px 50%, transparent 33.1px, color-mix(in srgb, var(--red) 10%, transparent) 33.1px 34.9px, transparent 34.9px),
+    radial-gradient(circle at 43px 50%, transparent 65.2px, color-mix(in srgb, var(--red) 9%, transparent) 65.2px 66.8px, transparent 66.8px),
+    radial-gradient(circle at 43px 50%, transparent 97.3px, color-mix(in srgb, var(--red) 8%, transparent) 97.3px 98.7px, transparent 98.7px),
+    radial-gradient(circle at 43px 50%, transparent 129.4px, color-mix(in srgb, var(--red) 7%, transparent) 129.4px 130.6px, transparent 130.6px),
+    radial-gradient(circle at 43px 50%, transparent 161.4px, color-mix(in srgb, var(--red) 6%, transparent) 161.4px 162.6px, transparent 162.6px),
+    radial-gradient(circle at 43px 50%, transparent 193.5px, color-mix(in srgb, var(--red) 5%, transparent) 193.5px 194.5px, transparent 194.5px),
+    radial-gradient(circle at 43px 50%, transparent 225.5px, color-mix(in srgb, var(--red) 4.5%, transparent) 225.5px 226.5px, transparent 226.5px),
+    radial-gradient(circle at 43px 50%, transparent 257.6px, color-mix(in srgb, var(--red) 4%, transparent) 257.6px 258.4px, transparent 258.4px),
+    radial-gradient(circle at 43px 50%, transparent 289.6px, color-mix(in srgb, var(--red) 3.5%, transparent) 289.6px 290.4px, transparent 290.4px),
+    radial-gradient(circle at 43px 50%, transparent 321.7px, color-mix(in srgb, var(--red) 3%, transparent) 321.7px 322.3px, transparent 322.3px),
+    radial-gradient(circle at 43px 50%, transparent 353.7px, color-mix(in srgb, var(--red) 2%, transparent) 353.7px 354.3px, transparent 354.3px);
+}
+
+.security-hero.alerted::before {
+  background: linear-gradient(180deg, var(--red), color-mix(in srgb, var(--amber) 55%, transparent));
+}
+
+.security-hero-core {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.security-hero-core > div {
+  display: grid;
+  gap: 3px;
+}
+
+.security-hero-core > div > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.security-hero-core strong {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.security-hero.alerted strong {
+  color: var(--red);
+}
+
+.security-hero-core small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.security-hero-emblem {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--green) 32%, var(--line));
+  border-radius: 50%;
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 9%, var(--surface-strong));
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 0 0 4px color-mix(in srgb, var(--green) 6%, transparent);
+}
+
+.security-hero.alerted .security-hero-emblem {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 32%, var(--line));
+  background: color-mix(in srgb, var(--red) 9%, var(--surface-strong));
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 0 0 4px color-mix(in srgb, var(--red) 6%, transparent);
+}
+
+.security-hero-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-stack .defense-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  gap: 10px;
+  padding: 14px 15px 0;
+  margin: 0;
+  list-style: none;
+}
+
+.settings-stack > .panel > .defense-notice {
+  grid-template-columns: 1fr;
+  padding: 0 15px 14px;
+  margin: 12px 0 0;
+}
+
+.settings-stack > .panel > .security-list.circuit-note {
+  grid-template-columns: 1fr;
+  padding: 0 15px 14px;
+  margin: 0;
+}
+
+.settings-stack > .panel > .security-list.circuit-note li.security-info {
+  margin-top: 0;
+}
+
+.defense-list li {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-strong) 78%, transparent);
+  box-shadow: inset 0 1px 0 var(--glass-edge);
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.defense-list li:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--blue) 28%, var(--line));
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 6px 14px color-mix(in srgb, var(--blue) 10%, transparent);
+}
+
+.defense-icon {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--blue) 25%, var(--line));
+  border-radius: 8px;
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 10%, var(--surface-strong));
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 0 18px color-mix(in srgb, var(--blue) 12%, transparent);
+}
+
+.defense-index {
+  position: absolute;
+  top: 9px;
+  right: 11px;
+  color: var(--muted);
+  font-family: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  opacity: 0.7;
+}
+
+.defense-list li > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.defense-list li strong {
+  padding-right: 24px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.defense-list li p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.defense-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--green);
+}
+
+.defense-state.warning {
+  color: var(--amber);
+}
+
+.defense-state-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--green) 55%, transparent);
+}
+
+.defense-state.warning .defense-state-dot {
+  background: var(--amber);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--amber) 55%, transparent);
+}
+
+.defense-list li.defense-item-warning {
+  border-color: color-mix(in srgb, var(--amber) 30%, var(--line));
+  background: color-mix(in srgb, var(--amber) 4%, var(--surface));
+}
+
+.defense-list li.defense-item-warning:hover {
+  border-color: color-mix(in srgb, var(--amber) 40%, var(--line));
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 6px 14px color-mix(in srgb, var(--amber) 10%, transparent);
+}
+
+.defense-list li.defense-item-warning .defense-icon {
+  border-color: color-mix(in srgb, var(--amber) 32%, var(--line));
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 9%, var(--surface-strong));
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 0 18px color-mix(in srgb, var(--amber) 12%, transparent);
+}
+
+.defense-list li.defense-item-warning .defense-index {
+  color: var(--amber);
+}
+
+.defense-item-badge {
+  display: inline-block;
+  margin-left: 7px;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--amber) 32%, var(--line));
+  border-radius: 999px;
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 8%, var(--surface-strong));
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.5;
+  vertical-align: 1px;
 }
 
 .transfer-actions {
@@ -2079,6 +2349,23 @@ textarea:focus {
   padding: 8px 10px;
   border: 1px solid color-mix(in srgb, var(--amber) 28%, var(--line));
   border-radius: 7px;
+  font-size: 12px;
+}
+
+.security-list li.security-warning svg {
+  flex: 0 0 auto;
+}
+
+.security-list li.security-info {
+  margin-top: 7px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--blue) 28%, var(--line));
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.security-list li.security-info svg {
+  flex: 0 0 auto;
 }
 
 .about-panel {
@@ -2452,6 +2739,8 @@ textarea:focus {
   .settings-tabs button { min-width: 86px; text-align: center; }
   .settings-grid,
   .security-list { grid-template-columns: 1fr; }
+  .settings-stack .defense-list { grid-template-columns: 1fr; }
+  .security-hero { flex-wrap: wrap; }
   .transfer-actions { grid-template-columns: 1fr; }
   .transfer-action:first-child { border-right: 0; border-bottom: 1px solid var(--line); }
   .audit-row { grid-template-columns: 140px 1fr 1fr 90px 1.2fr; }
