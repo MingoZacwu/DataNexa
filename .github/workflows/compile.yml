@@ -59,8 +59,8 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: Build JDBC sidecar
-        run: mvn -q -f jdbc-sidecar/pom.xml package
+      - name: Prepare bundled JDBC sidecar
+        run: node scripts/prepare-jdbc-sidecar.mjs
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
