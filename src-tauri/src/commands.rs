@@ -555,7 +555,7 @@ pub async fn import_connections(
     let contents = Zeroizing::new(fs::read(path).map_err(to_client_error)?);
     let mut transfer: ConnectionTransferFile =
         serde_json::from_slice(contents.as_slice()).map_err(to_client_error)?;
-    if transfer.format != CONNECTION_TRANSFER_FORMAT || !matches!(transfer.version, 1 | 2 | 3) {
+    if transfer.format != CONNECTION_TRANSFER_FORMAT || !matches!(transfer.version, 1..=3) {
         return Err("Unsupported DataNexa connection import file.".to_string());
     }
     if transfer.connections.len() > MAX_CONNECTION_IMPORT_COUNT {

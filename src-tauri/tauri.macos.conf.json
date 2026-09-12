@@ -5,7 +5,6 @@
     }
   },
   "app": {
-    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "DataNexa",

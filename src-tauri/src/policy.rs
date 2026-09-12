@@ -153,7 +153,7 @@ fn jdbc_lexical_fallback(sql: &str) -> Result<(), PolicyViolation> {
         }
         if character == '-' && chars.peek().copied() == Some('-') {
             chars.next();
-            while let Some(next) = chars.next() {
+            for next in chars.by_ref() {
                 if next == '\n' || next == '\r' {
                     break;
                 }
@@ -163,7 +163,7 @@ fn jdbc_lexical_fallback(sql: &str) -> Result<(), PolicyViolation> {
         if character == '/' && chars.peek().copied() == Some('*') {
             chars.next();
             let mut previous = '\0';
-            while let Some(next) = chars.next() {
+            for next in chars.by_ref() {
                 if previous == '*' && next == '/' {
                     break;
                 }

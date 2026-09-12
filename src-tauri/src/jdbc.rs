@@ -713,9 +713,9 @@ impl JdbcManager {
                     .flatten()
                     .filter(|entry| {
                         entry.file_name() != "current.json"
-                            && !current_runtime_path
+                            && current_runtime_path
                                 .as_ref()
-                                .is_some_and(|current| entry.path() == current.as_path())
+                                .is_none_or(|current| entry.path() != current.as_path())
                     })
                     .map(|entry| path_size_bytes(&entry.path()))
                     .sum()
