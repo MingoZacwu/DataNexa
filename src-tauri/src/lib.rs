@@ -22,18 +22,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use commands::{
-    check_jdbc_runtime_update, check_jdbc_runtime_update_if_due, check_updates_if_due, clear_audit_events, clear_jdbc_cache,
-    clear_legacy_audit_log, create_access_token, delete_access_token, delete_connection,
-    delete_jdbc_driver, diagnose_connection, disable_all_connections, export_connections,
-    get_access_token_secret, get_app_snapshot, get_jdbc_status,
-    get_jdbc_storage_status, hide_main_window, import_connections, import_jdbc_driver,
-    install_jdbc_driver, install_jdbc_runtime, log_frontend_event, minimize_main_window,
-    open_data_directory, open_debug_log_directory, open_project_homepage, open_project_releases, open_project_site,
-    policy_check, remove_jdbc_runtime, rename_access_token, retry_audit_migration,
-    rotate_access_token, save_server_config, save_settings_config, set_access_token_enabled,
-    set_connection_enabled, set_mcp_tool_enabled, set_token_connection_allowed,
-    set_token_tool_allowed, set_window_material_theme, start_mcp_server, start_window_drag,
-    stop_mcp_server, test_connection, test_connection_input, upsert_connection,
+    check_jdbc_runtime_update, check_jdbc_runtime_update_if_due, check_updates_if_due,
+    clear_audit_events, clear_jdbc_cache, clear_legacy_audit_log, create_access_token,
+    delete_access_token, delete_connection, delete_jdbc_driver, diagnose_connection,
+    disable_all_connections, export_connections, get_access_token_secret, get_app_snapshot,
+    get_jdbc_status, get_jdbc_storage_status, hide_main_window, import_connections,
+    import_jdbc_driver, install_jdbc_driver, install_jdbc_runtime, log_frontend_event,
+    minimize_main_window, open_data_directory, open_debug_log_directory, open_project_homepage,
+    open_project_releases, open_project_site, policy_check, remove_jdbc_runtime,
+    rename_access_token, retry_audit_migration, rotate_access_token, save_server_config,
+    save_settings_config, set_access_token_enabled, set_connection_enabled, set_mcp_tool_enabled,
+    set_token_connection_allowed, set_token_tool_allowed, set_window_material_theme,
+    start_mcp_server, start_window_drag, stop_mcp_server, test_connection, test_connection_input,
+    upsert_connection,
 };
 use i18n::{backend_text, BackendText};
 use state::AppState;
@@ -59,7 +60,9 @@ pub(crate) fn apply_system_material(
         if let Err(error) = window_vibrancy::apply_mica(window, dark) {
             debug_log::warn(
                 "window",
-                format_args!("Windows Mica unavailable, using the standard CSS appearance: {error}"),
+                format_args!(
+                    "Windows Mica unavailable, using the standard CSS appearance: {error}"
+                ),
             );
             let _ = window_vibrancy::clear_acrylic(window);
             let _ = window.set_shadow(true);
@@ -358,7 +361,9 @@ fn show_main_window(app: &AppHandle) {
         if app.get_webview_window("main").is_some() {
             debug_log::error(
                 "window",
-                format_args!("failed to recreate main window: previous window is still being destroyed"),
+                format_args!(
+                    "failed to recreate main window: previous window is still being destroyed"
+                ),
             );
             return;
         }
@@ -396,7 +401,9 @@ fn show_main_window(app: &AppHandle) {
                 if let Err(error) = refresh_tray_from_state(&app, &app_state).await {
                     debug_log::error(
                         "window",
-                        format_args!("failed to refresh tray after recreating main window: {error}"),
+                        format_args!(
+                            "failed to refresh tray after recreating main window: {error}"
+                        ),
                     );
                 }
             }
@@ -440,9 +447,7 @@ async fn activate_lightweight_mode(app: AppHandle, generation: u64, automatic: b
         .store(true, Ordering::Release);
     debug_log::info(
         "lightweight",
-        format_args!(
-            "lightweight mode activated (automatic={automatic})"
-        ),
+        format_args!("lightweight mode activated (automatic={automatic})"),
     );
     if let Err(error) = refresh_tray_from_state(&app, &app_state).await {
         debug_log::error(
@@ -598,7 +603,12 @@ pub fn run() {
             let app_handle = app.handle().clone();
             let state_for_task = state.clone();
             tauri::async_runtime::spawn(async move {
-                let retention_days = state_for_task.config.read().await.settings.audit_retention_days;
+                let retention_days = state_for_task
+                    .config
+                    .read()
+                    .await
+                    .settings
+                    .audit_retention_days;
                 let migration_result = state_for_task.audit.initialize(retention_days).await;
                 if let Err(error) = &migration_result {
                     debug_log::error(

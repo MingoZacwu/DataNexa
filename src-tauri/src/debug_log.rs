@@ -201,14 +201,23 @@ impl DebugLogController {
     fn append_line(&self, state: &mut WriterState, level: Level, scope: &str, message: &str) {
         let message = truncate_chars(crate::commands::sanitize_text(message), MAX_MESSAGE_CHARS);
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-        let line = format!("[{timestamp}] [{}] [{}] {}\n", level.label(), scope, message);
+        let line = format!(
+            "[{timestamp}] [{}] [{}] {}\n",
+            level.label(),
+            scope,
+            message
+        );
         if state.current_size.saturating_add(line.len() as u64) > MAX_LOG_SIZE {
             self.rotate(state);
         }
         let Some(file) = state.file.as_mut() else {
             return;
         };
-        if file.write_all(line.as_bytes()).and_then(|()| file.flush()).is_ok() {
+        if file
+            .write_all(line.as_bytes())
+            .and_then(|()| file.flush())
+            .is_ok()
+        {
             state.current_size = state.current_size.saturating_add(line.len() as u64);
         }
     }

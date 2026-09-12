@@ -220,7 +220,8 @@ async fn activate_listener(
         "mcp",
         format_args!(
             "MCP server started (endpoint=http://{}:{}/mcp)",
-            config.host, local_addr.port()
+            config.host,
+            local_addr.port()
         ),
     );
     Ok(status_from(config, &runtime))

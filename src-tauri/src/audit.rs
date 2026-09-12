@@ -335,7 +335,13 @@ impl AuditLogger {
             total,
         };
         let cutoff_ms = retention_cutoff_ms(retention_days);
-        if let Err(error) = sqlx::query("DELETE FROM audit_events WHERE timestamp_ms < ?").bind(cutoff_ms).execute(&mut *tx).await { return self.fail(error).await; }
+        if let Err(error) = sqlx::query("DELETE FROM audit_events WHERE timestamp_ms < ?")
+            .bind(cutoff_ms)
+            .execute(&mut *tx)
+            .await
+        {
+            return self.fail(error).await;
+        }
         if let Err(error) = tx.commit().await {
             return self.fail(error).await;
         }
@@ -471,7 +477,10 @@ impl AuditLogger {
             return Ok(());
         }
         self.ensure_initialized().await?;
-        sqlx::query("DELETE FROM audit_events WHERE timestamp_ms < ?").bind(retention_cutoff_ms(retention_days)).execute(&self.pool).await?;
+        sqlx::query("DELETE FROM audit_events WHERE timestamp_ms < ?")
+            .bind(retention_cutoff_ms(retention_days))
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 

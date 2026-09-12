@@ -1291,7 +1291,10 @@ async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
     config.server.token = None;
     let audit_ready = state.audit.is_ready().await;
     if audit_ready {
-        state.audit.trim(config.settings.audit_retention_days).await?;
+        state
+            .audit
+            .trim(config.settings.audit_retention_days)
+            .await?;
     }
     let mut audit_events = if audit_ready {
         state.audit.list().await?
@@ -1333,10 +1336,7 @@ pub(crate) async fn record_startup_event(
 ) {
     debug_log::error(
         "startup",
-        format_args!(
-            "{tool} failed after {}ms: {reason}",
-            elapsed.as_millis()
-        ),
+        format_args!("{tool} failed after {}ms: {reason}", elapsed.as_millis()),
     );
     let retention_days = state.config.read().await.settings.audit_retention_days;
     let _ = state
@@ -1357,10 +1357,7 @@ pub(crate) async fn record_startup_event(
 
 /// Names of top-level settings keys whose serialized value differs between
 /// two snapshots. Values are intentionally never returned.
-fn changed_setting_keys(
-    previous: &SettingsConfig,
-    current: &SettingsConfig,
-) -> Vec<String> {
+fn changed_setting_keys(previous: &SettingsConfig, current: &SettingsConfig) -> Vec<String> {
     let (Ok(previous), Ok(current)) = (
         serde_json::to_value(previous),
         serde_json::to_value(current),
@@ -1626,7 +1623,8 @@ fn normalize_connection(mut connection: ConnectionConfig) -> ConnectionConfig {
 }
 
 fn normalize_settings(mut settings: SettingsConfig) -> SettingsConfig {
-    settings.audit_retention_days = crate::audit::normalize_retention_days(settings.audit_retention_days);
+    settings.audit_retention_days =
+        crate::audit::normalize_retention_days(settings.audit_retention_days);
     settings.language = settings.language.trim().to_string();
     if settings.language.is_empty() {
         settings.language = "zh-CN".to_string();
@@ -1636,9 +1634,8 @@ fn normalize_settings(mut settings: SettingsConfig) -> SettingsConfig {
         .take()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    settings.auto_circuit_breaker_window_minutes = settings
-        .auto_circuit_breaker_window_minutes
-        .clamp(1, 60);
+    settings.auto_circuit_breaker_window_minutes =
+        settings.auto_circuit_breaker_window_minutes.clamp(1, 60);
     settings.auto_circuit_breaker_threshold = settings.auto_circuit_breaker_threshold.clamp(1, 50);
     settings
 }

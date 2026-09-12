@@ -110,10 +110,7 @@ async fn check_jre_update(app: &AppHandle, force: bool) -> anyhow::Result<Option
                 );
             }
             None => {
-                crate::debug_log::info(
-                    "updater",
-                    format_args!("JRE runtime is up to date"),
-                );
+                crate::debug_log::info("updater", format_args!("JRE runtime is up to date"));
             }
         }
     }
@@ -353,10 +350,7 @@ pub async fn check_if_due(app: AppHandle) -> anyhow::Result<Option<String>> {
             );
         }
         Ok((None, true)) => {
-            crate::debug_log::info(
-                "updater",
-                format_args!("JRE runtime is up to date"),
-            );
+            crate::debug_log::info("updater", format_args!("JRE runtime is up to date"));
         }
         _ => {}
     }

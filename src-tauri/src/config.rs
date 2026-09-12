@@ -287,9 +287,8 @@ fn normalize_settings(settings: &mut SettingsConfig) {
         .take()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    settings.auto_circuit_breaker_window_minutes = settings
-        .auto_circuit_breaker_window_minutes
-        .clamp(1, 60);
+    settings.auto_circuit_breaker_window_minutes =
+        settings.auto_circuit_breaker_window_minutes.clamp(1, 60);
     settings.auto_circuit_breaker_threshold = settings.auto_circuit_breaker_threshold.clamp(1, 50);
 }
 

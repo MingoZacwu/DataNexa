@@ -37,8 +37,7 @@ async fn evaluate_inner(app: Arc<AppState>, token_id: String) -> anyhow::Result<
     if !breaker_enabled || !require_token {
         return Ok(());
     }
-    let cutoff = (Utc::now() - chrono::Duration::minutes(window_minutes as i64))
-        .timestamp_millis();
+    let cutoff = (Utc::now() - chrono::Duration::minutes(window_minutes as i64)).timestamp_millis();
     let count = app
         .audit
         .count_token_denials(&token_id, CIRCUIT_BREAKER_TOOL, cutoff)
