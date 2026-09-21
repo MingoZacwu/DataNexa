@@ -134,6 +134,11 @@ export interface ImportConnectionsResult {
   skipped_count: number;
 }
 
+export interface ConnectionFileInspection {
+  encrypted: boolean;
+  exported_at: string | null;
+}
+
 export interface JdbcDriverFile {
   name: string;
   size: number;

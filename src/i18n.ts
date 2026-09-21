@@ -40,7 +40,25 @@ const zhCN = {
   fileDialog: {
     importConnectionsTitle: "选择要导入的数据库连接文件",
     exportConnectionsTitle: "选择数据库连接文件的保存位置",
-    connectionFile: "DataNexa 数据库连接文件"
+    connectionFile: "DataNexa 数据库连接文件",
+    encryptedConnectionFile: "DataNexa 加密数据库连接文件"
+  },
+  connectionTransfer: {
+    encryptTitle: "加密导出连接",
+    encryptDescription: "导出的文件包含数据库密码。设置加密密码后，只有知道该密码的人才能读取其中的连接。",
+    password: "加密密码",
+    passwordConfirm: "确认加密密码",
+    passwordHint: "至少 {min} 个字符。加密密码不会被保存，一旦丢失文件将无法恢复。",
+    passwordRequired: "请输入加密密码。",
+    passwordTooShort: "加密密码至少需要 {min} 个字符。",
+    passwordMismatch: "两次输入的加密密码不一致。",
+    encryptAndExport: "加密导出",
+    exportWithoutEncryption: "不加密导出",
+    decryptTitle: "输入加密密码",
+    decryptDescription: "该文件已加密，请输入导出时设置的加密密码。",
+    decryptAndImport: "解密并导入",
+    wrongPassword: "加密密码错误，或文件已损坏。",
+    exportedAt: "文件导出时间：{time}"
   },
   nav: {
     overview: "概览",
@@ -91,6 +109,7 @@ const zhCN = {
     agentCopied: "Agent 接入配置已复制。",
     connectionTestPassed: "连接可用 · {elapsed} ms",
     connectionsExported: "已导出 {count} 个数据库连接。请妥善保管包含明文密码的文件。",
+    connectionsExportedEncrypted: "已导出并加密 {count} 个数据库连接。请牢记加密密码，丢失后无法恢复文件。",
     connectionsImported: "已新建 {count} 个数据库连接。",
     connectionsImportedPartial: "已新建 {count} 个数据库连接，跳过 {skipped} 个无法导入的连接。",
     jdbcDriverInstalled: "JDBC 驱动已安装。",
@@ -365,9 +384,9 @@ const zhCN = {
     auditRedactSql: "脱敏 SQL 字面量（关闭后可能记录敏感数据）",
     importExport: "导入/导出",
     importConnections: "导入连接",
-    importConnectionsDescription: "从 DataNexa JSON 文件追加连接，不会修改现有连接。",
+    importConnectionsDescription: "从 DataNexa 连接文件追加连接，不会修改现有连接。",
     exportConnections: "导出连接",
-    exportConnectionsDescription: "将当前数据库连接及密码保存为可迁移的 JSON 文件。",
+    exportConnectionsDescription: "将当前数据库连接及密码导出为可迁移的文件，默认使用加密密码保护。",
     exportWarningTitle: "导出文件包含明文密码",
     exportWarningDescription: "导出后，数据库密码将不再受 OS 凭证库保护。继续前请确认你了解以下风险。",
     exportWarningAccess: "任何能读取该文件的人都可能使用其中的数据库凭证。",
@@ -568,7 +587,25 @@ const en: I18nMessages = {
   fileDialog: {
     importConnectionsTitle: "Select database connections to import",
     exportConnectionsTitle: "Choose where to save database connections",
-    connectionFile: "DataNexa database connection file"
+    connectionFile: "DataNexa database connection file",
+    encryptedConnectionFile: "DataNexa encrypted connection file"
+  },
+  connectionTransfer: {
+    encryptTitle: "Encrypt connection export",
+    encryptDescription: "The exported file contains database passwords. With an encryption password, only someone who knows it can read the connections inside.",
+    password: "Encryption password",
+    passwordConfirm: "Confirm encryption password",
+    passwordHint: "At least {min} characters. The encryption password is never stored, and the file cannot be recovered without it.",
+    passwordRequired: "Enter an encryption password.",
+    passwordTooShort: "The encryption password must be at least {min} characters.",
+    passwordMismatch: "The encryption passwords do not match.",
+    encryptAndExport: "Export encrypted",
+    exportWithoutEncryption: "Export without encryption",
+    decryptTitle: "Enter encryption password",
+    decryptDescription: "This file is encrypted. Enter the encryption password that was set when it was exported.",
+    decryptAndImport: "Decrypt and import",
+    wrongPassword: "Wrong encryption password, or the file is damaged.",
+    exportedAt: "Exported {time}"
   },
   nav: {
     overview: "Overview",
@@ -619,6 +656,7 @@ const en: I18nMessages = {
     agentCopied: "Agent connection config copied.",
     connectionTestPassed: "Connection ready · {elapsed} ms",
     connectionsExported: "Exported {count} database connections. Protect the file containing plaintext passwords.",
+    connectionsExportedEncrypted: "Exported and encrypted {count} database connections. Keep the encryption password safe: without it the file cannot be recovered.",
     connectionsImported: "Created {count} database connections.",
     connectionsImportedPartial: "Created {count} database connections and skipped {skipped} that could not be imported.",
     jdbcDriverInstalled: "JDBC driver installed.",
@@ -893,9 +931,9 @@ const en: I18nMessages = {
     auditRedactSql: "Redact SQL literals (off may record sensitive data)",
     importExport: "Import / export",
     importConnections: "Import connections",
-    importConnectionsDescription: "Append connections from a DataNexa JSON file without changing existing connections.",
+    importConnectionsDescription: "Append connections from a DataNexa connection file without changing existing connections.",
     exportConnections: "Export connections",
-    exportConnectionsDescription: "Save the current database connections and passwords as a portable JSON file.",
+    exportConnectionsDescription: "Export the current database connections and passwords to a portable file, protected by an encryption password by default.",
     exportWarningTitle: "The export file contains plaintext passwords",
     exportWarningDescription: "After export, database passwords are no longer protected by the OS credential vault. Confirm that you understand these risks.",
     exportWarningAccess: "Anyone who can read the file may be able to use its database credentials.",

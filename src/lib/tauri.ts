@@ -4,6 +4,7 @@ import type {
   AccessTokenSecretResult,
   AppSnapshot,
   ConnectionDiagnostics,
+  ConnectionFileInspection,
   ConnectionInput,
   DatabaseType,
   ImportConnectionsResult,
@@ -316,8 +317,20 @@ function withAuditCleared(): AppSnapshot {
   };
 }
 
-function connectionTransferFileName() {
-  return `datanexa-connections-${new Date().toISOString().slice(0, 10)}.json`;
+/** Encrypted exports carry their own extension so a password-protected file is
+ * distinguishable from a plaintext one on disk. Format detection on import still reads the
+ * file header rather than trusting this. */
+const ENCRYPTED_CONNECTION_EXTENSION = "dnxc";
+
+/** Sentinel from WRONG_PASSWORD in src-tauri/src/transfer_crypto.rs, mapped to localized text
+ * by the caller. A wrong password and a tampered file are indistinguishable. */
+export const WRONG_PASSWORD_ERROR = "wrong_password";
+
+function connectionTransferFileName(encrypted: boolean) {
+  const date = new Date().toISOString().slice(0, 10);
+  return encrypted
+    ? `datanexa-connections-encrypted-${date}.${ENCRYPTED_CONNECTION_EXTENSION}`
+    : `datanexa-connections-${date}.json`;
 }
 
 export const api = {
@@ -376,20 +389,25 @@ export const api = {
     return invoke<void>("log_frontend_event", { kind, message });
   },
   openDebugLogDirectory: () => command<void>("open_debug_log_directory", undefined, undefined),
-  exportConnections: async (locale: Locale) => {
+  exportConnections: async (locale: Locale, password: string | null) => {
     if (!isTauri) {
       throw new Error(formatMessage(previewText.desktopOnly, { name: "export_connections" }));
     }
     const dialogText = messages[locale].fileDialog;
+    const encrypted = password !== null;
     const path = await save({
       title: dialogText.exportConnectionsTitle,
-      defaultPath: connectionTransferFileName(),
-      filters: [{ name: dialogText.connectionFile, extensions: ["json"] }]
+      defaultPath: connectionTransferFileName(encrypted),
+      filters: encrypted
+        ? [{ name: dialogText.encryptedConnectionFile, extensions: [ENCRYPTED_CONNECTION_EXTENSION] }]
+        : [{ name: dialogText.connectionFile, extensions: ["json"] }]
     });
     if (!path) return null;
-    return command<number>("export_connections", { path });
+    return command<number>("export_connections", { path, password });
   },
-  importConnections: async (locale: Locale) => {
+  /** Picks the file only. Deciding whether a password is needed belongs to
+   * `inspectConnectionFile`, so the caller can prompt before anything is imported. */
+  pickConnectionImportFile: async (locale: Locale) => {
     if (!isTauri) {
       throw new Error(formatMessage(previewText.desktopOnly, { name: "import_connections" }));
     }
@@ -398,11 +416,17 @@ export const api = {
       title: dialogText.importConnectionsTitle,
       multiple: false,
       directory: false,
-      filters: [{ name: dialogText.connectionFile, extensions: ["json"] }]
+      filters: [
+        { name: dialogText.connectionFile, extensions: ["json", ENCRYPTED_CONNECTION_EXTENSION] }
+      ]
     });
     if (!path) return null;
-    return command<ImportConnectionsResult>("import_connections", { path });
+    return path as string;
   },
+  inspectConnectionFile: (path: string) =>
+    command<ConnectionFileInspection>("inspect_connection_file", { path }),
+  importConnections: (path: string, password: string | null) =>
+    command<ImportConnectionsResult>("import_connections", { path, password }),
   setMcpToolEnabled: (name: string, enabled: boolean) =>
     command<AppSnapshot>("set_mcp_tool_enabled", { name, enabled }, withToolEnabled(name, enabled)),
   upsertConnection: (input: ConnectionInput) =>

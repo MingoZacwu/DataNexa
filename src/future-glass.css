@@ -2149,6 +2149,43 @@ textarea:focus-visible,
   width: min(620px, calc(100vw - 40px));
 }
 
+.transfer-password-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 15px;
+}
+
+.transfer-password-form > .transfer-dialog-actions {
+  margin-top: 0;
+}
+
+.transfer-password-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.transfer-password-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.transfer-password-error {
+  margin: 0;
+  color: var(--red);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.transfer-dialog-actions .transfer-plaintext-action {
+  margin-right: auto;
+}
+
 .transfer-warning {
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr);

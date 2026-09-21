@@ -43,6 +43,7 @@ import type { EffectiveTheme, SettingsTab, ThemeMode } from "../../app/types";
 import { updateScrollFade, useScrollFade } from "../../app/utils";
 import { Field, IconTooltip, SwitchField } from "../../components/ui";
 import { ThemeModeControl } from "../../components/chrome";
+import { EncryptionPasswordDialog } from "./EncryptionPasswordDialog";
 
 const APP_VERSION = appConfig.version;
 // Must match the backend snapshot list limit (audit.rs MAX_AUDIT_LIST_EVENTS).
@@ -140,7 +141,7 @@ export function SettingsView({
   onPolicyCheck: () => void;
   onSaveServer: (server: ServerConfig) => Promise<boolean>;
   onSaveSettings: (settings: SettingsConfig, applyAutoStart?: boolean) => Promise<void>;
-  onExportConnections: () => void;
+  onExportConnections: (password: string | null) => void;
   onImportConnections: () => void;
   onOpenProjectHomepage: () => void;
   onOpenProjectSite: () => void;
@@ -151,6 +152,7 @@ export function SettingsView({
   const serverDraftDirty = useRef(false);
   const settingsDraftDirty = useRef(false);
   const [policyDialogOpen, setPolicyDialogOpen] = useState(false);
+  const [exportPasswordOpen, setExportPasswordOpen] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [exportAcknowledged, setExportAcknowledged] = useState(false);
   const [bearerWarningOpen, setBearerWarningOpen] = useState(false);
@@ -423,15 +425,13 @@ export function SettingsView({
                   </span>
                   <span className="transfer-action-icon" aria-hidden="true"><FileUp size={18} /></span>
                 </button>
-                <Dialog.Trigger asChild>
-                  <button type="button" className="transfer-action" disabled={busy}>
-                    <span className="transfer-action-copy">
+                <button type="button" className="transfer-action" disabled={busy} onClick={() => setExportPasswordOpen(true)}>
+                  <span className="transfer-action-copy">
                     <strong>{t.settings.exportConnections}</strong>
-                      <span>{t.settings.exportConnectionsDescription}</span>
-                    </span>
-                    <span className="transfer-action-icon" aria-hidden="true"><FileDown size={18} /></span>
-                  </button>
-                </Dialog.Trigger>
+                    <span>{t.settings.exportConnectionsDescription}</span>
+                  </span>
+                  <span className="transfer-action-icon" aria-hidden="true"><FileDown size={18} /></span>
+                </button>
               </div>
             </section>
             <Dialog.Portal>
@@ -475,7 +475,7 @@ export function SettingsView({
                     onClick={() => {
                       setExportDialogOpen(false);
                       setExportAcknowledged(false);
-                      onExportConnections();
+                      onExportConnections(null);
                     }}
                   >
                     <FileDown size={16} />
@@ -485,6 +485,23 @@ export function SettingsView({
               </Dialog.Content>
             </Dialog.Portal>
           </Dialog.Root>
+
+          {exportPasswordOpen ? (
+            <EncryptionPasswordDialog
+              t={t}
+              mode="export"
+              busy={busy}
+              onSubmit={(password) => {
+                setExportPasswordOpen(false);
+                onExportConnections(password);
+              }}
+              onRequestPlaintext={() => {
+                setExportPasswordOpen(false);
+                setExportDialogOpen(true);
+              }}
+              onCancel={() => setExportPasswordOpen(false)}
+            />
+          ) : null}
 
           <Dialog.Root
             open={bearerWarningOpen}
