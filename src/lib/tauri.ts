@@ -227,6 +227,18 @@ const mockJdbcStorageStatus: JdbcStorageStatus = {
     { bundle_id: "00000000-0000-4000-8000-000000000021", display_name: "Oracle JDBC", status: "running", health: "healthy", process_count: 1, memory_bytes: 87.9 * 1024 * 1024, cpu_percent: 0.4 },
     { bundle_id: "00000000-0000-4000-8000-000000000022", display_name: "PostgreSQL JDBC", status: "stopped", health: "stopped", process_count: 0, memory_bytes: 0, cpu_percent: 0 }
   ],
+  host: {
+    process_count: 3,
+    memory_bytes: 214 * 1024 * 1024,
+    cpu_percent: 1.2,
+    processes: [
+      { pid: 4242, name: "DataNexa", memory_bytes: 128 * 1024 * 1024, cpu_percent: 0.6 },
+      { pid: 4243, name: "DataNexa WebView", memory_bytes: 62 * 1024 * 1024, cpu_percent: 0.4 },
+      { pid: 4244, name: "DataNexa GPU", memory_bytes: 24 * 1024 * 1024, cpu_percent: 0.2 }
+    ]
+  },
+  system_memory_bytes: 16 * 1024 * 1024 * 1024,
+  system_used_memory_bytes: 6.5 * 1024 * 1024 * 1024,
   maven_cache_bytes: 0,
   managed_runtime_old_bytes: 0
 };
@@ -234,14 +246,30 @@ const mockJdbcStorageStatus: JdbcStorageStatus = {
 function getMockJdbcStorageStatus(): JdbcStorageStatus {
   const seconds = Date.now() / 1000;
   const pulse = Math.sin(seconds * 0.8) * 2.8 + Math.sin(seconds * 0.23) * 1.4;
+  const hostPulse = Math.sin(seconds * 0.55) * 1.6 + Math.sin(seconds * 0.17) * 0.9;
   const oracleCpu = Math.max(0.2, Math.min(6, Number((2.8 + pulse).toFixed(2))));
+  const hostCpu = Math.max(0.3, Math.min(5, Number((1.6 + hostPulse).toFixed(2))));
+  const hostProcesses = mockJdbcStorageStatus.host.processes.map((process, index) => {
+    const weight = [0.5, 0.3, 0.2][index] ?? 0.2;
+    return {
+      ...process,
+      cpu_percent: Number((hostCpu * weight).toFixed(2)),
+      memory_bytes: Math.round(process.memory_bytes * (1 + hostPulse * 0.01))
+    };
+  });
   return {
     ...mockJdbcStorageStatus,
     runtimes: mockJdbcStorageStatus.runtimes.map((runtime) => (
       runtime.bundle_id === "00000000-0000-4000-8000-000000000021"
         ? { ...runtime, cpu_percent: oracleCpu }
         : { ...runtime }
-    ))
+    )),
+    host: {
+      ...mockJdbcStorageStatus.host,
+      cpu_percent: hostCpu,
+      memory_bytes: hostProcesses.reduce((total, process) => total + process.memory_bytes, 0),
+      processes: hostProcesses
+    }
   };
 }
 
@@ -342,6 +370,7 @@ export const api = {
   checkJdbcRuntimeUpdateIfDue: () => command<string | null>("check_jdbc_runtime_update_if_due", undefined, null),
   jdbcStorageStatus: () => command<JdbcStorageStatus>("get_jdbc_storage_status", undefined, getMockJdbcStorageStatus()),
   clearJdbcCache: (selection: JdbcCacheSelection) => command<boolean>("clear_jdbc_cache", { selection }, true),
+  stopJdbcDriverRuntime: (bundleId: string) => command<void>("stop_jdbc_driver_runtime", { bundleId }, undefined),
   openDataDirectory: () => command<void>("open_data_directory", undefined, undefined),
   installJdbcDriver: (input: InstallJdbcDriverInput) =>
     command<JdbcDriverBundle>("install_jdbc_driver", { input }, {

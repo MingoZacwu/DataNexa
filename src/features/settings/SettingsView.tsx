@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import clsx from "clsx";
 import {
   AlertTriangle,
+  AppWindow,
   Bug,
   CheckCircle2,
   Database,
@@ -29,6 +30,7 @@ import {
   SearchCheck, ShieldAlert,
   ShieldCheck,
   ShieldOff,
+  Square,
   Trash2,
   X
 } from "lucide-react";
@@ -37,7 +39,7 @@ import type { FormEvent, ReactNode } from "react";
 import appConfig from "../../../app.config.json";
 import appIconUrl from "../../../resources/icon.png";
 import { formatMessage, languageOptions, normalizeLocale, type I18nMessages, type Locale } from "../../i18n";
-import type { AppSnapshot, AuditEvent, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcDriverRuntimeInfo, JdbcInstallProgress, JdbcRuntimeInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "../../types";
+import type { AppSnapshot, AuditEvent, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcDriverRuntimeInfo, JdbcInstallProgress, JdbcRuntimeInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ProcessUsageInfo, ServerConfig, SettingsConfig } from "../../types";
 import type { UpdateState } from "../../lib/updater";
 import type { EffectiveTheme, SettingsTab, ThemeMode } from "../../app/types";
 import { updateScrollFade, useScrollFade } from "../../app/utils";
@@ -89,6 +91,7 @@ export function SettingsView({
   onInstallJdbcDriver,
   onImportJdbcDriver,
   onDeleteJdbcDriver,
+  onStopJdbcDriverRuntime,
   onThemeChange,
   onPolicyKindChange,
   onSqlChange,
@@ -135,6 +138,7 @@ export function SettingsView({
   onInstallJdbcDriver: (input: InstallJdbcDriverInput) => Promise<boolean>;
   onImportJdbcDriver: (input: ImportJdbcDriverInput) => Promise<boolean>;
   onDeleteJdbcDriver: (bundleId: string) => void;
+  onStopJdbcDriverRuntime: (bundleId: string) => Promise<boolean>;
   onThemeChange: (theme: ThemeMode) => void;
   onPolicyKindChange: (kind: DatabaseType) => void;
   onSqlChange: (sql: string) => void;
@@ -780,7 +784,7 @@ export function SettingsView({
           onSaveSettings={onSaveSettings}
         />
       ) : tab === "storage" ? (
-        <StorageManagement status={jdbcStorageStatus} busy={busy} onRefresh={onRefreshJdbcStorageStatus} onClearJdbcCache={onClearJdbcCache} onOpenDataDirectory={onOpenDataDirectory} debugLoggingEnabled={settingsDraft.debug_logging_enabled} t={t} />
+        <StorageManagement status={jdbcStorageStatus} busy={busy} onRefresh={onRefreshJdbcStorageStatus} onClearJdbcCache={onClearJdbcCache} onOpenDataDirectory={onOpenDataDirectory} onStopJdbcDriverRuntime={onStopJdbcDriverRuntime} debugLoggingEnabled={settingsDraft.debug_logging_enabled} t={t} />
       ) : (
         <div ref={scrollFadeRef} className="settings-stack" onScroll={updateScrollFade}>
           <section className="panel about-panel">
@@ -1348,8 +1352,8 @@ function JdbcRuntimeProgressView({ t, progress }: { t: I18nMessages; progress: J
   );
 }
 
-function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache, onOpenDataDirectory, debugLoggingEnabled }: { t: I18nMessages; status: JdbcStorageStatus | null; busy: boolean; onRefresh: () => void; onClearJdbcCache: (selection: JdbcCacheSelection) => Promise<boolean>; onOpenDataDirectory: () => void; debugLoggingEnabled: boolean }) {
-  const [selectedStorageView, setSelectedStorageView] = useState<"storage" | "drivers">("storage");
+function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache, onOpenDataDirectory, onStopJdbcDriverRuntime, debugLoggingEnabled }: { t: I18nMessages; status: JdbcStorageStatus | null; busy: boolean; onRefresh: () => void; onClearJdbcCache: (selection: JdbcCacheSelection) => Promise<boolean>; onOpenDataDirectory: () => void; onStopJdbcDriverRuntime: (bundleId: string) => Promise<boolean>; debugLoggingEnabled: boolean }) {
+  const [selectedStorageView, setSelectedStorageView] = useState<"storage" | "resources">("storage");
   const [mavenCacheDialogOpen, setMavenCacheDialogOpen] = useState(false);
   const [cacheSelection, setCacheSelection] = useState<JdbcCacheSelection>({ maven: true, old_runtimes: true, debug_logs: false });
   const [cpuHistory, setCpuHistory] = useState<number[]>([]);
@@ -1363,11 +1367,24 @@ function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache, onOpe
     const timer = window.setInterval(() => refreshRef.current(), 5000);
     return () => window.clearInterval(timer);
   }, []);
-  const totalCpuPercent = status?.runtimes.reduce((total, runtime) => total + Math.max(0, runtime.cpu_percent), 0) ?? 0;
+  const driverCpuPercent = status?.runtimes.reduce((total, runtime) => total + Math.max(0, runtime.cpu_percent), 0) ?? 0;
+  const hostCpuPercent = Math.max(0, status?.host.cpu_percent ?? 0);
+  const totalCpuPercent = driverCpuPercent + hostCpuPercent;
+  const totalMemoryBytes = (status?.host.memory_bytes ?? 0) + (status?.runtimes.reduce((total, runtime) => total + runtime.memory_bytes, 0) ?? 0);
+  const hostMemoryBytes = status?.host.memory_bytes ?? 0;
+  const driverMemoryBytes = status?.runtimes.reduce((total, runtime) => total + runtime.memory_bytes, 0) ?? 0;
+  const memoryPercent = status && status.system_memory_bytes > 0
+    ? (totalMemoryBytes / status.system_memory_bytes) * 100
+    : 0;
+  const systemMemoryTotal = status?.system_memory_bytes ?? 0;
+  const systemUsedBytes = status?.system_used_memory_bytes ?? 0;
+  const otherUsedBytes = Math.max(0, systemUsedBytes - totalMemoryBytes);
+  const memoryBarScale = Math.max(systemMemoryTotal, systemUsedBytes, totalMemoryBytes, 1);
+  const memoryUsedWidth = ((totalMemoryBytes + otherUsedBytes) / memoryBarScale) * 100;
   useEffect(() => {
     if (!status) return;
-    const nextCpu = status.runtimes.reduce((total, runtime) => total + Math.max(0, runtime.cpu_percent), 0);
-    setCpuHistory((history) => history.length ? [...history.slice(-23), nextCpu] : Array.from({ length: 12 }, () => nextCpu));
+    const nextCpu = status.runtimes.reduce((total, runtime) => total + Math.max(0, runtime.cpu_percent), 0) + Math.max(0, status.host.cpu_percent);
+    setCpuHistory((history) => history.length ? [...history.slice(-29), nextCpu] : Array.from({ length: 16 }, () => nextCpu));
   }, [status]);
   const storageBreakdown = status?.items.map((item) => ({
     ...item,
@@ -1378,12 +1395,16 @@ function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache, onOpe
   const storageBreakdownById = new Map(storageBreakdown.map((item) => [item.id, item]));
   const debugLogBytes = status?.items.find((item) => item.id === "logs")?.bytes ?? 0;
   const cacheAllClean = !status?.maven_cache_bytes && !status?.managed_runtime_old_bytes && !debugLogBytes;
-  const cpuHistoryMax = Math.max(1, ...cpuHistory);
 
   return (
     <div ref={scrollFadeRef} className="settings-stack storage-management" onScroll={updateScrollFade}>
-      <section className="panel driver-runtime-panel">
-        <div className="driver-section-heading"><div><h2>{t.settings.storagePerformance}</h2></div><IconTooltip label={t.common.refresh}><button type="button" className="icon-button" onClick={onRefresh} disabled={busy}><RefreshCw size={17} /></button></IconTooltip></div>
+      <section className="panel storage-overview-panel">
+        <div className="driver-section-heading">
+          <div>
+            <h2>{t.settings.storagePerformance}</h2>
+          </div>
+          <IconTooltip label={t.common.refresh}><button type="button" className="icon-button" onClick={onRefresh} disabled={busy}><RefreshCw size={17} /></button></IconTooltip>
+        </div>
         <div className="overview-grid storage-overview-grid">
           <button
             type="button"
@@ -1392,16 +1413,22 @@ function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache, onOpe
             aria-pressed={selectedStorageView === "storage"}
           >
             <div className="metric-icon"><HardDrive size={17} /></div>
-            <div><span>{t.settings.totalStorage}</span><strong>{status ? formatBytes(status.total_bytes) : t.settings.runtimeChecking}</strong></div>
+            <div>
+              <span>{t.settings.spaceTab}</span>
+              <strong>{status ? formatBytes(status.total_bytes) : t.settings.runtimeChecking}</strong>
+            </div>
           </button>
           <button
             type="button"
-            className={clsx("metric-card", "green", "storage-selector-card", selectedStorageView === "drivers" && "selected")}
-            onClick={() => setSelectedStorageView("drivers")}
-            aria-pressed={selectedStorageView === "drivers"}
+            className={clsx("metric-card", "violet", "storage-selector-card", selectedStorageView === "resources" && "selected")}
+            onClick={() => setSelectedStorageView("resources")}
+            aria-pressed={selectedStorageView === "resources"}
           >
             <div className="metric-icon"><Activity size={17} /></div>
-            <div><span>{t.settings.runningDrivers}</span><strong>{status ? status.runtimes.filter((runtime) => runtime.status === "running").length : "-"}</strong></div>
+            <div>
+              <span>{t.settings.resourceTab}</span>
+              <strong>{status ? `${totalCpuPercent.toFixed(1)}%` : t.settings.runtimeChecking}</strong>
+            </div>
           </button>
         </div>
       </section>
@@ -1478,14 +1505,101 @@ function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache, onOpe
         </section>
       ) : (
         <section className="panel runtime-details-panel">
-          <div className="driver-section-heading"><div><h2>{t.settings.driverRuntimeUsage}</h2></div></div>
+          <div className="driver-section-heading">
+            <div><h2>{t.settings.driverRuntimeUsage}</h2></div>
+            <div className="runtime-heading-actions" aria-hidden="true" />
+          </div>
           {!status ? <div className="empty-state">{t.settings.runtimeChecking}</div> : <>
-            <div className="runtime-cpu-overview">
-              <div className="runtime-cpu-heading"><div><span>{t.settings.totalCpuUsage}</span><small>{t.settings.cpuUsageLive}</small></div><strong>{totalCpuPercent.toFixed(1)}%</strong></div>
-              <div className="runtime-cpu-meter" role="img" aria-label={t.settings.totalCpuUsage}><span style={{ width: `${Math.min(100, totalCpuPercent)}%` }} /></div>
-              <div className="runtime-cpu-history" role="img" aria-label={t.settings.cpuUsageHistory}>{cpuHistory.map((value, index) => <span key={`${index}-${value}`} style={{ height: `${Math.max(8, Math.min(100, value / cpuHistoryMax * 100))}%` }} />)}</div>
+            <div className="live-hero">
+              <div className="live-hero-grid">
+                <div className="live-metric cpu">
+                  <div className="live-metric-top">
+                    <div>
+                      <strong>{totalCpuPercent.toFixed(1)}%</strong>
+                      <span>{t.settings.totalCpuUsage}</span>
+                    </div>
+                  </div>
+                  <CpuSparkline values={cpuHistory} />
+                  <p>{t.settings.cpuLegendHost} {hostCpuPercent.toFixed(1)}% · {t.settings.cpuLegendDrivers} {driverCpuPercent.toFixed(1)}%</p>
+                </div>
+                <div className="live-metric memory">
+                  <div className="live-metric-top">
+                    <div>
+                      <strong>{formatBytes(totalMemoryBytes)}</strong>
+                      <span>{t.settings.totalMemoryUsage}</span>
+                    </div>
+                    <em>{memoryPercent.toFixed(1)}%</em>
+                  </div>
+                  <div
+                    className="live-memory-stack"
+                    role="img"
+                    aria-label={t.settings.totalMemoryUsage}
+                    title={`${t.settings.memorySegmentAvailable} · ${formatBytes(Math.max(0, memoryBarScale - totalMemoryBytes - otherUsedBytes))}`}
+                  >
+                    <div className="live-memory-stack-fill" style={{ width: `${Math.min(100, memoryUsedWidth)}%` }}>
+                      <span
+                        className="host"
+                        style={{ flex: Math.max(hostMemoryBytes, 0.0001) }}
+                        title={`${t.settings.memorySegmentHost} · ${formatBytes(hostMemoryBytes)}`}
+                      />
+                      <span
+                        className="drivers"
+                        style={{ flex: Math.max(driverMemoryBytes, 0.0001) }}
+                        title={`${t.settings.memorySegmentDrivers} · ${formatBytes(driverMemoryBytes)}`}
+                      />
+                      <span
+                        className="system"
+                        style={{ flex: Math.max(otherUsedBytes, 0.0001) }}
+                        title={`${t.settings.memorySegmentSystem} · ${formatBytes(otherUsedBytes)}`}
+                      />
+                    </div>
+                  </div>
+                  <p>{formatBytes(totalMemoryBytes)} / {formatBytes(status.system_memory_bytes)}</p>
+                </div>
+              </div>
             </div>
-            <div className="runtime-driver-list">{status.runtimes.length ? status.runtimes.map((runtime) => <RuntimeUsageRow key={runtime.bundle_id} runtime={runtime} t={t} />) : <div className="empty-state">{t.settings.noJdbcRuntimes}</div>}</div>
+
+            <div className="usage-section">
+              <div className="usage-section-heading">
+                <div className="permission-icon"><AppWindow size={17} /></div>
+                <div>
+                  <strong>{t.settings.hostSectionTitle}</strong>
+                  <span>{status.host.process_count ? `${t.settings.hostSectionDescription} · ${status.host.process_count} ${t.settings.processes}` : t.settings.hostSectionDescription}</span>
+                </div>
+              </div>
+              {status.host.processes.length ? (
+                <div className="usage-process-list">
+                  {status.host.processes.map((process) => <ProcessUsageRow key={process.pid} process={process} t={t} />)}
+                </div>
+              ) : (
+                <div className="empty-state compact">{t.settings.notRunning}</div>
+              )}
+            </div>
+
+            <div className="usage-section">
+              <div className="usage-section-heading">
+                <div className="permission-icon"><Database size={17} /></div>
+                <div>
+                  <strong>{t.settings.driverSectionTitle}</strong>
+                  <span>{`${status.runtimes.filter((runtime) => runtime.status === "running").length} / ${status.runtimes.length}`}</span>
+                </div>
+              </div>
+              {status.runtimes.length ? (
+                <div className="usage-process-list">
+                  {status.runtimes.map((runtime) => (
+                    <RuntimeUsageRow
+                      key={runtime.bundle_id}
+                      runtime={runtime}
+                      t={t}
+                      busy={busy}
+                      onStop={onStopJdbcDriverRuntime}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state compact">{t.settings.noJdbcRuntimes}</div>
+              )}
+            </div>
           </>}
         </section>
       )}
@@ -1520,10 +1634,79 @@ function CacheOption({ label, size, checked, disabled = false, onChange }: { lab
   );
 }
 
-function RuntimeUsageRow({ runtime, t }: { runtime: JdbcDriverRuntimeInfo; t: I18nMessages }) {
+function CpuSparkline({ values }: { values: number[] }) {
+  const points = values.length ? values : [0];
+  const width = 240;
+  const height = 48;
+  const max = Math.max(1, ...points);
+  const stepX = points.length > 1 ? width / (points.length - 1) : width;
+  const coords = points.map((value, index) => {
+    const x = index * stepX;
+    const y = height - (value / max) * (height - 6) - 3;
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  });
+  const line = `M ${coords.join(" L ")}`;
+  const area = `${line} L ${width},${height} L 0,${height} Z`;
+
+  return (
+    <svg className="cpu-sparkline" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <linearGradient id="cpu-spark-fill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--blue)" stopOpacity="0.28" />
+          <stop offset="100%" stopColor="var(--blue)" stopOpacity="0.02" />
+        </linearGradient>
+      </defs>
+      <path d={area} fill="url(#cpu-spark-fill)" />
+      <path d={line} fill="none" stroke="var(--blue)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
+function RuntimeUsageRow({ runtime, t, busy, onStop }: { runtime: JdbcDriverRuntimeInfo; t: I18nMessages; busy: boolean; onStop: (bundleId: string) => Promise<boolean> }) {
   const healthLabel = runtime.health === "healthy" ? t.settings.healthy : runtime.health === "stopped" ? t.settings.stopped : t.settings.unhealthy;
   const healthTone = runtime.health === "healthy" ? "available" : runtime.health === "error" ? "unavailable" : "neutral";
-  return <div className="runtime-driver-row"><div className="runtime-driver-identity"><div className="permission-icon"><Activity size={16} /></div><div><strong>{runtime.display_name}</strong><span>{runtime.process_count ? `${runtime.process_count} ${t.settings.processes}` : t.settings.notRunning}</span></div></div><span className={clsx("runtime-status-badge", healthTone)}>{healthLabel}</span><div className="runtime-driver-stat"><span>CPU</span><strong>{runtime.cpu_percent.toFixed(1)}%</strong></div><div className="runtime-driver-stat"><span>{t.settings.memory}</span><strong>{formatBytes(runtime.memory_bytes)}</strong></div></div>;
+  const running = runtime.status === "running" && runtime.process_count > 0;
+  return (
+    <div className="usage-process-row">
+      <div className="usage-process-identity">
+        <div className="usage-process-name">
+          <strong>{runtime.display_name}</strong>
+          <span className={clsx("runtime-status-badge", healthTone)}>{healthLabel}</span>
+        </div>
+        <span className="usage-process-sub">{runtime.process_count ? `${runtime.process_count} ${t.settings.processes}` : t.settings.notRunning}</span>
+      </div>
+      {running && (
+        <IconTooltip label={t.settings.stopDriverRuntime}>
+          <button
+            type="button"
+            className="icon-button danger usage-stop-button"
+            disabled={busy}
+            aria-label={t.settings.stopDriverRuntime}
+            onClick={() => void onStop(runtime.bundle_id)}
+          >
+            <Square size={14} />
+          </button>
+        </IconTooltip>
+      )}
+      <div className="runtime-driver-stat"><span>CPU</span><strong>{runtime.cpu_percent.toFixed(1)}%</strong></div>
+      <div className="runtime-driver-stat"><span>{t.settings.memory}</span><strong>{formatBytes(runtime.memory_bytes)}</strong></div>
+    </div>
+  );
+}
+
+function ProcessUsageRow({ process, t }: { process: ProcessUsageInfo; t: I18nMessages }) {
+  return (
+    <div className="usage-process-row child">
+      <div className="usage-process-identity">
+        <div className="usage-process-name">
+          <strong>{process.name}</strong>
+        </div>
+        <code className="usage-process-sub">{t.settings.processPid} {process.pid}</code>
+      </div>
+      <div className="runtime-driver-stat"><span>CPU</span><strong>{process.cpu_percent.toFixed(1)}%</strong></div>
+      <div className="runtime-driver-stat"><span>{t.settings.memory}</span><strong>{formatBytes(process.memory_bytes)}</strong></div>
+    </div>
+  );
 }
 
 function StatusBadge({ available, label }: { available: boolean; label: string }) {

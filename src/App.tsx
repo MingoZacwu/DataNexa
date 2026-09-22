@@ -671,6 +671,20 @@ function App() {
     }
   }
 
+  async function stopJdbcDriverRuntime(bundleId: string): Promise<boolean> {
+    setBusy(true);
+    try {
+      await api.stopJdbcDriverRuntime(bundleId);
+      await refreshJdbcStorageStatus();
+      return true;
+    } catch (error) {
+      showError(error);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function installJdbcDriver(input: InstallJdbcDriverInput): Promise<boolean> {
     setBusy(true);
     setJdbcInstallProgress({ operation: "install", phase: "preparing", progress: 0 });
@@ -1119,6 +1133,7 @@ function App() {
                     onCheckJdbcRuntimeUpdate={checkJdbcRuntimeUpdate}
                     onRefreshJdbcStorageStatus={() => void refreshJdbcStorageStatus()}
                     onClearJdbcCache={clearJdbcCache}
+                    onStopJdbcDriverRuntime={stopJdbcDriverRuntime}
                     onOpenDataDirectory={() => void api.openDataDirectory().catch(showError)}
                     onOpenDebugLogFolder={() => void api.openDebugLogDirectory().catch(showError)}
                     onInstallJdbcDriver={installJdbcDriver}

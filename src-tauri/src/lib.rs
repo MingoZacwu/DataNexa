@@ -34,8 +34,8 @@ use commands::{
     rename_access_token, retry_audit_migration, rotate_access_token, save_server_config,
     save_settings_config, set_access_token_enabled, set_connection_enabled, set_mcp_tool_enabled,
     set_token_connection_allowed, set_token_tool_allowed, set_window_material_theme,
-    start_mcp_server, start_window_drag, stop_mcp_server, test_connection, test_connection_input,
-    upsert_connection,
+    start_mcp_server, start_window_drag, stop_jdbc_driver_runtime, stop_mcp_server,
+    test_connection, test_connection_input, upsert_connection,
 };
 use i18n::{backend_text, BackendText};
 use state::AppState;
@@ -742,6 +742,7 @@ pub fn run() {
             check_jdbc_runtime_update_if_due,
             get_jdbc_storage_status,
             clear_jdbc_cache,
+            stop_jdbc_driver_runtime,
             install_jdbc_driver,
             import_jdbc_driver,
             delete_jdbc_driver,

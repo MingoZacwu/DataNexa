@@ -4,7 +4,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
@@ -12,7 +12,9 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
+use sysinfo::{
+    MemoryRefreshKind, Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System,
+};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -34,6 +36,10 @@ const MAVEN_INSTALL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const JAVA_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_LOCAL_DRIVER_FILES: usize = 256;
 const MAX_LOCAL_DRIVER_BYTES: u64 = 1024 * 1024 * 1024;
+/// Host process membership changes rarely (WebView helpers, etc.). Rediscover the
+/// tree on a slow cadence and only refresh known PIDs on the common path so the
+/// 5s UI poll does not rescan every process on the machine.
+const HOST_PID_DISCOVERY_TTL: Duration = Duration::from_secs(12);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JdbcDriverFile {
@@ -116,12 +122,33 @@ pub struct JdbcDriverRuntimeInfo {
     pub cpu_percent: f32,
 }
 
+/// Per-process sample for the DataNexa host tree (main process and children).
+#[derive(Debug, Clone, Serialize)]
+pub struct ProcessUsageInfo {
+    pub pid: u32,
+    pub name: String,
+    pub memory_bytes: u64,
+    pub cpu_percent: f32,
+}
+
+/// DataNexa host processes (main process tree minus JDBC sidecars).
+#[derive(Debug, Clone, Serialize)]
+pub struct AppHostRuntimeInfo {
+    pub process_count: usize,
+    pub memory_bytes: u64,
+    pub cpu_percent: f32,
+    pub processes: Vec<ProcessUsageInfo>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct JdbcStorageStatus {
     pub storage_root: String,
     pub total_bytes: u64,
     pub items: Vec<JdbcStorageItem>,
     pub runtimes: Vec<JdbcDriverRuntimeInfo>,
+    pub host: AppHostRuntimeInfo,
+    pub system_memory_bytes: u64,
+    pub system_used_memory_bytes: u64,
     pub maven_cache_bytes: u64,
     pub managed_runtime_old_bytes: u64,
 }
@@ -244,9 +271,18 @@ struct JdbcSidecarSession {
 
 #[derive(Debug, Clone, Default)]
 struct ProcessStats {
+    name: String,
     memory_bytes: u64,
     cpu_percent: f32,
 }
+
+struct HostPidCache {
+    pids: HashSet<u32>,
+    sampled_at: Instant,
+}
+
+static PROCESS_SYSTEM: OnceLock<StdMutex<System>> = OnceLock::new();
+static HOST_PID_CACHE: StdMutex<Option<HostPidCache>> = StdMutex::new(None);
 
 struct JdbcSidecarProcess {
     child: Child,
@@ -314,6 +350,27 @@ impl JdbcManager {
         for session in sessions.into_values() {
             session.shutdown().await;
         }
+    }
+
+    /// Stop every live sidecar session belonging to one JDBC driver bundle.
+    pub async fn stop_driver_sessions(&self, bundle_id: &str) -> anyhow::Result<usize> {
+        if !valid_bundle_id(bundle_id) {
+            return Err(anyhow::anyhow!("invalid JDBC driver bundle id"));
+        }
+        let mut sessions = self.sessions.lock().await;
+        let keys = sessions
+            .iter()
+            .filter(|(_, session)| session.bundle_id == bundle_id)
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        let mut stopped = 0_usize;
+        for key in keys {
+            if let Some(session) = sessions.remove(&key) {
+                session.shutdown().await;
+                stopped += 1;
+            }
+        }
+        Ok(stopped)
     }
 
     fn emit_install_progress(&self, operation: &str, phase: &str, progress: Option<u8>) {
@@ -702,8 +759,13 @@ impl JdbcManager {
             });
         }
         let drivers = self.list_drivers()?;
-        let runtimes = self.collect_driver_runtime_info(&drivers).await;
-        let maven_cache_bytes = path_size_bytes(&storage_root.join("maven-repository"));
+        let (runtimes, host, system_memory_bytes, system_used_memory_bytes) =
+            self.collect_runtime_metrics(&drivers).await;
+        let maven_cache_bytes = items
+            .iter()
+            .find(|item| item.id == "maven")
+            .map(|item| item.bytes)
+            .unwrap_or_else(|| path_size_bytes(&storage_root.join("maven-repository")));
         // Old runtime bytes mirror what clear_jdbc_cache removes: every entry
         // under the managed runtime directory except the current.json
         // metadata and the runtime directory it points to.
@@ -726,6 +788,9 @@ impl JdbcManager {
             total_bytes,
             items,
             runtimes,
+            host,
+            system_memory_bytes,
+            system_used_memory_bytes,
             maven_cache_bytes,
             managed_runtime_old_bytes,
         })
@@ -1233,10 +1298,15 @@ impl JdbcManager {
         Ok(session)
     }
 
-    async fn collect_driver_runtime_info(
+    /// One lightweight sysinfo pass produces both JDBC sidecar rows and DataNexa
+    /// host usage. The `System` instance is kept alive so `cpu_usage()` has a
+    /// previous sample interval to compare against.
+    async fn collect_runtime_metrics(
         &self,
         drivers: &[JdbcDriverBundle],
-    ) -> Vec<JdbcDriverRuntimeInfo> {
+    ) -> (Vec<JdbcDriverRuntimeInfo>, AppHostRuntimeInfo, u64, u64) {
+        let drivers = drivers.to_vec();
+        let drivers_fallback = drivers.clone();
         let sessions = self.sessions.lock().await;
         let mut pids_by_bundle = HashMap::<String, Vec<u32>>::new();
         for session in sessions.values() {
@@ -1248,51 +1318,180 @@ impl JdbcManager {
                     .push(pid);
             }
         }
-        let all_pids = pids_by_bundle
+        drop(sessions);
+        let sidecar_pids = pids_by_bundle
             .values()
             .flatten()
             .copied()
             .collect::<HashSet<_>>();
-        let stats = collect_process_stats(all_pids).await;
-        drivers
-            .iter()
-            .map(|driver| {
-                let pids = pids_by_bundle
-                    .get(&driver.bundle_id)
-                    .cloned()
-                    .unwrap_or_default();
-                let mut memory_bytes = 0_u64;
-                let mut cpu_percent = 0_f32;
-                let mut running = 0_usize;
-                for pid in &pids {
-                    if let Some(stat) = stats.get(pid) {
-                        running += 1;
-                        memory_bytes = memory_bytes.saturating_add(stat.memory_bytes);
-                        cpu_percent += stat.cpu_percent;
-                    }
+
+        tokio::task::spawn_blocking(move || {
+            let mut system = process_system()
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            system.refresh_memory();
+            let system_memory_bytes = system.total_memory();
+            let system_used_memory_bytes = system.used_memory();
+            let mut host_cache = HOST_PID_CACHE
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let self_pid = std::process::id();
+            let now = Instant::now();
+            let needs_discovery = match host_cache.as_ref() {
+                Some(cache) => {
+                    now.duration_since(cache.sampled_at) >= HOST_PID_DISCOVERY_TTL
+                        || !cache.pids.contains(&self_pid)
                 }
-                let status = if pids.is_empty() {
-                    "stopped"
-                } else if running == pids.len() {
-                    "running"
-                } else {
-                    "error"
-                };
-                JdbcDriverRuntimeInfo {
+                None => true,
+            };
+
+            let host_pids = if needs_discovery {
+                system.refresh_processes_specifics(
+                    ProcessesToUpdate::All,
+                    true,
+                    process_refresh_kind(),
+                );
+                let pids = discover_host_pids(&system, &sidecar_pids);
+                *host_cache = Some(HostPidCache {
+                    pids: pids.clone(),
+                    sampled_at: now,
+                });
+                pids
+            } else {
+                let cached = host_cache
+                    .as_ref()
+                    .map(|cache| cache.pids.clone())
+                    .unwrap_or_default();
+                let mut watch = cached.clone();
+                watch.extend(sidecar_pids.iter().copied());
+                watch.insert(self_pid);
+                let watch_list = watch
+                    .into_iter()
+                    .map(|pid| Pid::from_u32(pid))
+                    .collect::<Vec<_>>();
+                system.refresh_processes_specifics(
+                    ProcessesToUpdate::Some(&watch_list),
+                    true,
+                    process_refresh_kind(),
+                );
+                if system.process(Pid::from_u32(self_pid)).is_none() {
+                    *host_cache = None;
+                }
+                cached
+            };
+
+            let mut host_stats = HashMap::<u32, ProcessStats>::new();
+            for pid in host_pids.iter().copied().chain([self_pid]) {
+                if host_stats.contains_key(&pid) {
+                    continue;
+                }
+                if let Some(stat) = snapshot_process_stats(&system, pid) {
+                    host_stats.insert(pid, stat);
+                }
+            }
+            let mut sidecar_stats = HashMap::<u32, ProcessStats>::new();
+            for pid in &sidecar_pids {
+                if let Some(stat) = snapshot_process_stats(&system, *pid) {
+                    sidecar_stats.insert(*pid, stat);
+                }
+            }
+
+            let runtimes = drivers
+                .iter()
+                .map(|driver| {
+                    let pids = pids_by_bundle
+                        .get(&driver.bundle_id)
+                        .cloned()
+                        .unwrap_or_default();
+                    let mut memory_bytes = 0_u64;
+                    let mut cpu_percent = 0_f32;
+                    let mut running = 0_usize;
+                    for pid in &pids {
+                        if let Some(stat) = sidecar_stats.get(pid) {
+                            running += 1;
+                            memory_bytes = memory_bytes.saturating_add(stat.memory_bytes);
+                            cpu_percent += stat.cpu_percent;
+                        }
+                    }
+                    let status = if pids.is_empty() {
+                        "stopped"
+                    } else if running == pids.len() {
+                        "running"
+                    } else {
+                        "error"
+                    };
+                    JdbcDriverRuntimeInfo {
+                        bundle_id: driver.bundle_id.clone(),
+                        display_name: driver.display_name.clone(),
+                        status: status.to_string(),
+                        health: if status == "running" {
+                            "healthy".to_string()
+                        } else {
+                            status.to_string()
+                        },
+                        process_count: running,
+                        memory_bytes,
+                        cpu_percent,
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            let mut host = AppHostRuntimeInfo {
+                process_count: 0,
+                memory_bytes: 0,
+                cpu_percent: 0.0,
+                processes: Vec::new(),
+            };
+            for (pid, stat) in &host_stats {
+                host.process_count += 1;
+                host.memory_bytes = host.memory_bytes.saturating_add(stat.memory_bytes);
+                host.cpu_percent += stat.cpu_percent;
+                host.processes.push(ProcessUsageInfo {
+                    pid: *pid,
+                    name: if stat.name.is_empty() {
+                        format!("pid {pid}")
+                    } else {
+                        stat.name.clone()
+                    },
+                    memory_bytes: stat.memory_bytes,
+                    cpu_percent: stat.cpu_percent,
+                });
+            }
+            host.processes.sort_by(|left, right| {
+                right
+                    .cpu_percent
+                    .total_cmp(&left.cpu_percent)
+                    .then(right.memory_bytes.cmp(&left.memory_bytes))
+                    .then(left.pid.cmp(&right.pid))
+            });
+            (runtimes, host, system_memory_bytes, system_used_memory_bytes)
+        })
+        .await
+        .unwrap_or_else(|_| {
+            let runtimes = drivers_fallback
+                .iter()
+                .map(|driver| JdbcDriverRuntimeInfo {
                     bundle_id: driver.bundle_id.clone(),
                     display_name: driver.display_name.clone(),
-                    status: status.to_string(),
-                    health: if status == "running" {
-                        "healthy".to_string()
-                    } else {
-                        status.to_string()
-                    },
-                    process_count: running,
-                    memory_bytes,
-                    cpu_percent,
-                }
-            })
-            .collect()
+                    status: "error".to_string(),
+                    health: "error".to_string(),
+                    process_count: 0,
+                    memory_bytes: 0,
+                    cpu_percent: 0.0,
+                })
+                .collect();
+            (
+                runtimes,
+                AppHostRuntimeInfo {
+                    process_count: 0,
+                    memory_bytes: 0,
+                    cpu_percent: 0.0,
+                    processes: Vec::new(),
+                },
+                0_u64,
+                0_u64,
+            )
+        })
     }
 
     async fn invalidate_session(&self, session_key: &str) {
@@ -1768,35 +1967,57 @@ fn path_size_bytes(path: &Path) -> u64 {
         .unwrap_or(0)
 }
 
-async fn collect_process_stats(pids: HashSet<u32>) -> HashMap<u32, ProcessStats> {
-    if pids.is_empty() {
-        return HashMap::new();
-    }
-    tokio::task::spawn_blocking(move || {
-        let mut system = System::new_with_specifics(
-            RefreshKind::new().with_processes(ProcessRefreshKind::new().with_cpu().with_memory()),
-        );
-        system.refresh_processes_specifics(
-            ProcessesToUpdate::All,
-            true,
-            ProcessRefreshKind::new().with_cpu().with_memory(),
-        );
-        pids.into_iter()
-            .filter_map(|pid| {
-                system.process(Pid::from_u32(pid)).map(|process| {
-                    (
-                        pid,
-                        ProcessStats {
-                            memory_bytes: process.memory(),
-                            cpu_percent: process.cpu_usage(),
-                        },
-                    )
-                })
-            })
-            .collect()
+fn process_refresh_kind() -> ProcessRefreshKind {
+    ProcessRefreshKind::new().with_cpu().with_memory()
+}
+
+fn process_system() -> &'static StdMutex<System> {
+    PROCESS_SYSTEM.get_or_init(|| {
+        StdMutex::new(System::new_with_specifics(
+            RefreshKind::new()
+                .with_memory(MemoryRefreshKind::everything())
+                .with_processes(process_refresh_kind()),
+        ))
     })
-    .await
-    .unwrap_or_default()
+}
+
+fn snapshot_process_stats(system: &System, pid: u32) -> Option<ProcessStats> {
+    system.process(Pid::from_u32(pid)).map(|process| ProcessStats {
+        name: process.name().to_string_lossy().into_owned(),
+        memory_bytes: process.memory(),
+        cpu_percent: process.cpu_usage().max(0.0),
+    })
+}
+
+/// Walk the process tree from this app's PID. JDBC sidecars are excluded (and not
+/// expanded) so their descendants stay with the driver rows instead of host usage.
+/// Shared WebKit/WebView helper processes whose parent is not this app are left out
+/// on purpose — host numbers are a conservative lower bound on those platforms.
+fn discover_host_pids(system: &System, sidecar_pids: &HashSet<u32>) -> HashSet<u32> {
+    let self_pid = std::process::id();
+    let mut children = HashMap::<u32, Vec<u32>>::new();
+    for (pid, process) in system.processes() {
+        if let Some(parent) = process.parent() {
+            children
+                .entry(parent.as_u32())
+                .or_default()
+                .push(pid.as_u32());
+        }
+    }
+    let mut host_pids = HashSet::new();
+    host_pids.insert(self_pid);
+    let mut stack = vec![self_pid];
+    while let Some(pid) = stack.pop() {
+        if let Some(kids) = children.get(&pid) {
+            for child in kids.iter().copied() {
+                if sidecar_pids.contains(&child) || !host_pids.insert(child) {
+                    continue;
+                }
+                stack.push(child);
+            }
+        }
+    }
+    host_pids
 }
 
 fn verify_bundle_files(bundle_path: &Path, bundle: &JdbcDriverBundle) -> anyhow::Result<()> {

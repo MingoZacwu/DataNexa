@@ -217,11 +217,28 @@ export interface JdbcDriverRuntimeInfo {
   cpu_percent: number;
 }
 
+export interface ProcessUsageInfo {
+  pid: number;
+  name: string;
+  memory_bytes: number;
+  cpu_percent: number;
+}
+
+export interface AppHostRuntimeInfo {
+  process_count: number;
+  memory_bytes: number;
+  cpu_percent: number;
+  processes: ProcessUsageInfo[];
+}
+
 export interface JdbcStorageStatus {
   storage_root: string;
   total_bytes: number;
   items: JdbcStorageItem[];
   runtimes: JdbcDriverRuntimeInfo[];
+  host: AppHostRuntimeInfo;
+  system_memory_bytes: number;
+  system_used_memory_bytes: number;
   maven_cache_bytes: number;
   managed_runtime_old_bytes: number;
 }
