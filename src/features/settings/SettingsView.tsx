@@ -7,6 +7,7 @@ import {
   AppWindow,
   Bug,
   CheckCircle2,
+  CircleDashed,
   Database,
   Download,
   ExternalLink,
@@ -1597,7 +1598,12 @@ function StorageManagement({ t, status, busy, onRefresh, onClearJdbcCache, onOpe
                   ))}
                 </div>
               ) : (
-                <div className="empty-state compact">{t.settings.noJdbcRuntimes}</div>
+                <div className="runtime-empty-row">
+                  <CircleDashed size={16} aria-hidden="true" />
+                  <strong>{t.settings.noJdbcRuntimes}</strong>
+                  <span className="runtime-empty-dot" aria-hidden="true" />
+                  <span className="runtime-empty-hint">{t.settings.noJdbcRuntimesHint}</span>
+                </div>
               )}
             </div>
           </>}

@@ -1449,6 +1449,47 @@ p {
   min-width: 80px;
 }
 
+.runtime-empty-row {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 12px;
+  border: 1px dashed color-mix(in srgb, var(--muted) 32%, transparent);
+  border-radius: var(--card-radius);
+  background: color-mix(in srgb, var(--surface-strong) 42%, transparent);
+}
+
+.runtime-empty-row > svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+  opacity: 0.72;
+}
+
+.runtime-empty-row strong {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--ink) 74%, var(--muted));
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.runtime-empty-dot {
+  flex: 0 0 auto;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--muted) 55%, transparent);
+}
+
+.runtime-empty-hint {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .permission-icon.host { color: var(--blue); }
 
 @media (max-width: 720px) {

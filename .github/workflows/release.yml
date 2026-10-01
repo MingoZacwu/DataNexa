@@ -197,6 +197,16 @@ jobs:
         with:
           ref: ${{ needs.resolve-tag.outputs.release_tag }}
 
+      - name: Select Xcode
+        if: runner.os == 'macOS'
+        env:
+          # macos-15 defaults to Xcode 16.4 (macOS 15.5 SDK); 26.3 ships the macOS 26.2 SDK
+          XCODE_APP: /Applications/Xcode_26.3.app
+        run: |
+          sudo xcode-select --switch "$XCODE_APP"
+          xcodebuild -version
+          echo "macOS SDK: $(xcrun --show-sdk-version --sdk macosx)"
+
       - name: Import Apple Developer Certificate
         if: runner.os == 'macOS'
         env:

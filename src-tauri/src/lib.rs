@@ -306,16 +306,6 @@ pub(crate) fn refresh_tray_menu(
     Ok(())
 }
 
-fn set_dock_visibility(app: &AppHandle, visible: bool) -> tauri::Result<()> {
-    #[cfg(target_os = "macos")]
-    app.set_dock_visibility(visible)?;
-
-    #[cfg(not(target_os = "macos"))]
-    let _ = (app, visible);
-
-    Ok(())
-}
-
 async fn refresh_tray_from_state(app: &AppHandle, state: &Arc<AppState>) -> tauri::Result<()> {
     let running = mcp::status(state).await.running;
     let startup_error = state.mcp.read().await.startup_error.is_some();
@@ -336,8 +326,7 @@ fn reveal_main_window(window: &WebviewWindow) {
 }
 
 fn show_main_window(app: &AppHandle) {
-    let _ = startup::set_activation_policy(true);
-    let _ = set_dock_visibility(app, true);
+    let _ = startup::set_app_in_dock(true);
     let app_state = app.state::<Arc<AppState>>().inner().clone();
     let window_state = app.state::<Arc<MainWindowState>>().inner().clone();
     window_state.generation.fetch_add(1, Ordering::AcqRel);
@@ -432,8 +421,7 @@ async fn activate_lightweight_mode(app: AppHandle, generation: u64, automatic: b
 
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
-        let _ = startup::set_activation_policy(false);
-        let _ = set_dock_visibility(&app, false);
+        let _ = startup::set_app_in_dock(false);
         if let Err(error) = window.destroy() {
             debug_log::error(
                 "lightweight",
@@ -481,10 +469,9 @@ fn schedule_lightweight_mode(app: &AppHandle) {
 
 pub(crate) fn hide_main_window_to_tray(window: &WebviewWindow) -> tauri::Result<()> {
     window.hide()?;
-    let _ = startup::set_activation_policy(false);
-    let dock_result = set_dock_visibility(window.app_handle(), false);
+    let _ = startup::set_app_in_dock(false);
     schedule_lightweight_mode(window.app_handle());
-    dock_result
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

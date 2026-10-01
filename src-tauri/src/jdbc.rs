@@ -1365,10 +1365,7 @@ impl JdbcManager {
                 let mut watch = cached.clone();
                 watch.extend(sidecar_pids.iter().copied());
                 watch.insert(self_pid);
-                let watch_list = watch
-                    .into_iter()
-                    .map(|pid| Pid::from_u32(pid))
-                    .collect::<Vec<_>>();
+                let watch_list = watch.into_iter().map(Pid::from_u32).collect::<Vec<_>>();
                 system.refresh_processes_specifics(
                     ProcessesToUpdate::Some(&watch_list),
                     true,
