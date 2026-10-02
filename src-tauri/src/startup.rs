@@ -100,15 +100,15 @@ pub fn launched_at_login() -> bool {
     false
 }
 
-pub fn set_activation_policy(regular: bool) -> anyhow::Result<()> {
+pub fn set_app_in_dock(visible: bool) -> anyhow::Result<()> {
     #[cfg(target_os = "macos")]
     {
-        let status = unsafe { datanexa_set_activation_policy(if regular { 1 } else { 0 }) };
+        let status = unsafe { datanexa_set_activation_policy(if visible { 1 } else { 0 }) };
         if status != 0 {
             return Err(anyhow::anyhow!("unable to set macOS activation policy"));
         }
     }
-    let _ = regular;
+    let _ = visible;
     Ok(())
 }
 

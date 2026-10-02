@@ -4,6 +4,7 @@ import type {
   AccessTokenSecretResult,
   AppSnapshot,
   ConnectionDiagnostics,
+  ConnectionFileInspection,
   ConnectionInput,
   DatabaseType,
   ImportConnectionsResult,
@@ -226,6 +227,18 @@ const mockJdbcStorageStatus: JdbcStorageStatus = {
     { bundle_id: "00000000-0000-4000-8000-000000000021", display_name: "Oracle JDBC", status: "running", health: "healthy", process_count: 1, memory_bytes: 87.9 * 1024 * 1024, cpu_percent: 0.4 },
     { bundle_id: "00000000-0000-4000-8000-000000000022", display_name: "PostgreSQL JDBC", status: "stopped", health: "stopped", process_count: 0, memory_bytes: 0, cpu_percent: 0 }
   ],
+  host: {
+    process_count: 3,
+    memory_bytes: 214 * 1024 * 1024,
+    cpu_percent: 1.2,
+    processes: [
+      { pid: 4242, name: "DataNexa", memory_bytes: 128 * 1024 * 1024, cpu_percent: 0.6 },
+      { pid: 4243, name: "DataNexa WebView", memory_bytes: 62 * 1024 * 1024, cpu_percent: 0.4 },
+      { pid: 4244, name: "DataNexa GPU", memory_bytes: 24 * 1024 * 1024, cpu_percent: 0.2 }
+    ]
+  },
+  system_memory_bytes: 16 * 1024 * 1024 * 1024,
+  system_used_memory_bytes: 6.5 * 1024 * 1024 * 1024,
   maven_cache_bytes: 0,
   managed_runtime_old_bytes: 0
 };
@@ -233,14 +246,30 @@ const mockJdbcStorageStatus: JdbcStorageStatus = {
 function getMockJdbcStorageStatus(): JdbcStorageStatus {
   const seconds = Date.now() / 1000;
   const pulse = Math.sin(seconds * 0.8) * 2.8 + Math.sin(seconds * 0.23) * 1.4;
+  const hostPulse = Math.sin(seconds * 0.55) * 1.6 + Math.sin(seconds * 0.17) * 0.9;
   const oracleCpu = Math.max(0.2, Math.min(6, Number((2.8 + pulse).toFixed(2))));
+  const hostCpu = Math.max(0.3, Math.min(5, Number((1.6 + hostPulse).toFixed(2))));
+  const hostProcesses = mockJdbcStorageStatus.host.processes.map((process, index) => {
+    const weight = [0.5, 0.3, 0.2][index] ?? 0.2;
+    return {
+      ...process,
+      cpu_percent: Number((hostCpu * weight).toFixed(2)),
+      memory_bytes: Math.round(process.memory_bytes * (1 + hostPulse * 0.01))
+    };
+  });
   return {
     ...mockJdbcStorageStatus,
     runtimes: mockJdbcStorageStatus.runtimes.map((runtime) => (
       runtime.bundle_id === "00000000-0000-4000-8000-000000000021"
         ? { ...runtime, cpu_percent: oracleCpu }
         : { ...runtime }
-    ))
+    )),
+    host: {
+      ...mockJdbcStorageStatus.host,
+      cpu_percent: hostCpu,
+      memory_bytes: hostProcesses.reduce((total, process) => total + process.memory_bytes, 0),
+      processes: hostProcesses
+    }
   };
 }
 
@@ -316,8 +345,20 @@ function withAuditCleared(): AppSnapshot {
   };
 }
 
-function connectionTransferFileName() {
-  return `datanexa-connections-${new Date().toISOString().slice(0, 10)}.json`;
+/** Encrypted exports carry their own extension so a password-protected file is
+ * distinguishable from a plaintext one on disk. Format detection on import still reads the
+ * file header rather than trusting this. */
+const ENCRYPTED_CONNECTION_EXTENSION = "dnxc";
+
+/** Sentinel from WRONG_PASSWORD in src-tauri/src/transfer_crypto.rs, mapped to localized text
+ * by the caller. A wrong password and a tampered file are indistinguishable. */
+export const WRONG_PASSWORD_ERROR = "wrong_password";
+
+function connectionTransferFileName(encrypted: boolean) {
+  const date = new Date().toISOString().slice(0, 10);
+  return encrypted
+    ? `datanexa-connections-encrypted-${date}.${ENCRYPTED_CONNECTION_EXTENSION}`
+    : `datanexa-connections-${date}.json`;
 }
 
 export const api = {
@@ -329,6 +370,7 @@ export const api = {
   checkJdbcRuntimeUpdateIfDue: () => command<string | null>("check_jdbc_runtime_update_if_due", undefined, null),
   jdbcStorageStatus: () => command<JdbcStorageStatus>("get_jdbc_storage_status", undefined, getMockJdbcStorageStatus()),
   clearJdbcCache: (selection: JdbcCacheSelection) => command<boolean>("clear_jdbc_cache", { selection }, true),
+  stopJdbcDriverRuntime: (bundleId: string) => command<void>("stop_jdbc_driver_runtime", { bundleId }, undefined),
   openDataDirectory: () => command<void>("open_data_directory", undefined, undefined),
   installJdbcDriver: (input: InstallJdbcDriverInput) =>
     command<JdbcDriverBundle>("install_jdbc_driver", { input }, {
@@ -376,20 +418,25 @@ export const api = {
     return invoke<void>("log_frontend_event", { kind, message });
   },
   openDebugLogDirectory: () => command<void>("open_debug_log_directory", undefined, undefined),
-  exportConnections: async (locale: Locale) => {
+  exportConnections: async (locale: Locale, password: string | null) => {
     if (!isTauri) {
       throw new Error(formatMessage(previewText.desktopOnly, { name: "export_connections" }));
     }
     const dialogText = messages[locale].fileDialog;
+    const encrypted = password !== null;
     const path = await save({
       title: dialogText.exportConnectionsTitle,
-      defaultPath: connectionTransferFileName(),
-      filters: [{ name: dialogText.connectionFile, extensions: ["json"] }]
+      defaultPath: connectionTransferFileName(encrypted),
+      filters: encrypted
+        ? [{ name: dialogText.encryptedConnectionFile, extensions: [ENCRYPTED_CONNECTION_EXTENSION] }]
+        : [{ name: dialogText.connectionFile, extensions: ["json"] }]
     });
     if (!path) return null;
-    return command<number>("export_connections", { path });
+    return command<number>("export_connections", { path, password });
   },
-  importConnections: async (locale: Locale) => {
+  /** Picks the file only. Deciding whether a password is needed belongs to
+   * `inspectConnectionFile`, so the caller can prompt before anything is imported. */
+  pickConnectionImportFile: async (locale: Locale) => {
     if (!isTauri) {
       throw new Error(formatMessage(previewText.desktopOnly, { name: "import_connections" }));
     }
@@ -398,11 +445,17 @@ export const api = {
       title: dialogText.importConnectionsTitle,
       multiple: false,
       directory: false,
-      filters: [{ name: dialogText.connectionFile, extensions: ["json"] }]
+      filters: [
+        { name: dialogText.connectionFile, extensions: ["json", ENCRYPTED_CONNECTION_EXTENSION] }
+      ]
     });
     if (!path) return null;
-    return command<ImportConnectionsResult>("import_connections", { path });
+    return path as string;
   },
+  inspectConnectionFile: (path: string) =>
+    command<ConnectionFileInspection>("inspect_connection_file", { path }),
+  importConnections: (path: string, password: string | null) =>
+    command<ImportConnectionsResult>("import_connections", { path, password }),
   setMcpToolEnabled: (name: string, enabled: boolean) =>
     command<AppSnapshot>("set_mcp_tool_enabled", { name, enabled }, withToolEnabled(name, enabled)),
   upsertConnection: (input: ConnectionInput) =>

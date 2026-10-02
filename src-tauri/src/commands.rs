@@ -27,6 +27,11 @@ use crate::mcp::{self, McpToolInfo, ServerStatus};
 use crate::policy::{PolicyCheckResult, PolicyEngine};
 use crate::startup;
 use crate::state::AppState;
+use crate::transfer_crypto::{
+    decrypt_connection_file, encrypt_connection_file, EncryptedConnectionFile,
+    ENCRYPTED_CONNECTION_FORMAT, ENCRYPTED_CONNECTION_VERSION, PASSWORD_REQUIRED, UNSUPPORTED_FILE,
+    WRONG_PASSWORD,
+};
 use crate::vault::CredentialVault;
 use crate::{hide_main_window_to_tray, refresh_tray_menu};
 
@@ -230,6 +235,21 @@ pub async fn clear_jdbc_cache(
         .jdbc
         .clear_jdbc_cache(selection)
         .await
+        .map_err(|error| to_jdbc_client_error(error, &text))
+}
+
+#[tauri::command]
+pub async fn stop_jdbc_driver_runtime(
+    state: State<'_, Arc<AppState>>,
+    bundle_id: String,
+) -> Result<(), String> {
+    let _lifecycle = state.jdbc_lifecycle.lock().await;
+    let text = text_for_state(state.inner()).await;
+    state
+        .jdbc
+        .stop_driver_sessions(&bundle_id)
+        .await
+        .map(|_| ())
         .map_err(|error| to_jdbc_client_error(error, &text))
 }
 
@@ -483,14 +503,49 @@ pub async fn save_settings_config(
 pub async fn export_connections(
     state: State<'_, Arc<AppState>>,
     path: String,
+    password: Option<String>,
 ) -> Result<usize, String> {
-    let path = transfer_path(&path)?;
+    // Whether the file leaves the OS credential vault with its passwords still protected is
+    // the fact worth keeping, not just how many connections went out.
+    let protection = if password.is_some() {
+        "encrypted"
+    } else {
+        "plaintext"
+    };
+    match write_connection_export(&state, &path, password).await {
+        Ok(count) => {
+            debug_log::info(
+                "transfer",
+                format_args!("connections exported (count={count}, protection={protection})"),
+            );
+            Ok(count)
+        }
+        Err(error) => {
+            debug_log::error(
+                "transfer",
+                format_args!("connection export failed: {error}"),
+            );
+            Err(error)
+        }
+    }
+}
+
+async fn write_connection_export(
+    state: &Arc<AppState>,
+    path: &str,
+    password: Option<String>,
+) -> Result<usize, String> {
+    let path = transfer_path(path)?;
+    let password = password.map(Zeroizing::new);
+    let password = password.as_ref().map(|password| password.as_str());
     let _transaction = state.config_transaction.read().await;
     let connections = state.config.read().await.connections.clone();
     let mut portable_connections = Vec::with_capacity(connections.len());
 
     for connection in connections {
-        let password = match connection.credential_ref.as_deref() {
+        // Named apart from the encryption password above: this one belongs to the connection
+        // and is read out of the vault to travel with the export.
+        let connection_password = match connection.credential_ref.as_deref() {
             Some(credential_ref) => Some(
                 state
                     .vault
@@ -514,7 +569,7 @@ pub async fn export_connections(
             host: connection.host,
             port: connection.port,
             username: connection.username,
-            password,
+            password: connection_password,
             ssl_mode: connection.ssl_mode,
             jdbc_bundle_id: connection.jdbc_bundle_id,
             jdbc_url: connection.jdbc_url,
@@ -533,34 +588,178 @@ pub async fn export_connections(
         exported_at: Utc::now().to_rfc3339(),
         connections: portable_connections,
     };
-    let mut contents =
-        Zeroizing::new(serde_json::to_vec_pretty(&transfer).map_err(to_client_error)?);
+    let plaintext = Zeroizing::new(serde_json::to_vec_pretty(&transfer).map_err(to_client_error)?);
+    let mut contents = Zeroizing::new(match password {
+        Some(password) => {
+            let encrypted = encrypt_connection_file(plaintext.as_slice(), password)?;
+            serde_json::to_vec_pretty(&encrypted).map_err(to_client_error)?
+        }
+        None => plaintext.to_vec(),
+    });
     contents.push(b'\n');
     fs::write(path, contents.as_slice()).map_err(to_client_error)?;
 
     Ok(exported_count)
 }
 
+#[derive(Debug, Serialize)]
+pub struct ConnectionFileInspection {
+    pub encrypted: bool,
+    pub exported_at: Option<String>,
+}
+
+/// Reads only the header fields, so the connection list is never deserialized during
+/// inspection. An encrypted file's ciphertext stays base64 and a plaintext file's secrets
+/// are only touched by the import path that actually needs them.
+#[derive(Debug, Deserialize)]
+struct ConnectionFileHeader {
+    #[serde(default)]
+    format: Option<String>,
+    #[serde(default)]
+    version: Option<u16>,
+    #[serde(default)]
+    exported_at: Option<String>,
+}
+
 #[tauri::command]
-pub async fn import_connections(
-    state: State<'_, Arc<AppState>>,
-    path: String,
-) -> Result<ImportConnectionsResult, String> {
-    let path = transfer_path(&path)?;
+pub async fn inspect_connection_file(path: String) -> Result<ConnectionFileInspection, String> {
+    match read_connection_file_inspection(&path) {
+        Ok(inspection) => Ok(inspection),
+        Err(error) => {
+            // Nothing else records this: the caller never reaches the import command when the
+            // file is rejected here, so this is the only trace of the attempt.
+            debug_log::warn(
+                "transfer",
+                format_args!("connection file rejected ({error})"),
+            );
+            Err(error)
+        }
+    }
+}
+
+fn read_connection_file_inspection(path: &str) -> Result<ConnectionFileInspection, String> {
+    let path = transfer_path(path)?;
     let metadata = fs::metadata(path).map_err(to_client_error)?;
     if metadata.len() > MAX_CONNECTION_IMPORT_BYTES {
         return Err("The connection import file is larger than 5 MB.".to_string());
     }
 
     let contents = Zeroizing::new(fs::read(path).map_err(to_client_error)?);
-    let mut transfer: ConnectionTransferFile =
-        serde_json::from_slice(contents.as_slice()).map_err(to_client_error)?;
+    let header: ConnectionFileHeader =
+        serde_json::from_slice(contents.as_slice()).map_err(|_| UNSUPPORTED_FILE.to_string())?;
+
+    match header.format.as_deref() {
+        Some(CONNECTION_TRANSFER_FORMAT) => Ok(ConnectionFileInspection {
+            encrypted: false,
+            exported_at: header.exported_at,
+        }),
+        Some(ENCRYPTED_CONNECTION_FORMAT) => {
+            if header.version != Some(ENCRYPTED_CONNECTION_VERSION) {
+                return Err(UNSUPPORTED_FILE.to_string());
+            }
+            Ok(ConnectionFileInspection {
+                encrypted: true,
+                exported_at: header.exported_at,
+            })
+        }
+        _ => Err(UNSUPPORTED_FILE.to_string()),
+    }
+}
+
+fn parse_connection_transfer_file(contents: &[u8]) -> Result<ConnectionTransferFile, String> {
+    let transfer: ConnectionTransferFile =
+        serde_json::from_slice(contents).map_err(|_| UNSUPPORTED_FILE.to_string())?;
+    // The version gate is what makes an encrypted file fail loudly on an older build instead
+    // of being read as a connection list. Keep it ahead of any field that could default.
     if transfer.format != CONNECTION_TRANSFER_FORMAT || !matches!(transfer.version, 1..=3) {
-        return Err("Unsupported DataNexa connection import file.".to_string());
+        return Err(UNSUPPORTED_FILE.to_string());
     }
     if transfer.connections.len() > MAX_CONNECTION_IMPORT_COUNT {
         return Err("A connection import file can contain at most 1000 connections.".to_string());
     }
+    Ok(transfer)
+}
+
+fn read_connection_transfer_file(
+    path: &Path,
+    password: Option<&str>,
+) -> Result<ConnectionTransferFile, String> {
+    let metadata = fs::metadata(path).map_err(to_client_error)?;
+    if metadata.len() > MAX_CONNECTION_IMPORT_BYTES {
+        return Err("The connection import file is larger than 5 MB.".to_string());
+    }
+
+    let contents = Zeroizing::new(fs::read(path).map_err(to_client_error)?);
+    let header: ConnectionFileHeader =
+        serde_json::from_slice(contents.as_slice()).map_err(|_| UNSUPPORTED_FILE.to_string())?;
+    if header.format.as_deref() != Some(ENCRYPTED_CONNECTION_FORMAT) {
+        return parse_connection_transfer_file(contents.as_slice());
+    }
+    if header.version != Some(ENCRYPTED_CONNECTION_VERSION) {
+        return Err(UNSUPPORTED_FILE.to_string());
+    }
+
+    let password = password
+        .filter(|password| !password.is_empty())
+        .ok_or_else(|| PASSWORD_REQUIRED.to_string())?;
+    let encrypted: EncryptedConnectionFile =
+        serde_json::from_slice(contents.as_slice()).map_err(|_| UNSUPPORTED_FILE.to_string())?;
+    let plaintext = decrypt_connection_file(&encrypted, password)?;
+    parse_connection_transfer_file(plaintext.as_slice())
+}
+
+#[tauri::command]
+pub async fn import_connections(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    password: Option<String>,
+) -> Result<ImportConnectionsResult, String> {
+    let protection = password
+        .as_deref()
+        .is_some_and(|password| !password.is_empty());
+    match apply_connection_import(&state, &path, password).await {
+        Ok(result) => {
+            debug_log::info(
+                "transfer",
+                format_args!(
+                    "connections imported (imported={}, skipped={}, protection={})",
+                    result.imported_count,
+                    result.skipped_count,
+                    if protection { "encrypted" } else { "plaintext" },
+                ),
+            );
+            Ok(result)
+        }
+        Err(error) => {
+            // A wrong password, a missing password and a foreign file all mean the user handed
+            // over something unusable, which is ordinary rather than a fault of the app.
+            let rejected =
+                error == WRONG_PASSWORD || error == PASSWORD_REQUIRED || error == UNSUPPORTED_FILE;
+            if rejected {
+                debug_log::warn(
+                    "transfer",
+                    format_args!("connection import rejected ({error})"),
+                );
+            } else {
+                debug_log::error(
+                    "transfer",
+                    format_args!("connection import failed: {error}"),
+                );
+            }
+            Err(error)
+        }
+    }
+}
+
+async fn apply_connection_import(
+    state: &Arc<AppState>,
+    path: &str,
+    password: Option<String>,
+) -> Result<ImportConnectionsResult, String> {
+    let path = transfer_path(path)?;
+    let password = password.map(Zeroizing::new);
+    let password = password.as_ref().map(|password| password.as_str());
+    let mut transfer = read_connection_transfer_file(path, password)?;
 
     let total_count = transfer.connections.len();
     let mut imported_count = 0;
@@ -576,12 +775,13 @@ pub async fn import_connections(
 
     for mut portable in transfer.connections.drain(..) {
         let id = next_import_connection_id(&mut existing_ids);
-        let password = portable
+        // Named apart from the encryption password above: this one came out of the file.
+        let connection_password = portable
             .password
             .take()
             .filter(|password| !password.is_empty())
             .map(Zeroizing::new);
-        let credential_ref = password
+        let credential_ref = connection_password
             .as_ref()
             .map(|_| CredentialVault::credential_ref(&id));
         let connection = ConnectionConfig {
@@ -609,15 +809,17 @@ pub async fn import_connections(
             continue;
         }
         imported_count += 1;
-        if let (Some(credential_ref), Some(password)) = (credential_ref, password) {
-            credentials.push((credential_ref, password));
+        if let (Some(credential_ref), Some(connection_password)) =
+            (credential_ref, connection_password)
+        {
+            credentials.push((credential_ref, connection_password));
         }
     }
 
     if imported_count == 0 {
         drop(_transaction);
         return Ok(ImportConnectionsResult {
-            snapshot: snapshot(state.inner()).await.map_err(to_client_error)?,
+            snapshot: snapshot(state).await.map_err(to_client_error)?,
             imported_count,
             skipped_count: total_count,
         });
@@ -647,7 +849,7 @@ pub async fn import_connections(
     drop(_transaction);
 
     Ok(ImportConnectionsResult {
-        snapshot: snapshot(state.inner()).await.map_err(to_client_error)?,
+        snapshot: snapshot(state).await.map_err(to_client_error)?,
         imported_count,
         skipped_count: total_count - imported_count,
     })

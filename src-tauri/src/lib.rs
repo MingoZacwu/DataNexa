@@ -12,6 +12,7 @@ mod mcp;
 mod policy;
 mod startup;
 mod state;
+mod transfer_crypto;
 mod vault;
 
 #[cfg(feature = "updater")]
@@ -27,14 +28,14 @@ use commands::{
     delete_access_token, delete_connection, delete_jdbc_driver, diagnose_connection,
     disable_all_connections, export_connections, get_access_token_secret, get_app_snapshot,
     get_jdbc_status, get_jdbc_storage_status, hide_main_window, import_connections,
-    import_jdbc_driver, install_jdbc_driver, install_jdbc_runtime, log_frontend_event,
-    minimize_main_window, open_data_directory, open_debug_log_directory, open_project_homepage,
-    open_project_releases, open_project_site, policy_check, remove_jdbc_runtime,
-    rename_access_token, retry_audit_migration, rotate_access_token, save_server_config,
-    save_settings_config, set_access_token_enabled, set_connection_enabled, set_mcp_tool_enabled,
-    set_token_connection_allowed, set_token_tool_allowed, set_window_material_theme,
-    start_mcp_server, start_window_drag, stop_mcp_server, test_connection, test_connection_input,
-    upsert_connection,
+    import_jdbc_driver, inspect_connection_file, install_jdbc_driver, install_jdbc_runtime,
+    log_frontend_event, minimize_main_window, open_data_directory, open_debug_log_directory,
+    open_project_homepage, open_project_releases, open_project_site, policy_check,
+    remove_jdbc_runtime, rename_access_token, retry_audit_migration, rotate_access_token,
+    save_server_config, save_settings_config, set_access_token_enabled, set_connection_enabled,
+    set_mcp_tool_enabled, set_token_connection_allowed, set_token_tool_allowed,
+    set_window_material_theme, start_mcp_server, start_window_drag, stop_jdbc_driver_runtime,
+    stop_mcp_server, test_connection, test_connection_input, upsert_connection,
 };
 use i18n::{backend_text, BackendText};
 use state::AppState;
@@ -305,16 +306,6 @@ pub(crate) fn refresh_tray_menu(
     Ok(())
 }
 
-fn set_dock_visibility(app: &AppHandle, visible: bool) -> tauri::Result<()> {
-    #[cfg(target_os = "macos")]
-    app.set_dock_visibility(visible)?;
-
-    #[cfg(not(target_os = "macos"))]
-    let _ = (app, visible);
-
-    Ok(())
-}
-
 async fn refresh_tray_from_state(app: &AppHandle, state: &Arc<AppState>) -> tauri::Result<()> {
     let running = mcp::status(state).await.running;
     let startup_error = state.mcp.read().await.startup_error.is_some();
@@ -335,8 +326,7 @@ fn reveal_main_window(window: &WebviewWindow) {
 }
 
 fn show_main_window(app: &AppHandle) {
-    let _ = startup::set_activation_policy(true);
-    let _ = set_dock_visibility(app, true);
+    let _ = startup::set_app_in_dock(true);
     let app_state = app.state::<Arc<AppState>>().inner().clone();
     let window_state = app.state::<Arc<MainWindowState>>().inner().clone();
     window_state.generation.fetch_add(1, Ordering::AcqRel);
@@ -431,8 +421,7 @@ async fn activate_lightweight_mode(app: AppHandle, generation: u64, automatic: b
 
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
-        let _ = startup::set_activation_policy(false);
-        let _ = set_dock_visibility(&app, false);
+        let _ = startup::set_app_in_dock(false);
         if let Err(error) = window.destroy() {
             debug_log::error(
                 "lightweight",
@@ -480,10 +469,9 @@ fn schedule_lightweight_mode(app: &AppHandle) {
 
 pub(crate) fn hide_main_window_to_tray(window: &WebviewWindow) -> tauri::Result<()> {
     window.hide()?;
-    let _ = startup::set_activation_policy(false);
-    let dock_result = set_dock_visibility(window.app_handle(), false);
+    let _ = startup::set_app_in_dock(false);
     schedule_lightweight_mode(window.app_handle());
-    dock_result
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -741,6 +729,7 @@ pub fn run() {
             check_jdbc_runtime_update_if_due,
             get_jdbc_storage_status,
             clear_jdbc_cache,
+            stop_jdbc_driver_runtime,
             install_jdbc_driver,
             import_jdbc_driver,
             delete_jdbc_driver,
@@ -758,6 +747,7 @@ pub fn run() {
             open_debug_log_directory,
             export_connections,
             import_connections,
+            inspect_connection_file,
             set_mcp_tool_enabled,
             set_window_material_theme,
             upsert_connection,

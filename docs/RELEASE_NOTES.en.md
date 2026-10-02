@@ -1,58 +1,35 @@
-# DataNexa v0.8.0
+# DataNexa v0.8.1
 
-[中文发布说明](https://github.com/MingoZacwu/DataNexa/blob/v0.8.0/RELEASE_NOTES.md)
+[中文发布说明](https://github.com/MingoZacwu/DataNexa/blob/v0.8.1/RELEASE_NOTES.md)
 
 ## Highlights
 
-- Added JDBC support (technical preview): install any JDBC driver via its Maven coordinate to connect to more enterprise and regional databases.
-- Added a "Security" settings page with blocked-request statistics and an access token auto circuit breaker.
-- Introduced the DataNexa managed Java runtime so JDBC works out of the box; an existing external Java runtime can be used instead.
-- **Note**: audit log retention changed from a maximum event count to a retention window in days. See [Changes and Improvements](#changes-and-improvements) below.
+- Connection exports can now be protected with an encryption password: exported connection files are encrypted by default, and only someone who knows the password can read the database connections inside.
+- The "Storage & performance" settings page now includes live resource monitoring, covering DataNexa itself as well as JDBC drivers.
 
 ## Added
 
-### JDBC Support (Technical Preview)
+### Encrypted Connection Exports
 
-- JDBC operations run in an isolated Java sidecar process; SQLite, MySQL, and PostgreSQL connections keep using their native backends and are unaffected.
-- New "Driver Management" settings page:
-  - Install any JDBC driver and its transitive dependencies from a Maven coordinate, with no database brand allowlist; a Maven mirror can be configured.
-  - Downloaded drivers are verified by size and SHA-256 and stored as immutable, versioned Driver Bundles that can coexist, be updated, and be removed.
-  - Local JAR import is supported, along with Maven download cache inspection and clearing.
-- New "JDBC" connection type: pick an installed driver and enter a JDBC URL to create a connection, with connection testing, diagnostics, and connection import/export.
-- JDBC queries go through the existing read-only policy, access control, auditing, timeouts, and result limits; statements in unknown dialects or that cannot be confirmed safe are rejected.
-- JDBC credentials and URLs are sanitized in error messages and diagnostic output.
+- Exporting connections now uses an encryption password by default: with a password of at least 8 characters, only someone who knows it can read the database connections in the file (the password is never stored, and the file cannot be recovered without it). "Export without encryption" is still available — it still requires acknowledging the plaintext warning — and produces the same file as previous versions.
+- Encrypted files use the `.dnxc` extension, and import detects the file type from its contents rather than the extension. Importing an encrypted file asks for the password first and shows when the file was exported.
+- A wrong password or a damaged file imports nothing, so the password can simply be retyped; plaintext connection files exported by earlier versions still import directly.
 
-### DataNexa Managed Java Runtime
+### Live Resource Monitoring
 
-- Download the DataNexa managed Java runtime with one click from the settings page; integrity is verified automatically after download, so Java does not need to be installed separately.
-- An existing external Java runtime on your machine can be selected in the settings instead.
-- New managed runtime versions are detected automatically, and update reminders appear as a sidebar card.
-
-### Security Settings Page
-
-- New "Security" settings page showing blocked-request statistics for the last 24 hours, a defense-in-depth overview, and warnings based on the Bearer authentication state.
-- Access token auto circuit breaker: with Bearer authentication enabled, a token is automatically disabled once its denied requests reach the configured threshold within the counting window. Tripped and manually re-enabled tokens are recorded in the audit log, and a re-enabled token starts with a fresh counting window.
-
-### Storage and Performance
-
-- New "Storage and Performance" settings page showing local data usage and actual storage paths, broken down by category such as the Java runtime, JDBC drivers, Maven repository, and audit logs.
-- Cache items that are safe to delete (such as the Maven download cache and legacy runtimes) can be cleared in one click to free up space; installed drivers, audit logs, and configuration are not affected.
-- The DataNexa data directory can be opened directly in the system file manager.
+- The "Storage & performance" page now has a Resources view alongside the existing Storage view.
+- Resources covers both DataNexa itself (the main process and its WebView/GPU children) and JDBC driver runtimes, listing CPU, memory, and process count, with a PID for each of DataNexa's own processes.
+- The CPU area shows total usage and a live trend chart, labelled with the DataNexa and JDBC driver shares; the memory area shows the breakdown of DataNexa, JDBC drivers, and other system usage, with used memory against total system memory (hover for available memory).
+- Individual JDBC driver runtimes can be stopped, with resource usage refreshing immediately.
 
 ## Changes and Improvements
 
-- **Audit log retention change**: audit log cleanup switched from a maximum event count to a retention window in days, with options of 3/7/15/30 days (7 days by default). After upgrading to this version, audit records older than the retention window are cleaned up automatically. **If you need to keep audit records for longer, back up your logs before upgrading and choose a longer retention window in the settings.**
-- Connection import is more robust: invalid or unavailable entries in the import file are skipped, and the import result is reported clearly without affecting the remaining entries.
-- Application and Java runtime update checks are cached to avoid duplicate requests.
-
-## Fixed
-
-- Improved compatibility with Claude Desktop and legacy MCP clients: stricter tool input schemas, support for MCP protocol version 2025-03-26 and `structuredContent` responses, and tolerance for legacy clients that omit some protocol headers.
-- Fixed scroll edge fades and scroll bars staying visible when content fits without scrolling; they now appear only when the content is scrollable.
+- macOS builds now use Xcode 26.3 (macOS 26.2 SDK) to follow macOS 27's redesigned window controls (the "traffic lights"). The minimum requirement is still macOS 15.0.
 
 ## Upgrade Notes and Feedback
 
-- In this version update, there are many changes. We could not fully test every feature and usage combination, and JDBC support could not be verified against every database and driver version. If you run into problems after upgrading, please report them on [GitHub Issues](https://github.com/MingoZacwu/DataNexa/issues) with steps to reproduce and details about your environment (operating system, database type and version, and driver name and version).
+- Encrypted `.dnxc` files cannot be imported by 0.8.0 or earlier (older builds do not recognise the format and the import fails), so upgrade both sides to 0.8.1 or later before migrating connections with an encrypted file. Plaintext connection files exported by earlier versions are unaffected.
+- If you run into problems after upgrading, please report them on [GitHub Issues](https://github.com/MingoZacwu/DataNexa/issues) with steps to reproduce and details about your environment.
 - To help us diagnose problems faster: on the Settings > About page, tap the version number area 5 times to reveal the hidden debug logging option. Enable it, reproduce the problem, then open the log folder from the settings to collect the log file. Log content is sanitized and never records plaintext credentials; attaching it to your issue can help us locate the problem faster.
 
 ## Installation Notes

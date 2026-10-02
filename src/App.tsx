@@ -7,7 +7,7 @@ import type { FormEvent } from "react";
 import brandLogoUrl from "../resources/datanexa.png";
 import { detectLocale, formatMessage, messages, normalizeLocale, persistLocale } from "./i18n";
 import type { Locale } from "./i18n";
-import { api } from "./lib/tauri";
+import { api, WRONG_PASSWORD_ERROR } from "./lib/tauri";
 import { useAppUpdater } from "./lib/updater";
 import type { AppSnapshot, AuditEvent, ConnectionConfig, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcInstallProgress, JdbcRuntimeInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "./types";
 import { detectThemeMode, persistThemeMode, resolveTheme, systemTheme } from "./app/theme";
@@ -21,6 +21,7 @@ import { AccessControlView, PromptTokenDialog } from "./features/access/AccessCo
 import { ToolsView } from "./features/tools/ToolsView";
 import { AuditDetailDialog, AuditView } from "./features/audit/AuditView";
 import { SettingsView } from "./features/settings/SettingsView";
+import { EncryptionPasswordDialog } from "./features/settings/EncryptionPasswordDialog";
 
 type McpActivityTone = "success" | "error";
 type McpToolCallCompletedPayload = { failed: boolean };
@@ -67,6 +68,8 @@ function App() {
   const [selectedTokenId, setSelectedTokenId] = useState("");
   const [createTokenRequest, setCreateTokenRequest] = useState(0);
   const [promptTokenDialogOpen, setPromptTokenDialogOpen] = useState(false);
+  const [importRequest, setImportRequest] = useState<{ path: string; exportedAt: string | null } | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
   const [showAuditClear, setShowAuditClear] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   const [jdbcStatus, setJdbcStatus] = useState<JdbcStatus | null>(null);
@@ -668,6 +671,20 @@ function App() {
     }
   }
 
+  async function stopJdbcDriverRuntime(bundleId: string): Promise<boolean> {
+    setBusy(true);
+    try {
+      await api.stopJdbcDriverRuntime(bundleId);
+      await refreshJdbcStorageStatus();
+      return true;
+    } catch (error) {
+      showError(error);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function installJdbcDriver(input: InstallJdbcDriverInput): Promise<boolean> {
     setBusy(true);
     setJdbcInstallProgress({ operation: "install", phase: "preparing", progress: 0 });
@@ -792,12 +809,15 @@ function App() {
     }
   }
 
-  async function exportConnections() {
+  async function exportConnections(password: string | null) {
     setBusy(true);
     try {
-      const exportedCount = await api.exportConnections(locale);
+      const exportedCount = await api.exportConnections(locale, password);
       if (exportedCount !== null) {
-        pushToast(formatMessage(t.toast.connectionsExported, { count: exportedCount }), "info");
+        pushToast(formatMessage(
+          password === null ? t.toast.connectionsExported : t.toast.connectionsExportedEncrypted,
+          { count: exportedCount }
+        ), "info");
       }
     } catch (error) {
       showError(error);
@@ -806,19 +826,47 @@ function App() {
     }
   }
 
+  async function applyConnectionsImport(path: string, password: string | null) {
+    const result = await api.importConnections(path, password);
+    setSnapshot(result.snapshot);
+    pushToast(formatMessage(
+      result.skipped_count > 0 ? t.toast.connectionsImportedPartial : t.toast.connectionsImported,
+      { count: result.imported_count, skipped: result.skipped_count }
+    ));
+  }
+
   async function importConnections() {
     setBusy(true);
     try {
-      const result = await api.importConnections(locale);
-      if (result) {
-        setSnapshot(result.snapshot);
-        pushToast(formatMessage(
-          result.skipped_count > 0 ? t.toast.connectionsImportedPartial : t.toast.connectionsImported,
-          { count: result.imported_count, skipped: result.skipped_count }
-        ));
+      const path = await api.pickConnectionImportFile(locale);
+      if (!path) return;
+      const inspection = await api.inspectConnectionFile(path);
+      if (!inspection.encrypted) {
+        await applyConnectionsImport(path, null);
+        return;
       }
+      // Ask for the password before importing anything. The import command reads the file
+      // again once the password is known.
+      setImportError(null);
+      setImportRequest({ path, exportedAt: inspection.exported_at });
     } catch (error) {
       showError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitImportPassword(password: string) {
+    if (!importRequest) return;
+    setBusy(true);
+    try {
+      await applyConnectionsImport(importRequest.path, password);
+      setImportRequest(null);
+      setImportError(null);
+    } catch (error) {
+      // Keep the dialog open: retyping the password is the expected fix here.
+      const message = error instanceof Error ? error.message : String(error);
+      setImportError(message === WRONG_PASSWORD_ERROR ? t.connectionTransfer.wrongPassword : message);
     } finally {
       setBusy(false);
     }
@@ -1085,6 +1133,7 @@ function App() {
                     onCheckJdbcRuntimeUpdate={checkJdbcRuntimeUpdate}
                     onRefreshJdbcStorageStatus={() => void refreshJdbcStorageStatus()}
                     onClearJdbcCache={clearJdbcCache}
+                    onStopJdbcDriverRuntime={stopJdbcDriverRuntime}
                     onOpenDataDirectory={() => void api.openDataDirectory().catch(showError)}
                     onOpenDebugLogFolder={() => void api.openDebugLogDirectory().catch(showError)}
                     onInstallJdbcDriver={installJdbcDriver}
@@ -1096,7 +1145,7 @@ function App() {
                     onPolicyCheck={runPolicyCheck}
                     onSaveServer={saveServer}
                     onSaveSettings={saveSettings}
-                    onExportConnections={() => void exportConnections()}
+                    onExportConnections={(password) => void exportConnections(password)}
                     onImportConnections={() => void importConnections()}
                     onOpenProjectHomepage={() => void api.openProjectHomepage().catch(showError)}
                     onOpenProjectSite={() => void api.openProjectSite().catch(showError)}
@@ -1128,6 +1177,20 @@ function App() {
           onClose={() => setEditing(null)}
         />
         <AuditDetailDialog t={t} event={selectedAudit} onClose={() => setSelectedAudit(null)} />
+        {importRequest ? (
+          <EncryptionPasswordDialog
+            t={t}
+            mode="import"
+            exportedAt={importRequest.exportedAt}
+            error={importError}
+            busy={busy}
+            onSubmit={(password) => void submitImportPassword(password)}
+            onCancel={() => {
+              setImportRequest(null);
+              setImportError(null);
+            }}
+          />
+        ) : null}
         {snapshot && <PromptTokenDialog t={t} open={promptTokenDialogOpen} tokens={snapshot.access_tokens} connections={connections} tools={snapshot.tools} busy={busy} onClose={() => setPromptTokenDialogOpen(false)} onSelect={(id) => void copyPromptForToken(id)} />}
         {snapshot && snapshot.audit_migration.status === "failed" && (
           <AuditMigrationDialog
