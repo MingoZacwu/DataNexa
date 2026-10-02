@@ -28,14 +28,14 @@ use commands::{
     delete_access_token, delete_connection, delete_jdbc_driver, diagnose_connection,
     disable_all_connections, export_connections, get_access_token_secret, get_app_snapshot,
     get_jdbc_status, get_jdbc_storage_status, hide_main_window, import_connections,
-    import_jdbc_driver, inspect_connection_file, install_jdbc_driver, install_jdbc_runtime, log_frontend_event,
-    minimize_main_window, open_data_directory, open_debug_log_directory, open_project_homepage,
-    open_project_releases, open_project_site, policy_check, remove_jdbc_runtime,
-    rename_access_token, retry_audit_migration, rotate_access_token, save_server_config,
-    save_settings_config, set_access_token_enabled, set_connection_enabled, set_mcp_tool_enabled,
-    set_token_connection_allowed, set_token_tool_allowed, set_window_material_theme,
-    start_mcp_server, start_window_drag, stop_jdbc_driver_runtime, stop_mcp_server,
-    test_connection, test_connection_input, upsert_connection,
+    import_jdbc_driver, inspect_connection_file, install_jdbc_driver, install_jdbc_runtime,
+    log_frontend_event, minimize_main_window, open_data_directory, open_debug_log_directory,
+    open_project_homepage, open_project_releases, open_project_site, policy_check,
+    remove_jdbc_runtime, rename_access_token, retry_audit_migration, rotate_access_token,
+    save_server_config, save_settings_config, set_access_token_enabled, set_connection_enabled,
+    set_mcp_tool_enabled, set_token_connection_allowed, set_token_tool_allowed,
+    set_window_material_theme, start_mcp_server, start_window_drag, stop_jdbc_driver_runtime,
+    stop_mcp_server, test_connection, test_connection_input, upsert_connection,
 };
 use i18n::{backend_text, BackendText};
 use state::AppState;

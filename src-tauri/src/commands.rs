@@ -507,7 +507,11 @@ pub async fn export_connections(
 ) -> Result<usize, String> {
     // Whether the file leaves the OS credential vault with its passwords still protected is
     // the fact worth keeping, not just how many connections went out.
-    let protection = if password.is_some() { "encrypted" } else { "plaintext" };
+    let protection = if password.is_some() {
+        "encrypted"
+    } else {
+        "plaintext"
+    };
     match write_connection_export(&state, &path, password).await {
         Ok(count) => {
             debug_log::info(
@@ -517,7 +521,10 @@ pub async fn export_connections(
             Ok(count)
         }
         Err(error) => {
-            debug_log::error("transfer", format_args!("connection export failed: {error}"));
+            debug_log::error(
+                "transfer",
+                format_args!("connection export failed: {error}"),
+            );
             Err(error)
         }
     }
@@ -621,7 +628,10 @@ pub async fn inspect_connection_file(path: String) -> Result<ConnectionFileInspe
         Err(error) => {
             // Nothing else records this: the caller never reaches the import command when the
             // file is rejected here, so this is the only trace of the attempt.
-            debug_log::warn("transfer", format_args!("connection file rejected ({error})"));
+            debug_log::warn(
+                "transfer",
+                format_args!("connection file rejected ({error})"),
+            );
             Err(error)
         }
     }
@@ -635,8 +645,8 @@ fn read_connection_file_inspection(path: &str) -> Result<ConnectionFileInspectio
     }
 
     let contents = Zeroizing::new(fs::read(path).map_err(to_client_error)?);
-    let header: ConnectionFileHeader = serde_json::from_slice(contents.as_slice())
-        .map_err(|_| UNSUPPORTED_FILE.to_string())?;
+    let header: ConnectionFileHeader =
+        serde_json::from_slice(contents.as_slice()).map_err(|_| UNSUPPORTED_FILE.to_string())?;
 
     match header.format.as_deref() {
         Some(CONNECTION_TRANSFER_FORMAT) => Ok(ConnectionFileInspection {
@@ -657,8 +667,8 @@ fn read_connection_file_inspection(path: &str) -> Result<ConnectionFileInspectio
 }
 
 fn parse_connection_transfer_file(contents: &[u8]) -> Result<ConnectionTransferFile, String> {
-    let transfer: ConnectionTransferFile = serde_json::from_slice(contents)
-        .map_err(|_| UNSUPPORTED_FILE.to_string())?;
+    let transfer: ConnectionTransferFile =
+        serde_json::from_slice(contents).map_err(|_| UNSUPPORTED_FILE.to_string())?;
     // The version gate is what makes an encrypted file fail loudly on an older build instead
     // of being read as a connection list. Keep it ahead of any field that could default.
     if transfer.format != CONNECTION_TRANSFER_FORMAT || !matches!(transfer.version, 1..=3) {
@@ -680,8 +690,8 @@ fn read_connection_transfer_file(
     }
 
     let contents = Zeroizing::new(fs::read(path).map_err(to_client_error)?);
-    let header: ConnectionFileHeader = serde_json::from_slice(contents.as_slice())
-        .map_err(|_| UNSUPPORTED_FILE.to_string())?;
+    let header: ConnectionFileHeader =
+        serde_json::from_slice(contents.as_slice()).map_err(|_| UNSUPPORTED_FILE.to_string())?;
     if header.format.as_deref() != Some(ENCRYPTED_CONNECTION_FORMAT) {
         return parse_connection_transfer_file(contents.as_slice());
     }
@@ -692,8 +702,8 @@ fn read_connection_transfer_file(
     let password = password
         .filter(|password| !password.is_empty())
         .ok_or_else(|| PASSWORD_REQUIRED.to_string())?;
-    let encrypted: EncryptedConnectionFile = serde_json::from_slice(contents.as_slice())
-        .map_err(|_| UNSUPPORTED_FILE.to_string())?;
+    let encrypted: EncryptedConnectionFile =
+        serde_json::from_slice(contents.as_slice()).map_err(|_| UNSUPPORTED_FILE.to_string())?;
     let plaintext = decrypt_connection_file(&encrypted, password)?;
     parse_connection_transfer_file(plaintext.as_slice())
 }
@@ -704,7 +714,9 @@ pub async fn import_connections(
     path: String,
     password: Option<String>,
 ) -> Result<ImportConnectionsResult, String> {
-    let protection = password.as_deref().is_some_and(|password| !password.is_empty());
+    let protection = password
+        .as_deref()
+        .is_some_and(|password| !password.is_empty());
     match apply_connection_import(&state, &path, password).await {
         Ok(result) => {
             debug_log::info(
@@ -721,13 +733,18 @@ pub async fn import_connections(
         Err(error) => {
             // A wrong password, a missing password and a foreign file all mean the user handed
             // over something unusable, which is ordinary rather than a fault of the app.
-            let rejected = error == WRONG_PASSWORD
-                || error == PASSWORD_REQUIRED
-                || error == UNSUPPORTED_FILE;
+            let rejected =
+                error == WRONG_PASSWORD || error == PASSWORD_REQUIRED || error == UNSUPPORTED_FILE;
             if rejected {
-                debug_log::warn("transfer", format_args!("connection import rejected ({error})"));
+                debug_log::warn(
+                    "transfer",
+                    format_args!("connection import rejected ({error})"),
+                );
             } else {
-                debug_log::error("transfer", format_args!("connection import failed: {error}"));
+                debug_log::error(
+                    "transfer",
+                    format_args!("connection import failed: {error}"),
+                );
             }
             Err(error)
         }
@@ -792,7 +809,9 @@ async fn apply_connection_import(
             continue;
         }
         imported_count += 1;
-        if let (Some(credential_ref), Some(connection_password)) = (credential_ref, connection_password) {
+        if let (Some(credential_ref), Some(connection_password)) =
+            (credential_ref, connection_password)
+        {
             credentials.push((credential_ref, connection_password));
         }
     }

@@ -134,8 +134,8 @@ pub fn encrypt_connection_file(
     };
     let key = derive_key(password, &salt, &kdf)?;
 
-    let cipher =
-        Aes256Gcm::new_from_slice(key.as_ref()).map_err(|_| "Invalid encryption key.".to_string())?;
+    let cipher = Aes256Gcm::new_from_slice(key.as_ref())
+        .map_err(|_| "Invalid encryption key.".to_string())?;
     let ciphertext = cipher
         .encrypt(
             Nonce::from_slice(&nonce_bytes),
@@ -185,8 +185,7 @@ pub fn decrypt_connection_file(
     checked_kdf_params(&file.kdf)?;
 
     let key = derive_key(password, &salt, &file.kdf)?;
-    let cipher =
-        Aes256Gcm::new_from_slice(key.as_ref()).map_err(|_| WRONG_PASSWORD.to_string())?;
+    let cipher = Aes256Gcm::new_from_slice(key.as_ref()).map_err(|_| WRONG_PASSWORD.to_string())?;
     // A wrong password and a tampered ciphertext are indistinguishable here by design; both
     // surface as an authentication failure.
     let plaintext = cipher
@@ -316,7 +315,10 @@ mod tests {
         let mut file = encrypt_connection_file(PAYLOAD, PASSWORD).expect("encrypt");
         file.version = ENCRYPTED_CONNECTION_VERSION + 1;
         let error = decrypt_connection_file(&file, PASSWORD).expect_err("must fail");
-        assert_ne!(error, WRONG_PASSWORD, "a future version must not look like a bad password");
+        assert_ne!(
+            error, WRONG_PASSWORD,
+            "a future version must not look like a bad password"
+        );
     }
 
     fn clone_file(file: &EncryptedConnectionFile) -> EncryptedConnectionFile {
@@ -348,18 +350,30 @@ mod tests {
 
         let mut greedy = clone_file(&file);
         greedy.kdf.memory_kib = MAX_KDF_MEMORY_KIB + 1;
-        assert_eq!(decrypt_connection_file(&greedy, PASSWORD), Err(UNSUPPORTED_FILE.to_string()));
+        assert_eq!(
+            decrypt_connection_file(&greedy, PASSWORD),
+            Err(UNSUPPORTED_FILE.to_string())
+        );
 
         let mut endless = clone_file(&file);
         endless.kdf.iterations = MAX_KDF_ITERATIONS + 1;
-        assert_eq!(decrypt_connection_file(&endless, PASSWORD), Err(UNSUPPORTED_FILE.to_string()));
+        assert_eq!(
+            decrypt_connection_file(&endless, PASSWORD),
+            Err(UNSUPPORTED_FILE.to_string())
+        );
 
         let mut degenerate = clone_file(&file);
         degenerate.kdf.memory_kib = 0;
-        assert_eq!(decrypt_connection_file(&degenerate, PASSWORD), Err(UNSUPPORTED_FILE.to_string()));
+        assert_eq!(
+            decrypt_connection_file(&degenerate, PASSWORD),
+            Err(UNSUPPORTED_FILE.to_string())
+        );
 
         let mut overthreaded = clone_file(&file);
         overthreaded.kdf.parallelism = MAX_KDF_PARALLELISM + 1;
-        assert_eq!(decrypt_connection_file(&overthreaded, PASSWORD), Err(UNSUPPORTED_FILE.to_string()));
+        assert_eq!(
+            decrypt_connection_file(&overthreaded, PASSWORD),
+            Err(UNSUPPORTED_FILE.to_string())
+        );
     }
 }

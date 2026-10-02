@@ -12,9 +12,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
-use sysinfo::{
-    MemoryRefreshKind, Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System,
-};
+use sysinfo::{MemoryRefreshKind, Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -1461,7 +1459,12 @@ impl JdbcManager {
                     .then(right.memory_bytes.cmp(&left.memory_bytes))
                     .then(left.pid.cmp(&right.pid))
             });
-            (runtimes, host, system_memory_bytes, system_used_memory_bytes)
+            (
+                runtimes,
+                host,
+                system_memory_bytes,
+                system_used_memory_bytes,
+            )
         })
         .await
         .unwrap_or_else(|_| {
@@ -1979,11 +1982,13 @@ fn process_system() -> &'static StdMutex<System> {
 }
 
 fn snapshot_process_stats(system: &System, pid: u32) -> Option<ProcessStats> {
-    system.process(Pid::from_u32(pid)).map(|process| ProcessStats {
-        name: process.name().to_string_lossy().into_owned(),
-        memory_bytes: process.memory(),
-        cpu_percent: process.cpu_usage().max(0.0),
-    })
+    system
+        .process(Pid::from_u32(pid))
+        .map(|process| ProcessStats {
+            name: process.name().to_string_lossy().into_owned(),
+            memory_bytes: process.memory(),
+            cpu_percent: process.cpu_usage().max(0.0),
+        })
 }
 
 /// Walk the process tree from this app's PID. JDBC sidecars are excluded (and not
