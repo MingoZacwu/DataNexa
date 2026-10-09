@@ -361,12 +361,20 @@ impl AuditLogger {
                 return self.fail(error).await;
             }
         }
+        crate::debug_log::info(
+            "audit",
+            format_args!("audit migration completed (events={total})"),
+        );
         *self.migration.write().await = AuditMigrationState::Ready;
         Ok(())
     }
 
     async fn fail<T: std::fmt::Display>(&self, error: T) -> anyhow::Result<()> {
         let reason = sanitize_reason(&error.to_string());
+        // The audit store being unusable is exactly the kind of failure that
+        // has no other witness, so it is recorded here rather than only
+        // surfacing through the migration state.
+        crate::debug_log::error("audit", format_args!("audit migration failed: {reason}"));
         *self.migration.write().await = AuditMigrationState::Failed {
             reason: reason.clone(),
         };
@@ -469,7 +477,15 @@ impl AuditLogger {
             tx.commit().await?;
             Ok::<(), anyhow::Error>(())
         }.await;
-        result.map_err(|error| anyhow::anyhow!("audit storage unavailable: {error}"))
+        result.map_err(|error| {
+            // Callers frequently discard this result, so a dropped audit event
+            // would otherwise leave no trace at all.
+            crate::debug_log::error(
+                "audit",
+                format_args!("audit event could not be recorded: {error}"),
+            );
+            anyhow::anyhow!("audit storage unavailable: {error}")
+        })
     }
 
     pub async fn trim(&self, retention_days: u32) -> anyhow::Result<()> {

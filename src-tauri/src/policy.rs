@@ -7,6 +7,7 @@ use sqlparser::parser::Parser;
 use std::ops::ControlFlow;
 
 use crate::config::DbKind;
+use crate::db::kind_label;
 use crate::i18n::BackendText;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,27 +44,45 @@ impl PolicyEngine {
         text: &BackendText,
         enforce_row_limit: bool,
     ) -> PolicyCheckResult {
+        let mode = if enforce_row_limit { "execute" } else { "explain" };
         let trimmed = sql.trim();
         if trimmed.is_empty() {
-            return deny(text.policy_sql_empty());
+            return deny_logged(PolicyDenial::Empty, kind, mode, text.policy_sql_empty());
         }
 
         if matches!(kind, DbKind::Jdbc) {
-            return check_jdbc(trimmed, max_rows, text, enforce_row_limit);
+            return check_jdbc(trimmed, max_rows, text, enforce_row_limit, mode);
         }
 
         let sql_dialect = dialect(kind);
         let mut statements = match Parser::parse_sql(sql_dialect, trimmed) {
             Ok(statements) => statements,
-            Err(error) => return deny(text.policy_parser_rejected(&error.to_string())),
+            Err(error) => {
+                return deny_logged(
+                    PolicyDenial::ParseError,
+                    kind,
+                    mode,
+                    text.policy_parser_rejected(&error.to_string()),
+                )
+            }
         };
 
         if statements.len() != 1 {
-            return deny(text.policy_single_statement_only());
+            return deny_logged(
+                PolicyDenial::MultiStatement,
+                kind,
+                mode,
+                text.policy_single_statement_only(),
+            );
         }
 
         if let Err(violation) = validate_statement(&statements[0], kind) {
-            return deny(violation.reason(text));
+            return deny_logged(
+                PolicyDenial::Violation(violation),
+                kind,
+                mode,
+                violation.reason(text),
+            );
         }
 
         let max_rows = max_rows.max(1);
@@ -77,25 +96,43 @@ impl PolicyEngine {
         let rewritten_sql = statements[0].to_string();
         let reparsed = match Parser::parse_sql(sql_dialect, &rewritten_sql) {
             Ok(statements) => statements,
-            Err(error) => return deny(text.policy_parser_rejected(&error.to_string())),
+            Err(error) => {
+                return deny_logged(
+                    PolicyDenial::ParseError,
+                    kind,
+                    mode,
+                    text.policy_parser_rejected(&error.to_string()),
+                )
+            }
         };
         if reparsed.len() != 1 {
-            return deny(text.policy_single_statement_only());
+            return deny_logged(
+                PolicyDenial::MultiStatement,
+                kind,
+                mode,
+                text.policy_single_statement_only(),
+            );
         }
         if let Err(violation) = validate_statement(&reparsed[0], kind) {
-            return deny(violation.reason(text));
+            return deny_logged(
+                PolicyDenial::Violation(violation),
+                kind,
+                mode,
+                violation.reason(text),
+            );
         }
         if requires_bounded_result && !has_bounded_outer_limit(&reparsed[0], probe_rows) {
-            return deny(text.policy_parser_rejected(
-                "rewritten query does not have a statically bounded outer row limit",
-            ));
+            return deny_logged(
+                PolicyDenial::Postcondition,
+                kind,
+                mode,
+                text.policy_parser_rejected(
+                    "rewritten query does not have a statically bounded outer row limit",
+                ),
+            );
         }
 
-        PolicyCheckResult {
-            allowed: true,
-            reason: text.policy_allowed().to_string(),
-            rewritten_sql: Some(rewritten_sql),
-        }
+        allowed_logged(kind, mode, requires_bounded_result, rewritten_sql, text)
     }
 }
 
@@ -104,29 +141,46 @@ fn check_jdbc(
     _max_rows: u32,
     text: &BackendText,
     _enforce_row_limit: bool,
+    mode: &str,
 ) -> PolicyCheckResult {
+    let kind = DbKind::Jdbc;
     let parsed = Parser::parse_sql(&GenericDialect {}, trimmed);
     match parsed {
         Ok(statements) => {
             if statements.len() != 1 {
-                return deny(text.policy_single_statement_only());
+                return deny_logged(
+                    PolicyDenial::MultiStatement,
+                    &kind,
+                    mode,
+                    text.policy_single_statement_only(),
+                );
             }
             if let Err(violation) = validate_statement(&statements[0], &DbKind::Jdbc) {
-                return deny(violation.reason(text));
+                return deny_logged(
+                    PolicyDenial::Violation(violation),
+                    &kind,
+                    mode,
+                    violation.reason(text),
+                );
             }
-            PolicyCheckResult {
-                allowed: true,
-                reason: text.policy_allowed().to_string(),
-                rewritten_sql: Some(trimmed.to_string()),
-            }
+            allowed_logged(&kind, mode, false, trimmed.to_string(), text)
         }
         Err(_) => match jdbc_lexical_fallback(trimmed) {
-            Ok(()) => PolicyCheckResult {
-                allowed: true,
-                reason: text.policy_allowed().to_string(),
-                rewritten_sql: Some(trimmed.to_string()),
-            },
-            Err(violation) => deny(violation.reason(text)),
+            Ok(()) => {
+                // The parser did not recognize the dialect, so the weaker
+                // lexical path made the call. That is worth recording alone.
+                crate::debug_log::warn(
+                    "policy",
+                    format_args!("sql allowed via lexical fallback (kind=jdbc, mode={mode})"),
+                );
+                allowed_logged(&kind, mode, false, trimmed.to_string(), text)
+            }
+            Err(violation) => deny_logged(
+                PolicyDenial::Violation(violation),
+                &kind,
+                mode,
+                violation.reason(text),
+            ),
         },
     }
 }
@@ -226,6 +280,37 @@ impl PolicyViolation {
             Self::Destructive => text.policy_destructive_blocked().to_string(),
             Self::SideEffect => text.policy_side_effect_blocked().to_string(),
             Self::SelectOnly => text.policy_select_only().to_string(),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Destructive => "destructive",
+            Self::SideEffect => "side_effect",
+            Self::SelectOnly => "select_only",
+        }
+    }
+}
+
+/// Why a statement was rejected, kept as a stable identifier so the debug log
+/// stays searchable regardless of the UI locale.
+#[derive(Debug, Clone, Copy)]
+enum PolicyDenial {
+    Empty,
+    ParseError,
+    MultiStatement,
+    Violation(PolicyViolation),
+    Postcondition,
+}
+
+impl PolicyDenial {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Empty => "empty_statement",
+            Self::ParseError => "parse_error",
+            Self::MultiStatement => "multiple_statements",
+            Self::Violation(violation) => violation.as_str(),
+            Self::Postcondition => "unbounded_after_rewrite",
         }
     }
 }
@@ -594,6 +679,49 @@ fn deny(reason: impl Into<String>) -> PolicyCheckResult {
         allowed: false,
         reason: reason.into(),
         rewritten_sql: None,
+    }
+}
+
+/// Records which rule family rejected the statement, then builds the denial.
+/// The statement text is deliberately absent: it can carry user data.
+fn deny_logged(
+    denial: PolicyDenial,
+    kind: &DbKind,
+    mode: &str,
+    reason: impl Into<String>,
+) -> PolicyCheckResult {
+    crate::debug_log::warn(
+        "policy",
+        format_args!(
+            "sql blocked (kind={}, mode={}, rule={})",
+            kind_label(kind),
+            mode,
+            denial.as_str()
+        ),
+    );
+    deny(reason)
+}
+
+fn allowed_logged(
+    kind: &DbKind,
+    mode: &str,
+    limit_applied: bool,
+    rewritten_sql: String,
+    text: &BackendText,
+) -> PolicyCheckResult {
+    crate::debug_log::info(
+        "policy",
+        format_args!(
+            "sql allowed (kind={}, mode={}, limit_applied={})",
+            kind_label(kind),
+            mode,
+            limit_applied
+        ),
+    );
+    PolicyCheckResult {
+        allowed: true,
+        reason: text.policy_allowed().to_string(),
+        rewritten_sql: Some(rewritten_sql),
     }
 }
 

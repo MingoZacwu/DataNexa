@@ -17,6 +17,7 @@ use tokio::sync::{oneshot, Mutex, Semaphore};
 use tokio::task::JoinHandle;
 
 use crate::audit::{AuditActor, AuditSql, AuditStatus};
+use crate::commands::sanitize_error;
 use crate::config::{
     is_tool_enabled, ConnectionConfig, DbKind, ServerConfig, ToolConfig, MCP_TOOL_NAMES,
 };
@@ -634,6 +635,10 @@ async fn handle_active_tool_call(
     }
 
     if !state.rate_limit.lock().await.try_acquire() {
+        crate::debug_log::warn(
+            "mcp",
+            format_args!("tool call rejected: rate limit exceeded"),
+        );
         return Err((-32000, "tools/call rate limit exceeded".to_string()));
     }
 
@@ -642,7 +647,13 @@ async fn handle_active_tool_call(
         state.tool_concurrency.clone().acquire_owned(),
     )
     .await
-    .map_err(|_| (-32000, "tools/call concurrency limit exceeded".to_string()))?
+    .map_err(|_| {
+        crate::debug_log::warn(
+            "mcp",
+            format_args!("tool call rejected: global concurrency wait timed out"),
+        );
+        (-32000, "tools/call concurrency limit exceeded".to_string())
+    })?
     .map_err(|_| {
         (
             -32603,
@@ -669,6 +680,8 @@ async fn handle_active_tool_call(
         None
     };
     let connection_permit = if let Some((connection_id, max_connections)) = connection_limit {
+        // The concurrency map key consumes the id, so keep a copy for logging.
+        let log_connection_id = connection_id.clone();
         let semaphore = {
             let mut limits = state.connection_concurrency.lock().await;
             let entry = limits.entry(connection_id).or_insert_with(|| {
@@ -688,7 +701,15 @@ async fn handle_active_tool_call(
         Some(
             tokio::time::timeout(TOOL_CONCURRENCY_WAIT, semaphore.acquire_owned())
                 .await
-                .map_err(|_| (-32000, "connection concurrency limit exceeded".to_string()))?
+                .map_err(|_| {
+                    crate::debug_log::warn(
+                        "mcp",
+                        format_args!(
+                            "tool call rejected: connection concurrency wait timed out (connection_id={log_connection_id})"
+                        ),
+                    );
+                    (-32000, "connection concurrency limit exceeded".to_string())
+                })?
                 .map_err(|_| {
                     (
                         -32603,
@@ -710,11 +731,13 @@ async fn handle_active_tool_call(
 
     let result = match call_result {
         Ok(result) => result.response,
-        Err(error) if sanitize_error(&error).starts_with("audit storage unavailable:") => {
+        // The guard borrows the owned error, so it is re-borrowed as a whole
+        // value here: `&T` does not implement `Display` on its own.
+        Err(error) if sanitize_error(&*error).starts_with("audit storage unavailable:") => {
             emit_mcp_tool_call_completed(&state.app, true);
-            return Err((-32603, sanitize_error(&error)));
+            return Err((-32603, sanitize_error(error)));
         }
-        Err(error) => tool_error_result(&sanitize_error(&error)),
+        Err(error) => tool_error_result(&sanitize_error(error)),
     };
     if serde_json::to_vec(&result)
         .map(|encoded| encoded.len() > MAX_MCP_RESULT_BYTES)
@@ -955,7 +978,7 @@ async fn call_tool_audited(
     };
     let result = call_tool(app.clone(), actor.clone(), params).await;
     let result = if is_jdbc {
-        result.map_err(|error| anyhow::anyhow!(text.jdbc_error(&sanitize_error(&error))))
+        result.map_err(|error| anyhow::anyhow!(text.jdbc_error(&sanitize_error(&*error))))
     } else {
         result
     };
@@ -1018,6 +1041,16 @@ async fn call_tool_audited(
             if let Some(token_id) = &breaker_token_id {
                 crate::circuit_breaker::evaluate(app.clone(), token_id.clone()).await;
             }
+        } else {
+            // Denials already land in the audit store, so only real successes
+            // are mirrored here and the two views stay easy to compare.
+            crate::debug_log::info(
+                "mcp_tool",
+                format_args!(
+                    "tool call completed (tool={name}, elapsed={}ms)",
+                    started.elapsed().as_millis()
+                ),
+            );
         }
     }
     result
@@ -1557,15 +1590,6 @@ fn parse_db_kind(kind: &str) -> anyhow::Result<DbKind> {
         "jdbc" => Ok(DbKind::Jdbc),
         _ => Err(anyhow::anyhow!("unsupported database kind: {kind}")),
     }
-}
-
-fn sanitize_error(error: &anyhow::Error) -> String {
-    let text = error.to_string();
-    let text = regex::Regex::new(r"(?i)(password|token|secret)=([^&\s]+)")
-        .expect("valid secret sanitizer regex")
-        .replace_all(&text, "$1=REDACTED")
-        .to_string();
-    text.replace('\n', " ")
 }
 
 fn is_local_host(host: &str) -> bool {

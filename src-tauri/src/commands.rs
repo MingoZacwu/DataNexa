@@ -13,8 +13,8 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::audit::AuditStatus;
 use crate::config::{
-    default_max_result_bytes, default_port, is_known_tool, AppConfig, ConnectionConfig, DbKind,
-    ServerConfig, SettingsConfig,
+    clamp_with_log, default_max_result_bytes, default_port, is_known_tool, AppConfig,
+    ConnectionConfig, DbKind, ServerConfig, SettingsConfig,
 };
 use crate::db::ConnectionDiagnostics;
 use crate::debug_log;
@@ -412,9 +412,17 @@ pub async fn save_server_config(
         return Err(text.local_host_only().to_string());
     }
 
+    // `server` is moved into reconfigure, and the entry should only appear
+    // once the new configuration actually took effect.
+    let host = server.host.clone();
+    let port = server.port;
     mcp::reconfigure(state.inner().clone(), server)
         .await
         .map_err(to_client_error)?;
+    crate::debug_log::info(
+        "settings",
+        format_args!("server configuration saved (host={host}, port={port})"),
+    );
 
     snapshot(state.inner()).await.map_err(to_client_error)
 }
@@ -876,6 +884,11 @@ pub async fn set_mcp_tool_enabled(
     .await
     .map_err(to_client_error)?;
 
+    crate::debug_log::info(
+        "settings",
+        format_args!("MCP tool enabled state changed (tool={name}, enabled={enabled})"),
+    );
+
     snapshot(state.inner()).await.map_err(to_client_error)
 }
 
@@ -1099,6 +1112,11 @@ pub async fn set_connection_enabled(
     .await
     .map_err(to_client_error)?;
 
+    crate::debug_log::info(
+        "connection",
+        format_args!("connection enabled state changed (id={id}, enabled={enabled})"),
+    );
+
     snapshot(state.inner()).await.map_err(to_client_error)
 }
 
@@ -1109,9 +1127,16 @@ pub async fn disable_all_connections(
     let _lifecycle = state.mcp_lifecycle.lock().await;
     if state.is_emergency_disabled() {
         state.exit_emergency_mode().await;
+        crate::debug_log::warn("connection", format_args!("emergency disconnect released"));
         return snapshot(state.inner()).await.map_err(to_client_error);
     }
     if !state.mcp.read().await.running {
+        // The request is rejected before anything changes, so the debug log
+        // records why the button had no effect.
+        crate::debug_log::warn(
+            "connection",
+            format_args!("emergency disconnect rejected: the MCP server is not running"),
+        );
         return Err(
             "MCP server must be running before emergency disconnect can be enabled".to_string(),
         );
@@ -1119,6 +1144,12 @@ pub async fn disable_all_connections(
 
     state.enter_emergency_mode().await;
     state.db.close_all().await;
+    crate::debug_log::warn(
+        "connection",
+        format_args!(
+            "emergency disconnect engaged, in-flight requests cancelled and every connection pool closed"
+        ),
+    );
 
     snapshot(state.inner()).await.map_err(to_client_error)
 }
@@ -1836,9 +1867,20 @@ fn normalize_settings(mut settings: SettingsConfig) -> SettingsConfig {
         .take()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    settings.auto_circuit_breaker_window_minutes =
-        settings.auto_circuit_breaker_window_minutes.clamp(1, 60);
-    settings.auto_circuit_breaker_threshold = settings.auto_circuit_breaker_threshold.clamp(1, 50);
+    settings.auto_circuit_breaker_window_minutes = clamp_with_log(
+        "settings",
+        "auto_circuit_breaker_window_minutes",
+        settings.auto_circuit_breaker_window_minutes,
+        1,
+        60,
+    );
+    settings.auto_circuit_breaker_threshold = clamp_with_log(
+        "settings",
+        "auto_circuit_breaker_threshold",
+        settings.auto_circuit_breaker_threshold,
+        1,
+        50,
+    );
     settings
 }
 
@@ -1864,6 +1906,28 @@ pub(crate) fn sanitize_text(text: &str) -> String {
         .replace_all(&text, "$1=REDACTED")
         .to_string();
     text.replace('\n', " ")
+}
+
+/// Upper bound for sanitized error strings. They are copied into MCP responses
+/// and the audit store, where an unbounded driver message is only noise.
+const SANITIZED_ERROR_MAX_CHARS: usize = 600;
+
+/// Credential sanitizer for messages leaving the Rust side as errors. It applies
+/// the same rules as [`sanitize_text`] so a driver error cannot be redacted on
+/// one path and leak on another, and bounds the length on top of that.
+pub(crate) fn sanitize_error(value: impl std::fmt::Display) -> String {
+    let text = value.to_string();
+    let text = Regex::new(r"(?i)((?:[A-Za-z][A-Za-z0-9+.-]*:)+//)([^/@\s:]+):([^/@\s]+)@")
+        .expect("valid JDBC URL sanitizer regex")
+        .replace_all(&text, "$1$2:REDACTED@");
+    let text = Regex::new(r"(?i)(password|passwd|pwd|token|secret)=([^&;\s]+)")
+        .expect("valid secret sanitizer regex")
+        .replace_all(&text, "$1=REDACTED")
+        .chars()
+        .filter(|value| !matches!(value, '\r' | '\n' | '\t'))
+        .take(SANITIZED_ERROR_MAX_CHARS)
+        .collect::<String>();
+    text.trim().to_string()
 }
 
 fn format_diagnostics_for_client(

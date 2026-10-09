@@ -3,7 +3,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -21,6 +21,7 @@ use tokio::time::timeout;
 use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
 
+use crate::commands::sanitize_error;
 use crate::config::{ConfigStore, ConnectionConfig, DbKind};
 use crate::db::{ColumnInfo, QueryResult, TableInfo};
 use crate::jdbc_runtime;
@@ -151,6 +152,15 @@ pub struct JdbcStorageStatus {
     pub managed_runtime_old_bytes: u64,
 }
 
+/// Filesystem half of `JdbcStorageStatus`, produced on a blocking thread.
+struct JdbcStorageScan {
+    items: Vec<JdbcStorageItem>,
+    total_bytes: u64,
+    maven_cache_bytes: u64,
+    managed_runtime_old_bytes: u64,
+    drivers: Vec<JdbcDriverBundle>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct JdbcCacheSelection {
     pub maven: bool,
@@ -263,6 +273,11 @@ pub struct JdbcManager {
 
 struct JdbcSidecarSession {
     bundle_id: String,
+    /// Cached from the spawn so the monitoring poll can report the PID without
+    /// waiting on `process`, which a running query holds until it responds.
+    sidecar_pid: u32,
+    started_at: Instant,
+    startup_logged: AtomicBool,
     process: Mutex<JdbcSidecarProcess>,
     next_request_id: AtomicU64,
 }
@@ -346,7 +361,7 @@ impl JdbcManager {
     pub async fn shutdown_sessions(&self) {
         let sessions = std::mem::take(&mut *self.sessions.lock().await);
         for session in sessions.into_values() {
-            session.shutdown().await;
+            session.shutdown("application shutdown").await;
         }
     }
 
@@ -364,7 +379,7 @@ impl JdbcManager {
         let mut stopped = 0_usize;
         for key in keys {
             if let Some(session) = sessions.remove(&key) {
-                session.shutdown().await;
+                session.shutdown("driver stopped by user").await;
                 stopped += 1;
             }
         }
@@ -404,7 +419,7 @@ impl JdbcManager {
                 continue;
             }
             if let Ok(bundle) = read_manifest(&entry.path()) {
-                if bundle.bundle_id == name && verify_bundle_files(&entry.path(), &bundle).is_ok() {
+                if bundle.bundle_id == name && verify_bundle_cached(&entry.path(), &bundle) {
                     drivers.push(bundle);
                 }
             }
@@ -701,8 +716,51 @@ impl JdbcManager {
             .ok()
             .and_then(|store| store.load().ok())
             .and_then(|config| config.settings.jdbc_java_home.map(PathBuf::from));
+        // Sizing directories and verifying driver bundles both walk the
+        // filesystem and hash every jar, so they run on a blocking thread; the
+        // 5s UI poll must not tie up an async worker.
+        let scan = {
+            let manager = self.clone();
+            let storage_root = storage_root.clone();
+            tokio::task::spawn_blocking(move || {
+                manager.scan_storage(
+                    &storage_root,
+                    &drivers_root,
+                    &runtime_path,
+                    current_runtime_path.as_deref(),
+                    external_runtime_path.as_deref(),
+                )
+            })
+            .await
+            .map_err(|error| anyhow::anyhow!("JDBC storage scan failed: {error}"))?
+        }?;
+        let (runtimes, host, system_memory_bytes, system_used_memory_bytes) =
+            self.collect_runtime_metrics(&scan.drivers).await;
+        Ok(JdbcStorageStatus {
+            storage_root: storage_root.to_string_lossy().to_string(),
+            total_bytes: scan.total_bytes,
+            items: scan.items,
+            runtimes,
+            host,
+            system_memory_bytes,
+            system_used_memory_bytes,
+            maven_cache_bytes: scan.maven_cache_bytes,
+            managed_runtime_old_bytes: scan.managed_runtime_old_bytes,
+        })
+    }
+
+    /// Synchronous half of `storage_status`. Callers must run it on a blocking
+    /// thread: it sizes directories and verifies every driver bundle.
+    fn scan_storage(
+        &self,
+        storage_root: &Path,
+        drivers_root: &Path,
+        runtime_path: &Path,
+        current_runtime_path: Option<&Path>,
+        external_runtime_path: Option<&Path>,
+    ) -> anyhow::Result<JdbcStorageScan> {
         let mut items = vec![
-            ("drivers", "JDBC drivers", drivers_root.clone()),
+            ("drivers", "JDBC drivers", drivers_root.to_path_buf()),
             (
                 "maven",
                 "Maven repository",
@@ -716,8 +774,8 @@ impl JdbcManager {
             ),
             ("config", "Configuration", storage_root.join("config.toml")),
         ];
-        if runtime_path.is_dir() && runtime_path.starts_with(&storage_root) {
-            items.push(("runtime", "Java Runtime", runtime_path.clone()));
+        if runtime_path.is_dir() && runtime_path.starts_with(storage_root) {
+            items.push(("runtime", "Java Runtime", runtime_path.to_path_buf()));
         }
         // Debug logs are only created once the user enables debug logging, so
         // the category stays hidden until the "logs" folder actually exists.
@@ -737,15 +795,14 @@ impl JdbcManager {
         // A user-selected external Runtime is not DataNexa-owned storage. Exclude it
         // even when the user happens to place it below the application data directory.
         let external_runtime_bytes = external_runtime_path
-            .as_ref()
             .filter(|path| {
-                path != &&storage_root
-                    && path.starts_with(&storage_root)
-                    && !path.starts_with(&runtime_path)
+                *path != storage_root
+                    && path.starts_with(storage_root)
+                    && !path.starts_with(runtime_path)
             })
-            .map(|path| path_size_bytes(path))
+            .map(path_size_bytes)
             .unwrap_or(0);
-        let total_bytes = path_size_bytes(&storage_root).saturating_sub(external_runtime_bytes);
+        let total_bytes = path_size_bytes(storage_root).saturating_sub(external_runtime_bytes);
         let known_bytes = items.iter().map(|item| item.bytes).sum::<u64>();
         let other_bytes = total_bytes.saturating_sub(known_bytes);
         if other_bytes > 0 {
@@ -757,8 +814,6 @@ impl JdbcManager {
             });
         }
         let drivers = self.list_drivers()?;
-        let (runtimes, host, system_memory_bytes, system_used_memory_bytes) =
-            self.collect_runtime_metrics(&drivers).await;
         let maven_cache_bytes = items
             .iter()
             .find(|item| item.id == "maven")
@@ -767,30 +822,25 @@ impl JdbcManager {
         // Old runtime bytes mirror what clear_jdbc_cache removes: every entry
         // under the managed runtime directory except the current.json
         // metadata and the runtime directory it points to.
-        let managed_runtime_old_bytes = fs::read_dir(&runtime_path)
+        let managed_runtime_old_bytes = fs::read_dir(runtime_path)
             .map(|entries| {
                 entries
                     .flatten()
                     .filter(|entry| {
                         entry.file_name() != "current.json"
                             && current_runtime_path
-                                .as_ref()
-                                .is_none_or(|current| entry.path() != current.as_path())
+                                .is_none_or(|current| entry.path() != current)
                     })
                     .map(|entry| path_size_bytes(&entry.path()))
                     .sum()
             })
             .unwrap_or(0);
-        Ok(JdbcStorageStatus {
-            storage_root: storage_root.to_string_lossy().to_string(),
-            total_bytes,
+        Ok(JdbcStorageScan {
             items,
-            runtimes,
-            host,
-            system_memory_bytes,
-            system_used_memory_bytes,
+            total_bytes,
             maven_cache_bytes,
             managed_runtime_old_bytes,
+            drivers,
         })
     }
 
@@ -1159,10 +1209,26 @@ impl JdbcManager {
             match result {
                 Ok(response) => return Ok(response),
                 Err(error) if retryable_sidecar_error(&error) => {
-                    self.invalidate_session(&session_key).await;
                     if attempt == 0 {
+                        crate::debug_log::warn(
+                            "jdbc",
+                            format_args!(
+                                "JDBC operation failed, restarting sidecar (action={}, error={})",
+                                action, error
+                            ),
+                        );
+                        self.invalidate_session(&session_key, "restarting after sidecar error")
+                            .await;
                         tokio::time::sleep(Duration::from_millis(150)).await;
                     } else {
+                        crate::debug_log::warn(
+                            "jdbc",
+                            format_args!(
+                                "JDBC operation failed after sidecar restart (action={}, error={})",
+                                action, error
+                            ),
+                        );
+                        self.invalidate_session(&session_key, "retry failed").await;
                         return Err(error);
                     }
                 }
@@ -1229,6 +1295,10 @@ impl JdbcManager {
         let (java, _) = self.java_executable()?;
         let java = normalize_java_path(java);
         let sidecar = normalize_java_path(self.sidecar_path()?);
+        // Timed from just before the spawn: the JVM finishes booting only when
+        // the first request completes, so the ready entry reports the real
+        // cold start cost rather than just the process creation time.
+        let started_at = Instant::now();
         let mut command = Command::new(&java);
         command
             .arg("-Dfile.encoding=UTF-8")
@@ -1244,7 +1314,7 @@ impl JdbcManager {
         let mut child = command.spawn().map_err(|error| {
             anyhow::anyhow!(
                 "JDBC runtime could not be started: {}",
-                sanitize_error(&error.to_string())
+                sanitize_error(error.to_string())
             )
         })?;
         let stdin = child
@@ -1275,6 +1345,9 @@ impl JdbcManager {
         let sidecar_pid = child.id().unwrap_or(0);
         let session = Arc::new(JdbcSidecarSession {
             bundle_id: bundle_id.clone(),
+            sidecar_pid,
+            started_at,
+            startup_logged: AtomicBool::new(false),
             process: Mutex::new(JdbcSidecarProcess {
                 child,
                 stdin,
@@ -1288,7 +1361,7 @@ impl JdbcManager {
         crate::debug_log::info(
             "jdbc",
             format_args!(
-                "JDBC sidecar started (bundle={}, pid={})",
+                "JDBC sidecar spawned (bundle={}, pid={})",
                 bundle_id, sidecar_pid
             ),
         );
@@ -1305,15 +1378,16 @@ impl JdbcManager {
     ) -> (Vec<JdbcDriverRuntimeInfo>, AppHostRuntimeInfo, u64, u64) {
         let drivers = drivers.to_vec();
         let drivers_fallback = drivers.clone();
+        // PIDs come from the session cache: taking the process lock here would
+        // stall the poll for as long as a running query holds it.
         let sessions = self.sessions.lock().await;
         let mut pids_by_bundle = HashMap::<String, Vec<u32>>::new();
         for session in sessions.values() {
-            let process = session.process.lock().await;
-            if let Some(pid) = process.child.id() {
+            if session.sidecar_pid != 0 {
                 pids_by_bundle
                     .entry(session.bundle_id.clone())
                     .or_default()
-                    .push(pid);
+                    .push(session.sidecar_pid);
             }
         }
         drop(sessions);
@@ -1494,10 +1568,10 @@ impl JdbcManager {
         })
     }
 
-    async fn invalidate_session(&self, session_key: &str) {
+    async fn invalidate_session(&self, session_key: &str, reason: &str) {
         let session = self.sessions.lock().await.remove(session_key);
         if let Some(session) = session {
-            session.shutdown().await;
+            session.shutdown(reason).await;
         }
     }
 
@@ -1559,7 +1633,7 @@ impl JdbcManager {
         let mut child = command.spawn().map_err(|error| {
             anyhow::anyhow!(
                 "JDBC runtime could not be started: {}",
-                sanitize_error(&error.to_string())
+                sanitize_error(error.to_string())
             )
         })?;
         child
@@ -1581,7 +1655,7 @@ impl JdbcManager {
         if !output.status.success() && output.stdout.is_empty() {
             return Err(anyhow::anyhow!(
                 "JDBC sidecar exited unexpectedly: {} (java={}, sidecar={})",
-                sanitize_error(&String::from_utf8_lossy(&output.stderr)),
+                sanitize_error(String::from_utf8_lossy(&output.stderr)),
                 java.display(),
                 sidecar.display()
             ));
@@ -1765,12 +1839,45 @@ impl JdbcSidecarSession {
             .await
             .map_err(|_| anyhow::anyhow!("JDBC operation timed out"))?;
         payload.zeroize();
-        result
+        let response = result?;
+        if !self.startup_logged.swap(true, Ordering::AcqRel) {
+            // A JVM that answers its first request is fully booted, so this is
+            // the only place the real cold start cost becomes observable.
+            crate::debug_log::info(
+                "jdbc",
+                format_args!(
+                    "JDBC sidecar ready (bundle={}, pid={}, startup_ms={})",
+                    self.bundle_id,
+                    self.sidecar_pid,
+                    self.started_at.elapsed().as_millis()
+                ),
+            );
+        }
+        Ok(response)
     }
 
-    async fn shutdown(&self) {
-        let mut process = self.process.lock().await;
-        let _ = process.child.kill().await;
+    async fn shutdown(&self, reason: &str) {
+        {
+            let mut process = self.process.lock().await;
+            if let Err(error) = process.child.kill().await {
+                // The JVM may already have exited on its own, which is harmless
+                // for a shutdown path but explains a missing process in logs.
+                crate::debug_log::warn(
+                    "jdbc",
+                    format_args!(
+                        "JDBC sidecar kill failed (bundle={}, pid={}, reason={}, error={})",
+                        self.bundle_id, self.sidecar_pid, reason, error
+                    ),
+                );
+            }
+        }
+        crate::debug_log::info(
+            "jdbc",
+            format_args!(
+                "JDBC sidecar stopped (bundle={}, pid={}, reason={})",
+                self.bundle_id, self.sidecar_pid, reason
+            ),
+        );
     }
 }
 
@@ -2022,6 +2129,55 @@ fn discover_host_pids(system: &System, sidecar_pids: &HashSet<u32>) -> HashSet<u
     host_pids
 }
 
+/// Verification hashes every driver jar, and the storage poll runs every few
+/// seconds. Remember the size and mtime fingerprint of the files that last
+/// passed so unchanged bundles skip the full SHA-256 pass, while any
+/// modification still forces a fresh verification.
+static BUNDLE_VERIFY_CACHE: StdMutex<Option<HashMap<PathBuf, u64>>> = StdMutex::new(None);
+
+fn with_bundle_verify_cache<T>(action: impl FnOnce(&mut HashMap<PathBuf, u64>) -> T) -> T {
+    let mut cache = BUNDLE_VERIFY_CACHE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    action(cache.get_or_insert_with(HashMap::new))
+}
+
+fn verify_bundle_cached(bundle_path: &Path, bundle: &JdbcDriverBundle) -> bool {
+    let Some(fingerprint) = bundle_fingerprint(bundle_path, &bundle.files) else {
+        return false;
+    };
+    if with_bundle_verify_cache(|cache| cache.get(bundle_path).copied()) == Some(fingerprint) {
+        return true;
+    }
+    // Hash without holding the lock: verification reads every jar.
+    if verify_bundle_files(bundle_path, bundle).is_err() {
+        with_bundle_verify_cache(|cache| cache.remove(bundle_path));
+        return false;
+    }
+    with_bundle_verify_cache(|cache| cache.insert(bundle_path.to_path_buf(), fingerprint));
+    true
+}
+
+fn bundle_fingerprint(bundle_path: &Path, files: &[JdbcDriverFile]) -> Option<u64> {
+    let mut hasher = Sha256::new();
+    for file in files {
+        let path = bundle_path.join("jars").join(&file.name);
+        let metadata = fs::symlink_metadata(&path).ok()?;
+        let modified = metadata
+            .modified()
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?;
+        hasher.update(file.name.as_bytes());
+        hasher.update(metadata.len().to_le_bytes());
+        hasher.update(modified.as_nanos().to_le_bytes());
+    }
+    let digest = hasher.finalize();
+    let mut fingerprint = [0_u8; 8];
+    fingerprint.copy_from_slice(&digest[..8]);
+    Some(u64::from_le_bytes(fingerprint))
+}
+
 fn verify_bundle_files(bundle_path: &Path, bundle: &JdbcDriverBundle) -> anyhow::Result<()> {
     if bundle.files.is_empty() {
         return Err(anyhow::anyhow!(
@@ -2142,20 +2298,4 @@ fn sanitize_runtime_text(value: &str) -> String {
         .filter(|value| !value.is_control())
         .take(160)
         .collect::<String>()
-}
-
-fn sanitize_error(value: &str) -> String {
-    let url_user_info = Regex::new(r"(?i)((?:[A-Za-z][A-Za-z0-9+.-]*:)+//)([^/@\s:]+):([^/@\s]+)@")
-        .expect("valid JDBC URL user-info sanitizer regex");
-    let value = url_user_info.replace_all(value, "$1$2:[REDACTED]@");
-    let secret = Regex::new(r"(?i)(password|passwd|pwd|token|secret)=([^&;\s]+)")
-        .expect("valid secret sanitizer regex");
-    secret
-        .replace_all(&value, "$1=[REDACTED]")
-        .chars()
-        .filter(|value| !matches!(value, '\r' | '\n' | '\t'))
-        .take(600)
-        .collect::<String>()
-        .trim()
-        .to_string()
 }

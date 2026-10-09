@@ -518,7 +518,12 @@ impl DatabaseManager {
                     ),
                 )
                 .await??;
-                Ok(result(rows, started.elapsed(), rewritten_sql))
+                Ok(result_logged(
+                    config,
+                    rows,
+                    started.elapsed(),
+                    rewritten_sql,
+                ))
             }
             ManagedPool::Mysql(pool) => {
                 let rows = timeout(
@@ -539,7 +544,12 @@ impl DatabaseManager {
                     ),
                 )
                 .await??;
-                Ok(result(rows, started.elapsed(), rewritten_sql))
+                Ok(result_logged(
+                    config,
+                    rows,
+                    started.elapsed(),
+                    rewritten_sql,
+                ))
             }
             ManagedPool::Postgres(pool) => {
                 let rows = timeout(
@@ -560,7 +570,12 @@ impl DatabaseManager {
                     ),
                 )
                 .await??;
-                Ok(result(rows, started.elapsed(), rewritten_sql))
+                Ok(result_logged(
+                    config,
+                    rows,
+                    started.elapsed(),
+                    rewritten_sql,
+                ))
             }
         }
     }
@@ -634,7 +649,7 @@ impl DatabaseManager {
     }
 }
 
-fn kind_label(kind: &DbKind) -> &'static str {
+pub(crate) fn kind_label(kind: &DbKind) -> &'static str {
     match kind {
         DbKind::Sqlite => "sqlite",
         DbKind::Mysql => "mysql",
@@ -1130,6 +1145,31 @@ fn result(collected: CollectedRows, elapsed: Duration, rewritten_sql: String) ->
         elapsed_ms: elapsed.as_millis().try_into().unwrap_or(u64::MAX),
         rewritten_sql,
     }
+}
+
+/// Builds the query result and records it. The statement text stays out of the
+/// log: only the shape and cost of the result are recorded.
+fn result_logged(
+    config: &ConnectionConfig,
+    collected: CollectedRows,
+    elapsed: Duration,
+    rewritten_sql: String,
+) -> QueryResult {
+    let result = result(collected, elapsed, rewritten_sql);
+    crate::debug_log::info(
+        "database",
+        format_args!(
+            "query completed (id={}, kind={}, elapsed_ms={}, rows={}, bytes={}, truncated={}, limit_reason={})",
+            config.id,
+            kind_label(&config.kind),
+            result.elapsed_ms,
+            result.row_count,
+            result.returned_bytes,
+            result.truncated,
+            result.truncation_reason.as_deref().unwrap_or("-"),
+        ),
+    );
+    result
 }
 
 fn sqlite_cell(row: &SqliteRow, index: usize) -> Value {

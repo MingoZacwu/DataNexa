@@ -5,7 +5,7 @@ import { AlertTriangle, Coffee, Database, Filter, Home, Logs, Plus, RefreshCw, S
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import brandLogoUrl from "../resources/datanexa.png";
-import { detectLocale, formatMessage, messages, normalizeLocale, persistLocale } from "./i18n";
+import { detectLocale, formatList, formatMessage, messages, normalizeLocale, persistLocale } from "./i18n";
 import type { Locale } from "./i18n";
 import { api, WRONG_PASSWORD_ERROR } from "./lib/tauri";
 import { useAppUpdater } from "./lib/updater";
@@ -282,6 +282,7 @@ function App() {
   }, [activeView]);
 
   const shownStartupError = useRef<string | null>(null);
+  const jdbcStorageRefreshRef = useRef(false);
   useEffect(() => {
     const error = snapshot?.startup_error;
     if (!error || shownStartupError.current === error) return;
@@ -649,10 +650,16 @@ function App() {
   }
 
   async function refreshJdbcStorageStatus() {
+    // A slow JDBC operation makes the backend slow to answer too. Skipping the
+    // overlapping polls keeps them from queueing up behind it.
+    if (jdbcStorageRefreshRef.current) return;
+    jdbcStorageRefreshRef.current = true;
     try {
       setJdbcStorageStatus(await api.jdbcStorageStatus());
     } catch (error) {
       showError(error);
+    } finally {
+      jdbcStorageRefreshRef.current = false;
     }
   }
 
@@ -661,7 +668,12 @@ function App() {
     try {
       await api.clearJdbcCache(selection);
       await refreshJdbcStorageStatus();
-      pushToast(t.toast.jdbcCacheCleared, "info");
+      const clearedItems = formatList(locale, [
+        selection.maven ? t.settings.clearMavenCacheOption : null,
+        selection.old_runtimes ? t.settings.clearOldRuntimeOption : null,
+        selection.debug_logs ? t.settings.clearDebugLogsOption : null
+      ].filter((label): label is string => label !== null));
+      pushToast(formatMessage(t.toast.cacheCleared, { items: clearedItems }), "info");
       return true;
     } catch (error) {
       showError(error);

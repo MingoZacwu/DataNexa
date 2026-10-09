@@ -129,6 +129,10 @@ impl ConfigStore {
     pub fn load(&self) -> anyhow::Result<AppConfig> {
         if !self.path.exists() {
             let config = AppConfig::default();
+            crate::debug_log::info(
+                "config",
+                format_args!("no configuration found, writing defaults"),
+            );
             self.save(&config)?;
             return Ok(config);
         }
@@ -343,6 +347,30 @@ fn default_true() -> bool {
     true
 }
 
+/// Applies a persisted numeric limit and records any correction, so "why did
+/// the value I entered change" is answerable from the debug log.
+pub(crate) fn clamp_with_log<T>(id: &str, field: &str, requested: T, min: T, max: T) -> T
+where
+    T: PartialOrd + PartialEq + Copy + std::fmt::Display,
+{
+    let applied = if requested < min {
+        min
+    } else if requested > max {
+        max
+    } else {
+        requested
+    };
+    if applied != requested {
+        crate::debug_log::warn(
+            "config",
+            format_args!(
+                "connection setting clamped (id={id}, field={field}, requested={requested}, applied={applied})"
+            ),
+        );
+    }
+    applied
+}
+
 fn normalize_connection(connection: &mut ConnectionConfig) -> anyhow::Result<()> {
     connection.id = connection.id.trim().to_string();
     connection.name = connection.name.trim().to_string();
@@ -377,12 +405,24 @@ fn normalize_connection(connection: &mut ConnectionConfig) -> anyhow::Result<()>
         .take()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    connection.max_rows = connection.max_rows.clamp(1, 5000);
-    connection.query_timeout_ms = connection.query_timeout_ms.clamp(500, 60_000);
-    connection.max_connections = connection.max_connections.clamp(1, 3);
-    connection.max_result_bytes = connection
-        .max_result_bytes
-        .clamp(MIN_RESULT_BYTES, MAX_RESULT_BYTES);
+    connection.max_rows =
+        clamp_with_log(&connection.id, "max_rows", connection.max_rows, 1, 5000);
+    connection.query_timeout_ms = clamp_with_log(
+        &connection.id,
+        "query_timeout_ms",
+        connection.query_timeout_ms,
+        500,
+        60_000,
+    );
+    connection.max_connections =
+        clamp_with_log(&connection.id, "max_connections", connection.max_connections, 1, 3);
+    connection.max_result_bytes = clamp_with_log(
+        &connection.id,
+        "max_result_bytes",
+        connection.max_result_bytes,
+        MIN_RESULT_BYTES,
+        MAX_RESULT_BYTES,
+    );
 
     if connection.id.is_empty()
         || !connection.id.chars().enumerate().all(|(index, value)| {

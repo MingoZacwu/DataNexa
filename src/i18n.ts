@@ -115,7 +115,7 @@ const zhCN = {
     jdbcDriverInstalled: "JDBC 驱动已安装。",
     jdbcDriverDeleted: "JDBC 驱动已删除。",
     mavenCacheCleared: "Maven 缓存已清除。",
-    jdbcCacheCleared: "JDBC 缓存和旧版 Java 运行时已清除。",
+    cacheCleared: "已清理 {items}。",
     jdbcRuntimeInstalled: "DataNexa Java 运行时已安装。",
     jdbcRuntimeRemoved: "DataNexa Java 运行时已卸载。",
     jdbcRuntimeUpdateAvailable: "发现 DataNexa Java 运行时新版本 {version}。",
@@ -680,7 +680,7 @@ const en: I18nMessages = {
     jdbcDriverInstalled: "JDBC driver installed.",
     jdbcDriverDeleted: "JDBC driver deleted.",
     mavenCacheCleared: "Maven cache cleared.",
-    jdbcCacheCleared: "JDBC cache and old Runtime versions cleared.",
+    cacheCleared: "Cleared: {items}.",
     jdbcRuntimeInstalled: "DataNexa Runtime installed.",
     jdbcRuntimeRemoved: "DataNexa Runtime removed.",
     jdbcRuntimeUpdateAvailable: "A new DataNexa Runtime version is available: {version}.",
@@ -1168,4 +1168,10 @@ export function persistLocale(locale: Locale) {
 
 export function formatMessage(template: string, values: Record<string, string | number> = {}) {
   return template.replace(/\{(\w+)\}/g, (match, key) => String(values[key] ?? match));
+}
+
+export function formatList(locale: Locale, items: string[]) {
+  if (items.length <= 1) return items[0] ?? "";
+  if (locale === "zh-CN") return items.join("、");
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }

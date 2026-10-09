@@ -114,11 +114,19 @@ impl AccessControlStore {
                 sqlx::query("INSERT INTO access_tokens (id,name,secret,enabled,created_at_ms,updated_at_ms) VALUES (?,?,?,?,?,?)")
                     .bind(LEGACY_TOKEN_ID).bind(name).bind(secret).bind(true).bind(now).bind(now)
                     .execute(&self.pool).await?;
+                crate::debug_log::info(
+                    "access",
+                    format_args!("legacy server token migrated into the access token store"),
+                );
             }
             let mut migrated_config = config.clone();
             migrated_config.server.token = None;
-            if store.save(&migrated_config).is_ok() {
-                *config = migrated_config;
+            match store.save(&migrated_config) {
+                Ok(()) => *config = migrated_config,
+                Err(error) => crate::debug_log::warn(
+                    "access",
+                    format_args!("legacy server token could not be cleared from config: {error}"),
+                ),
             }
         }
         Ok(())
@@ -171,9 +179,14 @@ impl AccessControlStore {
         let secret = Uuid::new_v4().to_string();
         let now = Utc::now().timestamp_millis();
         sqlx::query("INSERT INTO access_tokens (id,name,secret,enabled,created_at_ms,updated_at_ms) VALUES (?,?,?,?,?,?)")
-            .bind(&id).bind(name).bind(&secret).bind(true).bind(now).bind(now)
+            .bind(&id).bind(&name).bind(&secret).bind(true).bind(now).bind(now)
             .execute(&self.pool).await?;
         let token = self.get_active_info(&id).await?;
+        // The secret is handed back to the caller and never logged.
+        crate::debug_log::info(
+            "access",
+            format_args!("access token created (id={id}, name={name})"),
+        );
         Ok((token, secret))
     }
 
@@ -188,13 +201,20 @@ impl AccessControlStore {
         .execute(&self.pool)
         .await?
         .rows_affected();
-        ensure_changed(changed)
+        ensure_changed(changed)?;
+        crate::debug_log::info("access", format_args!("access token renamed (id={id})"));
+        Ok(())
     }
 
     pub async fn set_enabled(&self, id: &str, enabled: bool) -> anyhow::Result<()> {
         let changed = sqlx::query("UPDATE access_tokens SET enabled=?,updated_at_ms=? WHERE id=? AND deleted_at_ms IS NULL")
             .bind(enabled).bind(Utc::now().timestamp_millis()).bind(id).execute(&self.pool).await?.rows_affected();
-        ensure_changed(changed)
+        ensure_changed(changed)?;
+        crate::debug_log::info(
+            "access",
+            format_args!("access token enabled state changed (id={id}, enabled={enabled})"),
+        );
+        Ok(())
     }
 
     /// Disables the token only when it is currently enabled. Returns true when
@@ -211,6 +231,11 @@ impl AccessControlStore {
         let changed = sqlx::query("UPDATE access_tokens SET secret=?,updated_at_ms=? WHERE id=? AND deleted_at_ms IS NULL")
             .bind(&secret).bind(Utc::now().timestamp_millis()).bind(id).execute(&self.pool).await?.rows_affected();
         ensure_changed(changed)?;
+        // The rotated secret is handed back to the caller and never logged.
+        crate::debug_log::info(
+            "access",
+            format_args!("access token secret rotated (id={id})"),
+        );
         Ok(secret)
     }
 
@@ -228,6 +253,7 @@ impl AccessControlStore {
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
+        crate::debug_log::info("access", format_args!("access token deleted (id={id})"));
         Ok(())
     }
 
@@ -260,7 +286,14 @@ impl AccessControlStore {
         } else {
             sqlx::query("INSERT OR IGNORE INTO token_denied_connections (token_id,connection_id) VALUES (?,?)").bind(id).bind(connection_id).execute(&self.pool).await?;
         }
-        self.touch(id).await
+        self.touch(id).await?;
+        crate::debug_log::info(
+            "access",
+            format_args!(
+                "access token connection permission changed (id={id}, connection_id={connection_id}, allowed={allowed})"
+            ),
+        );
+        Ok(())
     }
 
     pub async fn set_tool_allowed(
@@ -288,7 +321,14 @@ impl AccessControlStore {
             .execute(&self.pool)
             .await?;
         }
-        self.touch(id).await
+        self.touch(id).await?;
+        crate::debug_log::info(
+            "access",
+            format_args!(
+                "access token tool permission changed (id={id}, tool={tool}, allowed={allowed})"
+            ),
+        );
+        Ok(())
     }
 
     pub async fn authenticate(&self, secret: &str) -> anyhow::Result<Option<AccessIdentity>> {
