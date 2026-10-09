@@ -13,7 +13,7 @@ import type { AppSnapshot, AuditEvent, ConnectionConfig, DatabaseType, ImportJdb
 import { detectThemeMode, persistThemeMode, resolveTheme, systemTheme } from "./app/theme";
 import type { AuditFilters, EffectiveTheme, SettingsTab, ThemeMode, ToastMessage, ToastTone, View } from "./app/types";
 import { buildAgentPrompt, compactConnectionError, formatConnectionTest, formatDiagnostics, toolDisplayName, updateScrollFade, useScrollFade, viewTitle } from "./app/utils";
-import { AuditMigrationDialog, AuditMigrationReminder, NavButton, SidebarFooter, SidebarUpdateReminder, WindowControls, WindowDragRegion } from "./components/chrome";
+import { AuditMigrationDialog, AuditMigrationReminder, LanguageSwitcher, NavButton, SidebarFooter, SidebarUpdateReminder, WindowControls, WindowDragRegion } from "./components/chrome";
 import { IconTooltip, ToastViewport } from "./components/ui";
 import { OverviewView } from "./features/overview/OverviewView";
 import { ConnectionDialog, ConnectionsView } from "./features/connections/ConnectionsView";
@@ -271,6 +271,8 @@ function App() {
 
   useEffect(() => {
     const configuredLanguage = snapshot?.config.settings.language;
+    // An empty setting means the user has never chosen a language, so the
+    // system-detected locale stays in effect.
     if (!configuredLanguage) return;
     const nextLocale = normalizeLocale(configuredLanguage);
     setLocale((current) => (current === nextLocale ? current : nextLocale));
@@ -801,6 +803,25 @@ function App() {
     }
   }
 
+  async function changeLocale(next: Locale) {
+    if (next === locale) return;
+    // Switch the interface immediately, then persist; a failed save keeps the
+    // local choice so the user is never stuck in an unreadable language.
+    setLocale(next);
+    persistLocale(next);
+    const settings = snapshot?.config.settings;
+    if (!settings) return;
+    setBusy(true);
+    try {
+      const nextSnapshot = await api.saveSettingsConfig({ ...settings, language: next }, false);
+      setSnapshot(nextSnapshot);
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveSettings(settings: SettingsConfig, applyAutoStart = false) {
     setBusy(true);
     try {
@@ -811,8 +832,6 @@ function App() {
       setSnapshot(nextSnapshot);
       if (applyAutoStart && settings.auto_start_mcp && nextSnapshot.auto_start_status === "requires_approval") {
         pushToast(messages[nextLocale].toast.autoStartRequiresApproval, "error");
-      } else {
-        pushToast(messages[nextLocale].toast.settingsSaved, "info");
       }
     } catch (error) {
       showError(error);
@@ -1034,6 +1053,11 @@ function App() {
                         </IconTooltip>
                       </span>
                     )}
+                  </div>
+                )}
+                {snapshot && activeView === "overview" && (
+                  <div className="top-icon-actions">
+                    <LanguageSwitcher t={t} locale={locale} disabled={busy} onChange={(next) => void changeLocale(next)} />
                   </div>
                 )}
                 <div className={clsx("top-icon-actions", activeView === "connections" && emergencyDisconnect && "emergency-active")}>

@@ -106,7 +106,9 @@ impl AccessControlStore {
                     > 0;
             if !migrated {
                 let now = Utc::now().timestamp_millis();
-                let name = if config.settings.language == "zh-CN" {
+                let name = if crate::i18n::Locale::from_language(&config.settings.language)
+                    == crate::i18n::Locale::ZhCn
+                {
                     "默认令牌"
                 } else {
                     "Default Token"

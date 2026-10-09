@@ -1,8 +1,10 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import clsx from "clsx";
-import { AlertTriangle, Download, Minus, Monitor, Moon, Play, RefreshCw, Square, Sun, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, Download, Languages, Minus, Monitor, Moon, Play, RefreshCw, Square, Sun, Trash2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
-import { formatMessage, type I18nMessages } from "../i18n";
+import { formatMessage, languageOptions, type I18nMessages, type Locale } from "../i18n";
 import { api } from "../lib/tauri";
 import type { AuditMigrationState } from "../types";
 import type { EffectiveTheme, ThemeMode } from "../app/types";
@@ -175,6 +177,98 @@ export function NavButton({ icon, label, active, onClick }: { icon: ReactNode; l
       {icon}
       <span>{label}</span>
     </button>
+  );
+}
+
+/**
+ * Language entry point. Every label is written in its own language and the
+ * tooltip is bilingual, so a user who cannot read the current interface can
+ * still find the switch.
+ */
+export function LanguageSwitcher({ t, locale, disabled, onChange }: { t: I18nMessages; locale: Locale; disabled?: boolean; onChange: (locale: Locale) => void }) {
+  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState<{ top: number; right: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handlePointerDown(event: MouseEvent) {
+      const target = event.target as Node;
+      if (menuRef.current?.contains(target) || buttonRef.current?.contains(target)) return;
+      setOpen(false);
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    // The anchor is a fixed viewport position, so close on any layout change
+    // that could invalidate it.
+    function handleLayoutChange() {
+      setOpen(false);
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", handleLayoutChange);
+    window.addEventListener("scroll", handleLayoutChange, true);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", handleLayoutChange);
+      window.removeEventListener("scroll", handleLayoutChange, true);
+    };
+  }, [open]);
+
+  // The menu is portalled so the workspace scroll container cannot clip it.
+  function openMenu() {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (rect) setAnchor({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
+    setOpen(true);
+  }
+
+  return (
+    <div className="language-switcher">
+      <IconTooltip label={t.settings.languageSwitch}>
+        <button
+          ref={buttonRef}
+          type="button"
+          className={clsx("icon-button", open && "active-filter")}
+          onClick={() => (open ? setOpen(false) : openMenu())}
+          disabled={disabled}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-label={t.settings.languageSwitch}
+        >
+          <Languages size={17} />
+        </button>
+      </IconTooltip>
+      {open && anchor && createPortal(
+        <div
+          className="language-menu"
+          ref={menuRef}
+          role="menu"
+          aria-label={t.settings.languageSwitch}
+          style={{ top: anchor.top, right: anchor.right }}
+        >
+          {languageOptions.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              role="menuitemradio"
+              aria-checked={locale === option.value}
+              className={clsx("language-menu-item", locale === option.value && "active")}
+              onClick={() => {
+                setOpen(false);
+                if (locale !== option.value) onChange(option.value);
+              }}
+            >
+              <span className="language-menu-check">{locale === option.value && <Check size={14} />}</span>
+              <span lang={option.value}>{option.nativeLabel}</span>
+            </button>
+          ))}
+        </div>,
+        document.body
+      )}
+    </div>
   );
 }
 

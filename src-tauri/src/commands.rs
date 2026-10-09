@@ -1859,8 +1859,10 @@ fn normalize_settings(mut settings: SettingsConfig) -> SettingsConfig {
     settings.audit_retention_days =
         crate::audit::normalize_retention_days(settings.audit_retention_days);
     settings.language = settings.language.trim().to_string();
-    if settings.language.is_empty() {
-        settings.language = "zh-CN".to_string();
+    // Keep the setting empty when it is not an explicit choice so the frontend
+    // can fall back to the system locale.
+    if settings.language != "zh-CN" && settings.language != "en" {
+        settings.language.clear();
     }
     settings.jdbc_java_home = settings
         .jdbc_java_home

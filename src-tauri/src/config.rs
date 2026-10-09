@@ -270,7 +270,9 @@ fn default_audit_retention_days() -> u32 {
 }
 
 fn default_language() -> String {
-    "zh-CN".to_string()
+    // Empty means "follow the system locale". The frontend resolves it on
+    // startup and persists an explicit choice once the user picks one.
+    String::new()
 }
 
 fn default_circuit_breaker_window_minutes() -> u32 {
@@ -282,9 +284,11 @@ fn default_circuit_breaker_threshold() -> u32 {
 }
 
 fn normalize_settings(settings: &mut SettingsConfig) {
+    // Only an explicit choice is persisted; anything else means "follow the
+    // system", which the frontend resolves from the OS locale.
     settings.language = settings.language.trim().to_string();
-    if settings.language.is_empty() {
-        settings.language = default_language();
+    if settings.language != "zh-CN" && settings.language != "en" {
+        settings.language.clear();
     }
     settings.jdbc_java_home = settings
         .jdbc_java_home

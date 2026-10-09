@@ -6,11 +6,13 @@ pub enum Locale {
 
 impl Locale {
     pub fn from_language(language: &str) -> Self {
-        let normalized = language.trim().to_ascii_lowercase();
-        if normalized == "en" || normalized.starts_with("en-") {
-            return Self::En;
+        // Mirror the frontend rule: only Chinese maps to Chinese, every other
+        // language (including an unset value) falls back to English.
+        let normalized = language.trim().to_ascii_lowercase().replace('_', "-");
+        if normalized == "zh" || normalized.starts_with("zh-") {
+            return Self::ZhCn;
         }
-        Self::ZhCn
+        Self::En
     }
 }
 

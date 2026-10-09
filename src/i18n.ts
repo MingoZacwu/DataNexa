@@ -383,6 +383,7 @@ const zhCN = {
     display: "显示",
     startup: "启动与后台",
     language: "界面语言",
+    languageSwitch: "语言 / Language",
     interfaceEffects: "界面动效",
     mcpActivityEffects: "MCP 被调用时显示“能量脉冲”光效",
     theme: "主题",
@@ -948,6 +949,7 @@ const en: I18nMessages = {
     display: "Display",
     startup: "Startup & background",
     language: "Interface language",
+    languageSwitch: "Language / 语言",
     interfaceEffects: "Interface effects",
     mcpActivityEffects: "Show Energy Pulse effect on MCP calls",
     theme: "Theme",
@@ -1153,11 +1155,14 @@ export function detectLocale(): Locale {
 
   if (typeof navigator !== "undefined") {
     const candidates = [navigator.language, ...(navigator.languages ?? [])];
-    const matched = candidates.find((candidate) => candidate.toLowerCase().startsWith("en") || candidate.toLowerCase().startsWith("zh"));
+    // Chinese systems get Chinese; every other system falls back to English so
+    // non-native speakers never land on an interface they cannot read.
+    const matched = candidates.find((candidate) => candidate.toLowerCase().startsWith("zh"));
     if (matched) return normalizeLocale(matched);
+    if (candidates.some((candidate) => candidate.toLowerCase().startsWith("en"))) return "en";
   }
 
-  return DEFAULT_LOCALE;
+  return "en";
 }
 
 export function persistLocale(locale: Locale) {

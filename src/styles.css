@@ -472,6 +472,57 @@ p {
   height: var(--control-height);
 }
 
+.language-switcher {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Portalled to <body> so the scrollable workspace cannot clip it. */
+.language-menu {
+  position: fixed;
+  z-index: 1200;
+  min-width: 168px;
+  display: grid;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  box-shadow: var(--soft-shadow);
+  backdrop-filter: blur(22px);
+}
+
+.language-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  min-height: 32px;
+  border: 0;
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  font-weight: 600;
+}
+
+.language-menu-item:hover {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 8%, transparent);
+}
+
+.language-menu-item.active {
+  color: var(--blue);
+}
+
+.language-menu-check {
+  width: 14px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
 .top-filter-actions {
   position: relative;
   isolation: isolate;
