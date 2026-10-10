@@ -2509,11 +2509,11 @@ p {
 
 .toast.error {
   color: var(--red);
-  background: rgba(255, 246, 247, 0.78);
+  background: rgba(255, 246, 247, 0.86);
 }
 
 :root.dark .toast.error {
-  background: rgba(69, 26, 35, 0.78);
+  background: rgba(69, 26, 35, 0.86);
 }
 
 .toast span {
