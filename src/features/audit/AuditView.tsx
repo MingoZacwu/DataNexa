@@ -2,7 +2,6 @@ import * as Dialog from "@radix-ui/react-dialog";
 import clsx from "clsx";
 import { CalendarDays, ChevronLeft, ChevronRight, Clipboard, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { formatMessage, type I18nMessages } from "../../i18n";
 import type { AccessTokenInfo, AuditEvent, ConnectionConfig, McpToolInfo } from "../../types";
 import type { AuditFilters } from "../../app/types";
