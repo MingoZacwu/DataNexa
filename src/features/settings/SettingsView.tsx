@@ -571,7 +571,14 @@ export function SettingsView({
               <div className="security-hero-core">
                 <span className="security-hero-emblem">{blockedLast24Hours > 0 ? <ShieldAlert size={22} /> : <ShieldCheck size={22} />}</span>
                 <div>
-                  <span>{t.settings.securityBlockedLabel}</span>
+                  <span className="security-hero-label">
+                    {t.settings.securityBlockedLabel}
+                    <IconTooltip label={t.settings.securityBlockedDetailHint}>
+                      <button type="button" className="switch-info" aria-label={t.settings.securityBlockedDetailHint}>
+                        <Info size={13} />
+                      </button>
+                    </IconTooltip>
+                  </span>
                   <strong>
                     {blockedLast24Hours}
                     <small> {t.settings.securityBlockedUnit}</small>

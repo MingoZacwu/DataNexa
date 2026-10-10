@@ -161,7 +161,9 @@ const zhCN = {
     delete: "删除连接",
     enabled: "启用",
     paused: "暂停",
-    noDatabaseFile: "未选择数据库文件"
+    noDatabaseFile: "未选择数据库文件",
+    copyName: "点击复制",
+    nameCopied: "连接名已复制。"
   },
   tools: {
     summary: "{enabled} / {total} 个工具已启用",
@@ -421,8 +423,9 @@ const zhCN = {
     denied: "已拒绝",
     security: "安全",
     securityWarning: "DataNexa 数据安全防护仅作为风险缓解措施，不能完全保证所有风险操作都被拦截，仍需约束 Agent，避免要求或允许其执行危险行为。",
-    securityBlockedLabel: "过去 24 小时拦截",
+    securityBlockedLabel: "过去 24 小时拦截可疑数据库操作",
     securityBlockedUnit: "次",
+    securityBlockedDetailHint: "被只读策略、令牌权限或自动熔断拒绝的数据库操作调用均计入此数，可在审计日志中逐条查看。",
     securityBlockedTruncatedHint: "审计日志展示数量已达上限，实际拦截次数可能更多",
     securityViewAudit: "查看审计日志",
     securityDefenseActive: "全链路数据安全防护已启用",
@@ -727,7 +730,9 @@ const en: I18nMessages = {
     delete: "Delete connection",
     enabled: "Enabled",
     paused: "Paused",
-    noDatabaseFile: "No database file selected"
+    noDatabaseFile: "No database file selected",
+    copyName: "Click to copy",
+    nameCopied: "Connection name copied."
   },
   tools: {
     summary: "{enabled} / {total} tools enabled",
@@ -987,8 +992,9 @@ const en: I18nMessages = {
     denied: "Denied",
     security: "Security",
     securityWarning: "DataNexa data protection serves only as a risk mitigation measure and cannot guarantee every risky operation is blocked. Constrain agents and avoid asking or allowing them to perform dangerous actions.",
-    securityBlockedLabel: "Blocked in last 24h",
-    securityBlockedUnit: "times",
+    securityBlockedLabel: "Suspicious database operations blocked in last 24h",
+    securityBlockedUnit: "time(s)",
+    securityBlockedDetailHint: "Every database operation denied by the read-only policy, token permissions, or the auto circuit breaker counts here. Open the audit log for details.",
     securityBlockedTruncatedHint: "Audit log display reached its cap; the actual blocked count may be higher",
     securityViewAudit: "View audit log",
     securityDefenseActive: "Full-chain data protection enabled",

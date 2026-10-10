@@ -1256,6 +1256,11 @@ textarea:focus-visible,
   font-weight: 700;
 }
 
+.connection-info .connection-name-copy {
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .connection-info p {
   font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
   font-size: 10px;
@@ -1899,6 +1904,17 @@ textarea:focus-visible,
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
+}
+
+/* The label sits in a grid cell, so it carries its own inline layout to keep
+   the info icon on the same line as the text at narrow widths. justify-self
+   keeps the box hugging its content instead of stretching the icon away. */
+.security-hero-label {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 5px;
+  min-width: 0;
 }
 
 .security-hero-core strong {
@@ -2577,15 +2593,15 @@ textarea:focus {
   background-image: linear-gradient(color-mix(in srgb, var(--red) 12%, transparent), color-mix(in srgb, var(--red) 12%, transparent));
 }
 
-/* Tooltips keep their dark fill so 12px text stays readable, but pick up the
-   same frosted glass as the other popovers. */
+/* Tooltips stay opaque rather than frosted: the arrow is an SVG fill, which
+   cannot run backdrop-filter, so a translucent panel would always disagree
+   with its own arrow. A solid colour keeps the two identical and protects the
+   12px label. */
 .tooltip {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
-  background: rgba(11, 17, 27, 0.72);
+  background: #1e2634;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 10px 28px rgba(0, 0, 0, 0.22);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
 }
 
 @keyframes overlay-in { from { opacity: 0; } to { opacity: 1; } }

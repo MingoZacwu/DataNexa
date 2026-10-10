@@ -418,6 +418,15 @@ function App() {
     }
   }
 
+  async function copyConnectionName(name: string) {
+    try {
+      await navigator.clipboard.writeText(name);
+      pushToast(t.connections.nameCopied, "info");
+    } catch (error) {
+      showError(error);
+    }
+  }
+
   async function deleteConnection(id: string) {
     setBusy(true);
     try {
@@ -1132,6 +1141,7 @@ function App() {
                     onDiagnose={diagnoseConnection}
                     onToggleEnabled={setConnectionEnabled}
                     migrationReady={migrationReady}
+                    onCopyName={(name) => void copyConnectionName(name)}
                   />
                 )}
                 {activeView === "access" && <AccessControlView t={t} tokens={snapshot.access_tokens} connections={connections} tools={snapshot.tools} requireToken={requireToken} busy={busy} selectedId={selectedTokenId} onSelectedIdChange={setSelectedTokenId} createRequest={createTokenRequest} onCreateRequestHandled={() => setCreateTokenRequest(0)} onEnableAuthentication={() => void saveServer({ ...snapshot.config.server, require_token: true })} onCreate={createAccessToken} onRename={renameAccessToken} onToggle={(id, enabled) => void updateAccess(() => api.setAccessTokenEnabled(id, enabled), enabled ? t.access.tokenEnabled : t.access.tokenDisabled)} onRotate={rotateAccessToken} onDelete={deleteAccessToken} onCopyPrompt={(id) => void copyPromptForToken(id)} onConnectionAllowed={(tokenId, connectionId, allowed) => void updateAccess(() => api.setTokenConnectionAllowed(tokenId, connectionId, allowed), t.access.permissionUpdated)} onToolAllowed={(tokenId, toolName, allowed) => void updateAccess(() => api.setTokenToolAllowed(tokenId, toolName, allowed), t.access.permissionUpdated)} />}
