@@ -1,3 +1,26 @@
+/*
+ * Geist ships Latin-only subsets, so CJK text never reaches it: the
+ * unicode-range below excludes those code points and lets the platform UI
+ * font (PingFang SC on macOS, Microsoft YaHei on Windows) handle them.
+ */
+@font-face {
+  font-family: "Geist Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("/fonts/geist-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Geist Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("/fonts/geist-latin-ext-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
 :root {
   --bg: #edf1f6;
   --surface: rgba(255, 255, 255, 0.66);
@@ -56,9 +79,11 @@ body {
   background-image:
     linear-gradient(132deg, rgba(36, 107, 254, 0.055), transparent 34%),
     linear-gradient(310deg, rgba(0, 169, 194, 0.045), transparent 42%);
-  font-family: "Segoe UI Variable", "Microsoft YaHei UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans CJK SC", sans-serif;
-  font-size: 13px;
+  font-family: "Geist Variable", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
   font-weight: 400;
+  text-rendering: geometricPrecision;
+  font-synthesis: none;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -227,7 +252,7 @@ textarea:focus-visible,
 
 .brand strong {
   color: var(--ink);
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 700;
 }
 
@@ -237,7 +262,7 @@ textarea:focus-visible,
 
 .brand span {
   color: var(--muted);
-  font-family: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
   font-size: 8px;
   line-height: 1;
   margin-left: 1px;
@@ -255,7 +280,7 @@ textarea:focus-visible,
   overflow: hidden;
   border-radius: 7px;
   color: #526177;
-  font-weight: 600;
+  font-weight: 700;
   transition: color 180ms ease, background 180ms ease, border-color 180ms ease, transform 180ms ease;
 }
 
@@ -313,8 +338,8 @@ textarea:focus-visible,
 }
 
 .sidebar-status-line {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .status-orb {
@@ -373,7 +398,7 @@ textarea:focus-visible,
 }
 
 .topbar h1 {
-  font-size: 21px;
+  font-size: 22px;
   font-weight: 700;
 }
 
@@ -540,7 +565,7 @@ textarea:focus-visible,
 .panel-header h2,
 .panel h2 {
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .quick-panel > h2 {
@@ -580,7 +605,7 @@ textarea:focus-visible,
   padding: 0 13px;
   border-radius: 7px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .button.primary {
@@ -806,11 +831,11 @@ textarea:focus-visible,
 .status-command-core span:not(.status-beacon) {
   color: var(--muted);
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .status-command-core strong {
-  font-size: 19px;
+  font-size: 20px;
   font-weight: 700;
 }
 
@@ -905,8 +930,8 @@ textarea:focus-visible,
   color: var(--muted);
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .command-metrics strong {
@@ -946,7 +971,7 @@ textarea:focus-visible,
 
 .command-metrics small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .command-button {
@@ -1105,11 +1130,11 @@ textarea:focus-visible,
 }
 
 .quick-step-body strong {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .quick-step-body span {
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .connections-workbench {
@@ -1141,8 +1166,8 @@ textarea:focus-visible,
   padding: 0 14px;
   border-bottom: 1px solid var(--line);
   color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .data-list-header span:last-child {
@@ -1228,11 +1253,11 @@ textarea:focus-visible,
 
 .connection-info strong {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .connection-info p {
-  font-family: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
   font-size: 10px;
 }
 
@@ -1301,7 +1326,7 @@ textarea:focus-visible,
   margin-bottom: 5px;
   color: var(--muted);
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .inspector-grid dd {
@@ -1310,7 +1335,7 @@ textarea:focus-visible,
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .inspector-actions {
@@ -1427,7 +1452,7 @@ textarea:focus-visible,
 
 .server-console-section .panel-header h2 {
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .server-console-section .console-value {
@@ -1534,12 +1559,12 @@ textarea:focus-visible,
   padding: 0 14px;
   border-bottom: 1px solid var(--line);
   color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .tool-group > header small {
-  font-family: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
 }
 
 .tool-card {
@@ -1588,7 +1613,7 @@ textarea:focus-visible,
 }
 
 .tool-title-row code {
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .tool-body p {
@@ -1645,7 +1670,7 @@ textarea:focus-visible,
 .audit-row {
   min-height: 43px;
   border-top-color: var(--line);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .audit-row.header {
@@ -1653,7 +1678,7 @@ textarea:focus-visible,
   color: var(--muted);
   background: color-mix(in srgb, var(--surface-strong) 78%, transparent);
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .audit-button:hover {
@@ -1671,7 +1696,7 @@ textarea:focus-visible,
   padding: 0 7px;
   border: 1px solid transparent;
   border-radius: 5px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -1692,7 +1717,9 @@ textarea:focus-visible,
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-columns: 168px minmax(0, 1fr);
+  /* Wide enough for the longest tab ("JDBC Support" plus its Beta badge) at the
+     current font size and weight, in both locales. */
+  grid-template-columns: 180px minmax(0, 1fr);
   align-items: stretch;
   gap: 14px;
 }
@@ -1717,7 +1744,7 @@ textarea:focus-visible,
   padding: 0 10px;
   border-radius: 6px;
   text-align: left;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .settings-tabs button.active {
@@ -1870,15 +1897,15 @@ textarea:focus-visible,
 
 .security-hero-core > div > span {
   color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .security-hero-core strong {
   display: inline-flex;
   align-items: baseline;
   gap: 2px;
-  font-size: 19px;
+  font-size: 20px;
   font-weight: 700;
 }
 
@@ -1888,7 +1915,7 @@ textarea:focus-visible,
 
 .security-hero-core small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .security-hero-emblem {
@@ -1981,7 +2008,7 @@ textarea:focus-visible,
   top: 9px;
   right: 11px;
   color: var(--muted);
-  font-family: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -1996,7 +2023,7 @@ textarea:focus-visible,
 
 .defense-list li strong {
   padding-right: 24px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -2115,7 +2142,7 @@ textarea:focus-visible,
 .transfer-action-copy strong {
   display: block;
   margin-bottom: 3px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -2215,7 +2242,7 @@ textarea:focus-visible,
   margin: 0;
   padding-left: 18px;
   color: var(--ink);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.5;
 }
 
@@ -2225,7 +2252,7 @@ textarea:focus-visible,
   gap: 9px;
   margin-top: 14px;
   color: var(--ink);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.45;
   cursor: pointer;
 }
@@ -2307,8 +2334,8 @@ textarea:focus-visible,
 :root.dark .field > span,
 :root.dark .switch-row > span {
   color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 input,
@@ -2352,7 +2379,7 @@ textarea:focus {
 .theme-mode-control button,
 :root.dark .theme-mode-control button {
   color: var(--muted);
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .theme-mode-control button.active,
@@ -2373,8 +2400,8 @@ textarea:focus {
   border-top: 1px solid var(--line);
   border-radius: 0;
   background: transparent;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .security-list li:nth-child(-n + 2) {
@@ -2417,7 +2444,7 @@ textarea:focus {
 }
 
 .about-hero h2 {
-  font-size: 25px;
+  font-size: 26px;
 }
 
 .dialog-overlay {
@@ -2578,7 +2605,7 @@ textarea:focus {
   .agent-copy-panel h2 { grid-column: 1; grid-row: 1; }
   .agent-copy-panel p { grid-column: 1; grid-row: 2; }
   .agent-copy-panel .button { grid-column: 2; grid-row: 1 / 3; }
-  .settings-page { grid-template-columns: 140px minmax(0, 1fr); }
+  .settings-page { grid-template-columns: 168px minmax(0, 1fr); }
 }
 
 /* Access control follows the database connection workbench geometry. */
@@ -2687,7 +2714,7 @@ textarea:focus {
   border-left: 2px solid transparent;
   color: var(--muted);
   background: transparent;
-  font-weight: 650;
+  font-weight: 700;
   text-align: left;
 }
 
