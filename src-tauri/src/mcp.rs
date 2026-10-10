@@ -795,36 +795,43 @@ fn tools(tool_configs: &[ToolConfig]) -> Vec<Value> {
                 "properties": {},
                 "additionalProperties": false
             }),
+            connections_output_schema(),
         ),
         tool(
             "datanexa_get_schema",
             tool_description("datanexa_get_schema"),
             connection_schema(),
+            schema_output_schema(),
         ),
         tool(
             "datanexa_describe_table",
             tool_description("datanexa_describe_table"),
             table_schema(),
+            columns_output_schema(),
         ),
         tool(
             "datanexa_sample_rows",
             tool_description("datanexa_sample_rows"),
             sample_schema(),
+            sample_rows_output_schema(),
         ),
         tool(
             "datanexa_execute_readonly_sql",
             tool_description("datanexa_execute_readonly_sql"),
             sql_schema(),
+            query_output_schema(),
         ),
         tool(
             "datanexa_explain_sql",
             tool_description("datanexa_explain_sql"),
             sql_schema(),
+            explain_output_schema(),
         ),
         tool(
             "datanexa_policy_check",
             tool_description("datanexa_policy_check"),
             policy_check_schema(),
+            policy_check_output_schema(),
         ),
     ];
 
@@ -867,11 +874,12 @@ fn tool_description(name: &str) -> &'static str {
     }
 }
 
-fn tool(name: &str, description: &str, input_schema: Value) -> Value {
+fn tool(name: &str, description: &str, input_schema: Value, output_schema: Value) -> Value {
     json!({
         "name": name,
         "description": description,
-        "inputSchema": input_schema
+        "inputSchema": input_schema,
+        "outputSchema": output_schema
     })
 }
 
@@ -942,6 +950,211 @@ fn policy_check_schema() -> Value {
                 "minimum": 1,
                 "maximum": 5000
             }
+        }
+    })
+}
+
+fn connections_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": ["connections"],
+        "properties": {
+            "connections": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["id", "name", "type", "enabled"],
+                    "properties": {
+                        "id": { "type": "string" },
+                        "name": { "type": "string" },
+                        "type": { "type": "string" },
+                        "enabled": { "type": "boolean" },
+                        "max_rows": { "type": "integer" },
+                        "query_timeout_ms": { "type": "integer" },
+                        "max_result_bytes": { "type": "integer" },
+                        "capabilities": {
+                            "type": "object",
+                            "required": ["profile", "supported_tools", "unsupported_tools"],
+                            "properties": {
+                                "profile": { "type": "string" },
+                                "supported_tools": {
+                                    "type": "array",
+                                    "items": { "type": "string" }
+                                },
+                                "unsupported_tools": {
+                                    "type": "array",
+                                    "items": { "type": "object" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    })
+}
+
+fn schema_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": ["schema"],
+        "properties": {
+            "schema": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["name", "table_type"],
+                    "properties": {
+                        "schema": { "type": "string" },
+                        "name": { "type": "string" },
+                        "table_type": { "type": "string" }
+                    }
+                }
+            }
+        }
+    })
+}
+
+fn columns_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": ["columns"],
+        "properties": {
+            "columns": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["name", "data_type", "nullable", "primary_key"],
+                    "properties": {
+                        "name": { "type": "string" },
+                        "data_type": { "type": "string" },
+                        "nullable": { "type": "boolean" },
+                        "primary_key": { "type": "boolean" }
+                    }
+                }
+            }
+        }
+    })
+}
+
+fn query_result_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": [
+            "columns",
+            "rows",
+            "row_count",
+            "truncated",
+            "returned_bytes",
+            "elapsed_ms",
+            "rewritten_sql"
+        ],
+        "properties": {
+            "columns": {
+                "type": "array",
+                "items": { "type": "string" }
+            },
+            "rows": {
+                "type": "array",
+                "items": { "type": "object" }
+            },
+            "row_count": { "type": "integer" },
+            "truncated": { "type": "boolean" },
+            "truncation_reason": nullable_string(),
+            "returned_bytes": { "type": "integer" },
+            "elapsed_ms": { "type": "integer" },
+            "rewritten_sql": { "type": "string" }
+        }
+    })
+}
+
+// Rust `Option<String>` serializes to a present null, so the schema must admit null
+// as well as an absent property.
+fn nullable_string() -> Value {
+    json!({
+        "oneOf": [
+            { "type": "string" },
+            { "type": "null" }
+        ]
+    })
+}
+
+fn unsupported_tool_output_schema(profile: &str) -> Value {
+    json!({
+        "type": "object",
+        "required": ["unsupported"],
+        "properties": {
+            "unsupported": {
+                "type": "object",
+                "required": ["tool", "connection_id", "profile", "reason"],
+                "properties": {
+                    "tool": { "type": "string" },
+                    "connection_id": { "type": "string" },
+                    "profile": { "type": "string", "const": profile },
+                    "reason": { "type": "string" }
+                }
+            }
+        }
+    })
+}
+
+fn policy_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": ["allowed", "reason"],
+        "properties": {
+            "allowed": { "type": "boolean" },
+            "reason": { "type": "string" },
+            "rewritten_sql": nullable_string()
+        }
+    })
+}
+
+// A JDBC connection cannot answer sample_rows, so that tool must advertise both the
+// bare QueryResult it returns on success and the unsupported-profile envelope. The
+// other query tools wrap the result in a policy envelope.
+fn sample_rows_output_schema() -> Value {
+    json!({
+        "oneOf": [
+            query_result_schema(),
+            unsupported_tool_output_schema("generic_jdbc")
+        ]
+    })
+}
+
+// explain_sql wraps its result in a policy envelope, but still answers JDBC with the
+// unsupported-profile envelope instead.
+fn explain_output_schema() -> Value {
+    json!({
+        "oneOf": [
+            query_output_schema(),
+            unsupported_tool_output_schema("generic_jdbc")
+        ]
+    })
+}
+
+fn query_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": ["policy", "result"],
+        "properties": {
+            "policy": policy_output_schema(),
+            "result": {
+                "oneOf": [
+                    query_result_schema(),
+                    { "type": "null" }
+                ]
+            }
+        }
+    })
+}
+
+fn policy_check_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": ["policy"],
+        "properties": {
+            "policy": policy_output_schema()
         }
     })
 }
