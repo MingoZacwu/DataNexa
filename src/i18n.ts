@@ -95,6 +95,7 @@ const zhCN = {
   toast: {
     connectionSaved: "连接配置已保存。",
     connectionDeleted: "连接已删除。",
+    connectionNameCopied: "连接名已复制。",
     tokenRotated: "本地 MCP 访问密钥已手动轮换。",
     serverSaved: "服务设置已自动保存。",
     settingsSaved: "设置已自动保存。",
@@ -151,6 +152,7 @@ const zhCN = {
     title: "数据库连接",
     empty: "还没有数据库连接，先新建一个只读连接。",
     newConnectionName: "新的只读连接",
+    copyName: "点击复制连接名",
     test: "测试连接",
     diagnose: "诊断连接",
     emergencyDisable: "紧急断连",
@@ -660,6 +662,7 @@ const en: I18nMessages = {
   toast: {
     connectionSaved: "Connection config saved.",
     connectionDeleted: "Connection deleted.",
+    connectionNameCopied: "Connection name copied.",
     tokenRotated: "Local MCP access token rotated manually.",
     serverSaved: "Server settings saved automatically.",
     settingsSaved: "Settings saved automatically.",
@@ -716,6 +719,7 @@ const en: I18nMessages = {
     title: "Database connections",
     empty: "No database connections yet. Create a read-only connection first.",
     newConnectionName: "New read-only connection",
+    copyName: "Click to copy connection name",
     test: "Test connection",
     diagnose: "Diagnose connection",
     emergencyDisable: "Emergency disconnect",

@@ -813,6 +813,25 @@ p {
   font-weight: 700;
 }
 
+.connection-name-button {
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.connection-name-button strong {
+  display: block;
+}
+
+.connection-name-button:hover,
+.connection-name-button:focus-visible {
+  color: var(--blue);
+}
+
 .connection-info p {
   margin-top: 4px;
   overflow: hidden;

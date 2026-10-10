@@ -18,6 +18,7 @@ export function ConnectionsView({
   onTest,
   onDiagnose,
   onToggleEnabled,
+  onCopyName,
   migrationReady
 }: {
   t: I18nMessages;
@@ -28,6 +29,7 @@ export function ConnectionsView({
   onTest: (id: string) => void;
   onDiagnose: (id: string) => void;
   onToggleEnabled: (id: string, enabled: boolean) => void;
+  onCopyName: (name: string) => void;
   migrationReady: boolean;
 }) {
   const [selectedId, setSelectedId] = useState(connections[0]?.id ?? "");
@@ -67,7 +69,7 @@ export function ConnectionsView({
         {selected ? (
           <>
             <div className="inspector-heading">
-              <ConnectionListItem t={t} connection={selected} showJdbcBadge={false} />
+              <ConnectionListItem t={t} connection={selected} showJdbcBadge={false} onCopyName={onCopyName} />
               <button type="button" className="button ghost" disabled={busy} onClick={() => onEdit(selected)}>{t.connections.edit}</button>
             </div>
             <dl className="inspector-grid">
@@ -366,7 +368,7 @@ function ConnectionRow({
   );
 }
 
-export function ConnectionListItem({ t, connection, compact = false, showJdbcBadge = true }: { t: I18nMessages; connection: ConnectionConfig; compact?: boolean; showJdbcBadge?: boolean }) {
+export function ConnectionListItem({ t, connection, compact = false, showJdbcBadge = true, onCopyName }: { t: I18nMessages; connection: ConnectionConfig; compact?: boolean; showJdbcBadge?: boolean; onCopyName?: (name: string) => void }) {
   return (
     <div className={clsx("connection-item", compact && "compact")}>
       <div className={clsx("db-badge", connection.type)}>
@@ -376,7 +378,13 @@ export function ConnectionListItem({ t, connection, compact = false, showJdbcBad
       </div>
       <div className="connection-info">
         <div>
-          <strong>{connection.name}</strong>
+          {onCopyName ? (
+            <IconTooltip label={t.connections.copyName}>
+              <button type="button" className="connection-name-button" onClick={() => onCopyName(connection.name)} aria-label={`${t.connections.copyName}: ${connection.name}`}>
+                <strong>{connection.name}</strong>
+              </button>
+            </IconTooltip>
+          ) : <strong>{connection.name}</strong>}
           {showJdbcBadge && connection.type === "jdbc" && <StatusPill tone="blue" label="JDBC" />}
           <StatusPill tone={connection.enabled ? "green" : "slate"} label={connection.enabled ? t.connections.enabled : t.connections.paused} />
         </div>

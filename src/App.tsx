@@ -381,6 +381,15 @@ function App() {
     pushToast(error instanceof Error ? error.message : String(error), "error");
   }
 
+  async function copyConnectionName(name: string) {
+    try {
+      await navigator.clipboard.writeText(name);
+      pushToast(t.toast.connectionNameCopied, "info");
+    } catch (error) {
+      showError(error);
+    }
+  }
+
   function openNewConnection() {
     setPassword("");
     setClearPassword(false);
@@ -1095,6 +1104,7 @@ function App() {
                     onTest={testConnection}
                     onDiagnose={diagnoseConnection}
                     onToggleEnabled={setConnectionEnabled}
+                    onCopyName={copyConnectionName}
                     migrationReady={migrationReady}
                   />
                 )}
