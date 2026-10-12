@@ -65,6 +65,8 @@ export function SettingsView({
   settings,
   autoStartStatus,
   busy,
+  jdbcBusy,
+  jreCheckBusy,
   tab,
   auditEvents,
   jdbcStatus,
@@ -112,6 +114,12 @@ export function SettingsView({
   settings: SettingsConfig;
   autoStartStatus: AppSnapshot["auto_start_status"];
   busy: boolean;
+  /** Kept apart from `busy` so a long JDBC or runtime-update operation only
+   * disables the drivers and storage panel, not the rest of settings. */
+  jdbcBusy: boolean;
+  /** The runtime update check is read-only, so it disables nothing but its own
+   * button. */
+  jreCheckBusy: boolean;
   tab: SettingsTab;
   auditEvents: AuditEvent[];
   jdbcStatus: JdbcStatus | null;
@@ -781,7 +789,8 @@ export function SettingsView({
           installProgress={jdbcInstallProgress}
           runtimeProgress={jdbcRuntimeProgress}
           settings={settings}
-          busy={busy}
+          busy={jdbcBusy || busy}
+          runtimeCheckBusy={jreCheckBusy}
           onRefresh={onRefreshJdbcStatus}
           onInstallRuntime={onInstallJdbcRuntime}
           onRemoveRuntime={onRemoveJdbcRuntime}
@@ -792,7 +801,7 @@ export function SettingsView({
           onSaveSettings={onSaveSettings}
         />
       ) : tab === "storage" ? (
-        <StorageManagement status={jdbcStorageStatus} busy={busy} onRefresh={onRefreshJdbcStorageStatus} onClearJdbcCache={onClearJdbcCache} onOpenDataDirectory={onOpenDataDirectory} onStopJdbcDriverRuntime={onStopJdbcDriverRuntime} debugLoggingEnabled={settingsDraft.debug_logging_enabled} t={t} />
+        <StorageManagement status={jdbcStorageStatus} busy={jdbcBusy} onRefresh={onRefreshJdbcStorageStatus} onClearJdbcCache={onClearJdbcCache} onOpenDataDirectory={onOpenDataDirectory} onStopJdbcDriverRuntime={onStopJdbcDriverRuntime} debugLoggingEnabled={settingsDraft.debug_logging_enabled} t={t} />
       ) : (
         <div ref={scrollFadeRef} className="settings-stack" onScroll={updateScrollFade}>
           <section className="panel about-panel">
@@ -963,6 +972,7 @@ function DriverManagement({
   runtimeProgress,
   settings,
   busy,
+  runtimeCheckBusy,
   onRefresh,
   onInstallRuntime,
   onRemoveRuntime,
@@ -978,6 +988,7 @@ function DriverManagement({
   runtimeProgress: JdbcRuntimeInstallProgress | null;
   settings: SettingsConfig;
   busy: boolean;
+  runtimeCheckBusy: boolean;
   onRefresh: () => void;
   onInstallRuntime: () => Promise<boolean>;
   onRemoveRuntime: () => Promise<boolean>;
@@ -1085,7 +1096,7 @@ function DriverManagement({
             </IconTooltip>
             {!settings.jdbc_java_home && runtime?.source === "managed" && (
               <IconTooltip label={t.settings.checkJdbcRuntimeUpdate}>
-                <button type="button" className="icon-button" onClick={() => void checkManagedRuntimeUpdate()} disabled={busy} aria-label={t.settings.checkJdbcRuntimeUpdate}>
+                <button type="button" className="icon-button" onClick={() => void checkManagedRuntimeUpdate()} disabled={busy || runtimeCheckBusy} aria-label={t.settings.checkJdbcRuntimeUpdate}>
                   <Download size={17} />
                 </button>
               </IconTooltip>

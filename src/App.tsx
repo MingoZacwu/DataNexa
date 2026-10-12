@@ -27,6 +27,11 @@ type McpActivityTone = "success" | "error";
 type McpToolCallCompletedPayload = { failed: boolean };
 type JreUpdateAvailablePayload = { version: string };
 
+// A scope names the controls that must be disabled while a request runs. Choose
+// the scope that owns the buttons being acted on, not the command being called:
+// unrelated views have to stay usable while an operation is in flight.
+type BusyScope = "refresh" | "server" | "connections" | "access" | "tools" | "settings" | "jdbc" | "jreCheck" | "audit";
+
 const MCP_ACTIVITY_DURATION_MS = 1750;
 const MCP_ACTIVITY_REDUCED_DURATION_MS = 200;
 
@@ -57,7 +62,9 @@ function App() {
   const [editing, setEditing] = useState<ConnectionConfig | null>(null);
   const [password, setPassword] = useState("");
   const [clearPassword, setClearPassword] = useState(false);
-  const [busy, setBusy] = useState(false);
+  // Counts in-flight requests per scope so overlapping ones keep that scope busy
+  // until the last of them settles.
+  const [busyScopes, setBusyScopes] = useState<ReadonlyMap<BusyScope, number>>(() => new Map());
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [policySql, setPolicySql] = useState("SELECT * FROM users");
   const [policyKind, setPolicyKind] = useState<DatabaseType>("mysql");
@@ -354,14 +361,40 @@ function App() {
     };
   }, []);
 
+  function beginBusy(scope: BusyScope) {
+    setBusyScopes((current) => {
+      const next = new Map(current);
+      next.set(scope, (next.get(scope) ?? 0) + 1);
+      return next;
+    });
+  }
+
+  function endBusy(scope: BusyScope) {
+    setBusyScopes((current) => {
+      const count = current.get(scope) ?? 0;
+      if (count === 0) return current;
+      const next = new Map(current);
+      if (count === 1) {
+        next.delete(scope);
+      } else {
+        next.set(scope, count - 1);
+      }
+      return next;
+    });
+  }
+
+  function isBusy(...scopes: BusyScope[]) {
+    return scopes.some((scope) => (busyScopes.get(scope) ?? 0) > 0);
+  }
+
   async function refresh(options: { quiet?: boolean } = {}) {
-    if (!options.quiet) setBusy(true);
+    if (!options.quiet) beginBusy("refresh");
     try {
       setSnapshot(await api.snapshot());
     } catch (error) {
       showError(error);
     } finally {
-      if (!options.quiet) setBusy(false);
+      if (!options.quiet) endBusy("refresh");
     }
   }
 
@@ -399,7 +432,7 @@ function App() {
   async function saveConnection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!editing) return;
-    setBusy(true);
+    beginBusy("connections");
     try {
       const next = await api.upsertConnection({
         connection: editing,
@@ -414,7 +447,7 @@ function App() {
     } catch (error) {
       showError(error);
     } finally {
-      setBusy(false);
+      endBusy("connections");
     }
   }
 
@@ -428,19 +461,19 @@ function App() {
   }
 
   async function deleteConnection(id: string) {
-    setBusy(true);
+    beginBusy("connections");
     try {
       setSnapshot(await api.deleteConnection(id));
       pushToast(t.toast.connectionDeleted);
     } catch (error) {
       showError(error);
     } finally {
-      setBusy(false);
+      endBusy("connections");
     }
   }
 
   async function setConnectionEnabled(id: string, enabled: boolean) {
-    setBusy(true);
+    beginBusy("connections");
     try {
       const connectionName = snapshot?.config.connections.find((connection) => connection.id === id)?.name ?? id;
       setSnapshot(await api.setConnectionEnabled(id, enabled));
@@ -453,13 +486,13 @@ function App() {
     } catch (error) {
       showError(error);
     } finally {
-      setBusy(false);
+      endBusy("connections");
     }
   }
 
   async function disableAllConnections() {
     const wasEmergencyDisconnected = Boolean(snapshot?.emergency_disconnect);
-    setBusy(true);
+    beginBusy("connections");
     try {
       setSnapshot(await api.disableAllConnections());
       pushToast(
@@ -471,12 +504,12 @@ function App() {
     } catch (error) {
       showError(error);
     } finally {
-      setBusy(false);
+      endBusy("connections");
     }
   }
 
   async function clearAuditEvents() {
-    setBusy(true);
+    beginBusy("audit");
     try {
       setSnapshot(await api.clearAuditEvents());
       setSelectedAudit(null);
@@ -484,26 +517,26 @@ function App() {
     } catch (error) {
       showError(error);
     } finally {
-      setBusy(false);
+      endBusy("audit");
     }
   }
 
   async function testConnection(id: string) {
     if (!snapshot || snapshot.audit_migration.status !== "ready") return;
-    setBusy(true);
+    beginBusy("connections");
     try {
       pushToast(formatConnectionTest(t, await api.testConnection(id)), "info");
       await refresh({ quiet: true });
     } catch (error) {
       pushToast(compactConnectionError(error), "error");
     } finally {
-      setBusy(false);
+      endBusy("connections");
     }
   }
 
   async function testEditingConnection() {
     if (!editing || !snapshot || snapshot.audit_migration.status !== "ready") return;
-    setBusy(true);
+    beginBusy("connections");
     try {
       pushToast(
         formatConnectionTest(t, await api.testConnectionInput({
@@ -517,32 +550,32 @@ function App() {
     } catch (error) {
       pushToast(compactConnectionError(error), "error");
     } finally {
-      setBusy(false);
+      endBusy("connections");
     }
   }
 
   async function diagnoseConnection(id: string) {
-    setBusy(true);
+    beginBusy("connections");
     try {
       pushToast(formatDiagnostics(t, await api.diagnoseConnection(id)), "info");
       await refresh({ quiet: true });
     } catch (error) {
       pushToast(compactConnectionError(error), "error");
     } finally {
-      setBusy(false);
+      endBusy("connections");
     }
   }
 
   async function toggleServer() {
     if (!snapshot?.server_status.running && snapshot?.audit_migration.status !== "ready") return;
-    setBusy(true);
+    beginBusy("server");
     try {
       setSnapshot(snapshot?.server_status.running ? await api.stopServer() : await api.startServer());
     } catch (error) {
       showError(error);
       await refresh({ quiet: true });
     } finally {
-      setBusy(false);
+      endBusy("server");
     }
   }
 
@@ -572,7 +605,7 @@ function App() {
   }
 
   async function createAccessToken(name: string): Promise<boolean> {
-    setBusy(true);
+    beginBusy("access");
     try {
       const result = await api.createAccessToken(name);
       setSelectedTokenId(result.token_id);
@@ -588,7 +621,7 @@ function App() {
       showError(error);
       return false;
     } finally {
-      setBusy(false);
+      endBusy("access");
     }
   }
 
@@ -601,7 +634,7 @@ function App() {
   }
 
   async function installJdbcRuntime(): Promise<boolean> {
-    setBusy(true);
+    beginBusy("jdbc");
     setJdbcRuntimeProgress({ phase: "preparing", downloaded_bytes: 0, total_bytes: null, progress: 0 });
     try {
       await api.installJdbcRuntime();
@@ -614,12 +647,12 @@ function App() {
       return false;
     } finally {
       setJdbcRuntimeProgress(null);
-      setBusy(false);
+      endBusy("jdbc");
     }
   }
 
   async function removeJdbcRuntime(): Promise<boolean> {
-    setBusy(true);
+    beginBusy("jdbc");
     try {
       await api.removeJdbcRuntime();
       await refreshJdbcStatus();
@@ -631,12 +664,15 @@ function App() {
       showError(error);
       return false;
     } finally {
-      setBusy(false);
+      endBusy("jdbc");
     }
   }
 
   async function checkJdbcRuntimeUpdate(): Promise<string | null> {
-    setBusy(true);
+    // A runtime update check only reads local metadata and fetches a remote
+    // manifest, so it gets its own scope: it must not disable driver installs,
+    // storage housekeeping or anything else.
+    beginBusy("jreCheck");
     try {
       const version = await api.checkJdbcRuntimeUpdate();
       setJreUpdateVersion(version);
@@ -651,7 +687,7 @@ function App() {
       showError(error);
       return null;
     } finally {
-      setBusy(false);
+      endBusy("jreCheck");
     }
   }
 
@@ -675,7 +711,7 @@ function App() {
   }
 
   async function clearJdbcCache(selection: JdbcCacheSelection): Promise<boolean> {
-    setBusy(true);
+    beginBusy("jdbc");
     try {
       await api.clearJdbcCache(selection);
       await refreshJdbcStorageStatus();
@@ -690,12 +726,12 @@ function App() {
       showError(error);
       return false;
     } finally {
-      setBusy(false);
+      endBusy("jdbc");
     }
   }
 
   async function stopJdbcDriverRuntime(bundleId: string): Promise<boolean> {
-    setBusy(true);
+    beginBusy("jdbc");
     try {
       await api.stopJdbcDriverRuntime(bundleId);
       await refreshJdbcStorageStatus();
@@ -704,12 +740,12 @@ function App() {
       showError(error);
       return false;
     } finally {
-      setBusy(false);
+      endBusy("jdbc");
     }
   }
 
   async function installJdbcDriver(input: InstallJdbcDriverInput): Promise<boolean> {
-    setBusy(true);
+    beginBusy("jdbc");
     setJdbcInstallProgress({ operation: "install", phase: "preparing", progress: 0 });
     try {
       await api.installJdbcDriver(input);
@@ -720,13 +756,13 @@ function App() {
       showError(error);
       return false;
     } finally {
-      setBusy(false);
+      endBusy("jdbc");
       setJdbcInstallProgress(null);
     }
   }
 
   async function importJdbcDriver(input: ImportJdbcDriverInput): Promise<boolean> {
-    setBusy(true);
+    beginBusy("jdbc");
     setJdbcInstallProgress({ operation: "import", phase: "preparing", progress: 0 });
     try {
       await api.importJdbcDriver(input);
@@ -737,25 +773,25 @@ function App() {
       showError(error);
       return false;
     } finally {
-      setBusy(false);
+      endBusy("jdbc");
       setJdbcInstallProgress(null);
     }
   }
 
   async function deleteJdbcDriver(bundleId: string) {
-    setBusy(true);
+    beginBusy("jdbc");
     try {
       setJdbcStatus(await api.deleteJdbcDriver(bundleId));
       pushToast(t.toast.jdbcDriverDeleted);
     } catch (error) {
       showError(error);
     } finally {
-      setBusy(false);
+      endBusy("jdbc");
     }
   }
 
   async function updateAccess(action: () => Promise<AppSnapshot>, message: string): Promise<boolean> {
-    setBusy(true);
+    beginBusy("access");
     try {
       setSnapshot(await action());
       pushToast(message, "info");
@@ -764,7 +800,7 @@ function App() {
       showError(error);
       return false;
     } finally {
-      setBusy(false);
+      endBusy("access");
     }
   }
 
@@ -773,7 +809,7 @@ function App() {
   }
 
   async function rotateAccessToken(id: string): Promise<boolean> {
-    setBusy(true);
+    beginBusy("access");
     try {
       const result = await api.rotateAccessToken(id);
       await refresh({ quiet: true });
@@ -788,17 +824,29 @@ function App() {
       showError(error);
       return false;
     } finally {
-      setBusy(false);
+      endBusy("access");
     }
   }
 
   async function deleteAccessToken(id: string) {
     return updateAccess(() => api.deleteAccessToken(id), t.access.tokenDeleted);
   }
+
+  // Enabling authentication rewrites the server config, so the access view waits
+  // for it too even though the save itself belongs to the settings scope.
+  async function enableTokenAuthentication() {
+    if (!snapshot) return;
+    beginBusy("access");
+    try {
+      await saveServer({ ...snapshot.config.server, require_token: true });
+    } finally {
+      endBusy("access");
+    }
+  }
   async function copyPromptForToken(id: string) { try { const result = await api.getAccessTokenSecret(id); await navigator.clipboard.writeText(buildAgentPrompt(t, serverEndpoint, true, result.secret)); setPromptTokenDialogOpen(false); pushToast(t.toast.agentCopied, "info"); } catch (error) { showError(error); } }
 
   async function saveServer(server: ServerConfig): Promise<boolean> {
-    setBusy(true);
+    beginBusy("settings");
     try {
       setSnapshot(await api.saveServerConfig(server));
       pushToast(t.toast.serverSaved, "info");
@@ -808,7 +856,7 @@ function App() {
       await refresh({ quiet: true });
       return false;
     } finally {
-      setBusy(false);
+      endBusy("settings");
     }
   }
 
@@ -820,19 +868,19 @@ function App() {
     persistLocale(next);
     const settings = snapshot?.config.settings;
     if (!settings) return;
-    setBusy(true);
+    beginBusy("settings");
     try {
       const nextSnapshot = await api.saveSettingsConfig({ ...settings, language: next }, false);
       setSnapshot(nextSnapshot);
     } catch (error) {
       showError(error);
     } finally {
-      setBusy(false);
+      endBusy("settings");
     }
   }
 
   async function saveSettings(settings: SettingsConfig, applyAutoStart = false) {
-    setBusy(true);
+    beginBusy("settings");
     try {
       const nextLocale = normalizeLocale(settings.language);
       setLocale(nextLocale);
@@ -845,24 +893,33 @@ function App() {
     } catch (error) {
       showError(error);
     } finally {
-      setBusy(false);
+      endBusy("settings");
     }
   }
 
   async function exportConnections(password: string | null) {
-    setBusy(true);
+    // Pick the destination before taking the scope: the native save dialog stays
+    // open until the user decides, and holding the scope across it would leave
+    // every settings control disabled while they browse.
+    let path: string | null;
     try {
-      const exportedCount = await api.exportConnections(locale, password);
-      if (exportedCount !== null) {
-        pushToast(formatMessage(
-          password === null ? t.toast.connectionsExported : t.toast.connectionsExportedEncrypted,
-          { count: exportedCount }
-        ), "info");
-      }
+      path = await api.pickConnectionExportPath(locale, password !== null);
+    } catch (error) {
+      showError(error);
+      return;
+    }
+    if (!path) return;
+    beginBusy("settings");
+    try {
+      const exportedCount = await api.exportConnections(path, password);
+      pushToast(formatMessage(
+        password === null ? t.toast.connectionsExported : t.toast.connectionsExportedEncrypted,
+        { count: exportedCount }
+      ), "info");
     } catch (error) {
       showError(error);
     } finally {
-      setBusy(false);
+      endBusy("settings");
     }
   }
 
@@ -876,10 +933,17 @@ function App() {
   }
 
   async function importConnections() {
-    setBusy(true);
+    // Same ordering rationale as export: the picker runs before the scope is held.
+    let path: string | null;
     try {
-      const path = await api.pickConnectionImportFile(locale);
-      if (!path) return;
+      path = await api.pickConnectionImportFile(locale);
+    } catch (error) {
+      showError(error);
+      return;
+    }
+    if (!path) return;
+    beginBusy("settings");
+    try {
       const inspection = await api.inspectConnectionFile(path);
       if (!inspection.encrypted) {
         await applyConnectionsImport(path, null);
@@ -892,13 +956,13 @@ function App() {
     } catch (error) {
       showError(error);
     } finally {
-      setBusy(false);
+      endBusy("settings");
     }
   }
 
   async function submitImportPassword(password: string) {
     if (!importRequest) return;
-    setBusy(true);
+    beginBusy("settings");
     try {
       await applyConnectionsImport(importRequest.path, password);
       setImportRequest(null);
@@ -908,23 +972,23 @@ function App() {
       const message = error instanceof Error ? error.message : String(error);
       setImportError(message === WRONG_PASSWORD_ERROR ? t.connectionTransfer.wrongPassword : message);
     } finally {
-      setBusy(false);
+      endBusy("settings");
     }
   }
 
   async function runPolicyCheck() {
-    setBusy(true);
+    beginBusy("settings");
     try {
       setPolicyResult(await api.policyCheck(policyKind, policySql, 500));
     } catch (error) {
       showError(error);
     } finally {
-      setBusy(false);
+      endBusy("settings");
     }
   }
 
   async function setToolEnabled(name: string, enabled: boolean) {
-    setBusy(true);
+    beginBusy("tools");
     try {
       setSnapshot(await api.setMcpToolEnabled(name, enabled));
       pushToast(
@@ -936,7 +1000,7 @@ function App() {
     } catch (error) {
       showError(error);
     } finally {
-      setBusy(false);
+      endBusy("tools");
     }
   }
 
@@ -1033,7 +1097,7 @@ function App() {
                 running={Boolean(snapshot?.server_status.running)}
                 startupFailed={Boolean(snapshot?.startup_error)}
                 port={snapshot?.config.server.port ?? 17321}
-                busy={busy}
+                busy={isBusy("server")}
                 disabled={!snapshot || (!snapshot.server_status.running && !migrationReady)}
                 onToggle={toggleServer}
               />
@@ -1066,7 +1130,7 @@ function App() {
                 )}
                 {snapshot && activeView === "overview" && (
                   <div className="top-icon-actions">
-                    <LanguageSwitcher t={t} locale={locale} disabled={busy} onChange={(next) => void changeLocale(next)} />
+                    <LanguageSwitcher t={t} locale={locale} disabled={isBusy("settings")} onChange={(next) => void changeLocale(next)} />
                   </div>
                 )}
                 <div className={clsx("top-icon-actions", activeView === "connections" && emergencyDisconnect && "emergency-active")}>
@@ -1076,7 +1140,7 @@ function App() {
                         type="button"
                         className={clsx("icon-button danger", emergencyDisconnect && "emergency-toggle-active")}
                         onClick={disableAllConnections}
-                        disabled={busy || !snapshot.server_status.running}
+                        disabled={isBusy("connections") || !snapshot.server_status.running}
                         aria-pressed={emergencyDisconnect}
                         aria-label={emergencyDisconnect ? t.connections.emergencyRestore : t.connections.emergencyDisable}
                       >
@@ -1086,23 +1150,23 @@ function App() {
                   )}
                   {snapshot && activeView === "audit" && (
                     <IconTooltip label={t.audit.clear}>
-                      <button type="button" className="icon-button danger" onClick={clearAuditEvents} disabled={busy || snapshot.audit_events.length === 0} aria-label={t.audit.clear}>
+                      <button type="button" className="icon-button danger" onClick={clearAuditEvents} disabled={isBusy("audit") || snapshot.audit_events.length === 0} aria-label={t.audit.clear}>
                         <Trash2 size={17} />
                       </button>
                     </IconTooltip>
                   )}
-                  <button type="button" className={clsx("icon-button", busy && "is-spinning")} onClick={() => refresh()} disabled={busy} aria-label={t.common.refresh}>
+                  <button type="button" className={clsx("icon-button", isBusy("refresh") && "is-spinning")} onClick={() => refresh()} disabled={isBusy("refresh")} aria-label={t.common.refresh}>
                     <RefreshCw size={17} />
                   </button>
                 </div>
                 {snapshot && activeView === "connections" && (
-                  <button type="button" className="button primary" onClick={openNewConnection} disabled={busy || emergencyDisconnect}>
+                  <button type="button" className="button primary" onClick={openNewConnection} disabled={isBusy("connections") || emergencyDisconnect}>
                     <Plus size={16} />
                     {t.overview.newConnection}
                   </button>
                 )}
                 {snapshot && activeView === "access" && requireToken && (
-                  <button type="button" className="button primary" onClick={() => setCreateTokenRequest((value) => value + 1)} disabled={busy}><Plus size={16} />{t.access.create}</button>
+                  <button type="button" className="button primary" onClick={() => setCreateTokenRequest((value) => value + 1)} disabled={isBusy("access")}><Plus size={16} />{t.access.create}</button>
                 )}
               </div>
             </header>
@@ -1124,7 +1188,7 @@ function App() {
                     onCopyAgentPrompt={copyAgentPrompt}
                     onToggleServer={toggleServer}
                     onToggleEmergency={disableAllConnections}
-                    busy={busy}
+                    busy={isBusy("server")}
                     startDisabled={!snapshot.server_status.running && !migrationReady}
                     mcpActivitySequence={mcpActivitySequence}
                     mcpActivityTone={mcpActivityTone}
@@ -1134,7 +1198,7 @@ function App() {
                   <ConnectionsView
                     t={t}
                     connections={connections}
-                    busy={busy || emergencyDisconnect}
+                    busy={isBusy("connections") || emergencyDisconnect}
                     onEdit={openExistingConnection}
                     onDelete={deleteConnection}
                     onTest={testConnection}
@@ -1144,8 +1208,8 @@ function App() {
                     onCopyName={(name) => void copyConnectionName(name)}
                   />
                 )}
-                {activeView === "access" && <AccessControlView t={t} tokens={snapshot.access_tokens} connections={connections} tools={snapshot.tools} requireToken={requireToken} busy={busy} selectedId={selectedTokenId} onSelectedIdChange={setSelectedTokenId} createRequest={createTokenRequest} onCreateRequestHandled={() => setCreateTokenRequest(0)} onEnableAuthentication={() => void saveServer({ ...snapshot.config.server, require_token: true })} onCreate={createAccessToken} onRename={renameAccessToken} onToggle={(id, enabled) => void updateAccess(() => api.setAccessTokenEnabled(id, enabled), enabled ? t.access.tokenEnabled : t.access.tokenDisabled)} onRotate={rotateAccessToken} onDelete={deleteAccessToken} onCopyPrompt={(id) => void copyPromptForToken(id)} onConnectionAllowed={(tokenId, connectionId, allowed) => void updateAccess(() => api.setTokenConnectionAllowed(tokenId, connectionId, allowed), t.access.permissionUpdated)} onToolAllowed={(tokenId, toolName, allowed) => void updateAccess(() => api.setTokenToolAllowed(tokenId, toolName, allowed), t.access.permissionUpdated)} />}
-                {activeView === "tools" && <ToolsView t={t} tools={snapshot.tools} busy={busy} onToggle={setToolEnabled} />}
+                {activeView === "access" && <AccessControlView t={t} tokens={snapshot.access_tokens} connections={connections} tools={snapshot.tools} requireToken={requireToken} busy={isBusy("access")} selectedId={selectedTokenId} onSelectedIdChange={setSelectedTokenId} createRequest={createTokenRequest} onCreateRequestHandled={() => setCreateTokenRequest(0)} onEnableAuthentication={() => void enableTokenAuthentication()} onCreate={createAccessToken} onRename={renameAccessToken} onToggle={(id, enabled) => void updateAccess(() => api.setAccessTokenEnabled(id, enabled), enabled ? t.access.tokenEnabled : t.access.tokenDisabled)} onRotate={rotateAccessToken} onDelete={deleteAccessToken} onCopyPrompt={(id) => void copyPromptForToken(id)} onConnectionAllowed={(tokenId, connectionId, allowed) => void updateAccess(() => api.setTokenConnectionAllowed(tokenId, connectionId, allowed), t.access.permissionUpdated)} onToolAllowed={(tokenId, toolName, allowed) => void updateAccess(() => api.setTokenToolAllowed(tokenId, toolName, allowed), t.access.permissionUpdated)} />}
+                {activeView === "tools" && <ToolsView t={t} tools={snapshot.tools} busy={isBusy("tools")} onToggle={setToolEnabled} />}
                 {activeView === "audit" && <AuditView t={t} events={snapshot.audit_events} tokens={snapshot.access_tokens} tools={snapshot.tools} connections={snapshot.config.connections} filters={auditFilters} onFiltersChange={setAuditFilters} filterOpen={auditFilterOpen} onFilterOpenChange={setAuditFilterOpen} onSelect={setSelectedAudit} />}
                 {activeView === "settings" && (
                   <SettingsView
@@ -1156,7 +1220,9 @@ function App() {
                     server={snapshot.config.server}
                     settings={snapshot.config.settings}
                     autoStartStatus={snapshot.auto_start_status}
-                    busy={busy}
+                    busy={isBusy("settings")}
+                    jdbcBusy={isBusy("jdbc")}
+                    jreCheckBusy={isBusy("jreCheck")}
                     tab={settingsTab}
                     auditEvents={snapshot.audit_events}
                     jdbcStatus={jdbcStatus}
@@ -1207,7 +1273,7 @@ function App() {
         <ConnectionDialog
           t={t}
           editing={editing}
-          busy={busy}
+          busy={isBusy("connections")}
           password={password}
           clearPassword={clearPassword}
           onPasswordChange={setPassword}
@@ -1229,7 +1295,7 @@ function App() {
             mode="import"
             exportedAt={importRequest.exportedAt}
             error={importError}
-            busy={busy}
+            busy={isBusy("settings")}
             onSubmit={(password) => void submitImportPassword(password)}
             onCancel={() => {
               setImportRequest(null);
@@ -1237,7 +1303,7 @@ function App() {
             }}
           />
         ) : null}
-        {snapshot && <PromptTokenDialog t={t} open={promptTokenDialogOpen} tokens={snapshot.access_tokens} connections={connections} tools={snapshot.tools} busy={busy} onClose={() => setPromptTokenDialogOpen(false)} onSelect={(id) => void copyPromptForToken(id)} />}
+        {snapshot && <PromptTokenDialog t={t} open={promptTokenDialogOpen} tokens={snapshot.access_tokens} connections={connections} tools={snapshot.tools} busy={isBusy("access")} onClose={() => setPromptTokenDialogOpen(false)} onSelect={(id) => void copyPromptForToken(id)} />}
         {snapshot && snapshot.audit_migration.status === "failed" && (
           <AuditMigrationDialog
             t={t}

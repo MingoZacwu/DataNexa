@@ -418,12 +418,13 @@ export const api = {
     return invoke<void>("log_frontend_event", { kind, message });
   },
   openDebugLogDirectory: () => command<void>("open_debug_log_directory", undefined, undefined),
-  exportConnections: async (locale: Locale, password: string | null) => {
+  /** Picks the destination only, so the caller can defer any busy state until
+   * after the native dialog closes. */
+  pickConnectionExportPath: async (locale: Locale, encrypted: boolean) => {
     if (!isTauri) {
       throw new Error(formatMessage(previewText.desktopOnly, { name: "export_connections" }));
     }
     const dialogText = messages[locale].fileDialog;
-    const encrypted = password !== null;
     const path = await save({
       title: dialogText.exportConnectionsTitle,
       defaultPath: connectionTransferFileName(encrypted),
@@ -432,8 +433,10 @@ export const api = {
         : [{ name: dialogText.connectionFile, extensions: ["json"] }]
     });
     if (!path) return null;
-    return command<number>("export_connections", { path, password });
+    return path as string;
   },
+  exportConnections: (path: string, password: string | null) =>
+    command<number>("export_connections", { path, password }),
   /** Picks the file only. Deciding whether a password is needed belongs to
    * `inspectConnectionFile`, so the caller can prompt before anything is imported. */
   pickConnectionImportFile: async (locale: Locale) => {
