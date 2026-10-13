@@ -15,9 +15,10 @@ use serde_json::{json, Value};
 use tauri::Emitter;
 use tokio::sync::{oneshot, Mutex, Semaphore};
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 use crate::audit::{AuditActor, AuditSql, AuditStatus};
-use crate::commands::sanitize_error;
+use crate::commands::{database_error_summary, sanitize_error};
 use crate::config::{
     is_tool_enabled, ConnectionConfig, DbKind, ServerConfig, ToolConfig, MCP_TOOL_NAMES,
 };
@@ -250,8 +251,7 @@ pub async fn stop(app: Arc<AppState>) -> ServerStatus {
 
 async fn stop_locked(app: &Arc<AppState>) {
     crate::debug_log::info("mcp", format_args!("MCP server stopping"));
-    app.cancel_mcp_requests().await;
-    app.db.close_all().await;
+    app.close_database_sessions().await;
     let config = app.config.read().await.server.clone();
     let mut runtime = app.mcp.write().await;
     runtime.generation = runtime.generation.wrapping_add(1);
@@ -607,18 +607,14 @@ async fn handle_tool_call(
         return Err((-32001, "MCP emergency disconnect is active".to_string()));
     }
     let cancellation = state.app.mcp_cancellation_token().await;
-    tokio::select! {
-        _ = cancellation.cancelled() => {
-            Err((-32001, "MCP request cancelled by emergency disconnect".to_string()))
-        }
-        result = handle_active_tool_call(state, actor, params) => result,
-    }
+    handle_active_tool_call(state, actor, params, cancellation).await
 }
 
 async fn handle_active_tool_call(
     state: &McpHttpState,
     actor: AuditActor,
     params: Option<Value>,
+    cancellation: CancellationToken,
 ) -> Result<Value, (i32, String)> {
     let params = params.unwrap_or_else(|| json!({}));
     let Some(params_object) = params.as_object() else {
@@ -642,88 +638,95 @@ async fn handle_active_tool_call(
         return Err((-32000, "tools/call rate limit exceeded".to_string()));
     }
 
-    let global_permit = tokio::time::timeout(
-        TOOL_CONCURRENCY_WAIT,
-        state.tool_concurrency.clone().acquire_owned(),
-    )
-    .await
-    .map_err(|_| {
-        crate::debug_log::warn(
-            "mcp",
-            format_args!("tool call rejected: global concurrency wait timed out"),
-        );
-        (-32000, "tools/call concurrency limit exceeded".to_string())
-    })?
-    .map_err(|_| {
-        (
-            -32603,
-            "MCP concurrency controller is unavailable".to_string(),
+    let acquire_permits = async {
+        let global_permit = tokio::time::timeout(
+            TOOL_CONCURRENCY_WAIT,
+            state.tool_concurrency.clone().acquire_owned(),
         )
-    })?;
+        .await
+        .map_err(|_| {
+            crate::debug_log::warn(
+                "mcp",
+                format_args!("tool call rejected: global concurrency wait timed out"),
+            );
+            (-32000, "tools/call concurrency limit exceeded".to_string())
+        })?
+        .map_err(|_| {
+            (
+                -32603,
+                "MCP concurrency controller is unavailable".to_string(),
+            )
+        })?;
 
-    let connection_id = params_object
-        .get("arguments")
-        .and_then(|arguments| arguments.get("connection_id"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let connection_limit = if let Some(connection_id) = connection_id {
-        state
-            .app
-            .config
-            .read()
-            .await
-            .connections
-            .iter()
-            .find(|connection| connection.id == connection_id)
-            .map(|connection| (connection_id, connection.max_connections.clamp(1, 3)))
-    } else {
-        None
-    };
-    let connection_permit = if let Some((connection_id, max_connections)) = connection_limit {
-        // The concurrency map key consumes the id, so keep a copy for logging.
-        let log_connection_id = connection_id.clone();
-        let semaphore = {
-            let mut limits = state.connection_concurrency.lock().await;
-            let entry = limits.entry(connection_id).or_insert_with(|| {
-                (
-                    max_connections,
-                    Arc::new(Semaphore::new(max_connections as usize)),
-                )
-            });
-            if entry.0 != max_connections {
-                *entry = (
-                    max_connections,
-                    Arc::new(Semaphore::new(max_connections as usize)),
-                );
-            }
-            entry.1.clone()
-        };
-        Some(
-            tokio::time::timeout(TOOL_CONCURRENCY_WAIT, semaphore.acquire_owned())
+        let connection_id = params_object
+            .get("arguments")
+            .and_then(|arguments| arguments.get("connection_id"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let connection_limit = if let Some(connection_id) = connection_id {
+            state
+                .app
+                .config
+                .read()
                 .await
-                .map_err(|_| {
-                    crate::debug_log::warn(
-                        "mcp",
-                        format_args!(
-                            "tool call rejected: connection concurrency wait timed out (connection_id={log_connection_id})"
-                        ),
-                    );
-                    (-32000, "connection concurrency limit exceeded".to_string())
-                })?
-                .map_err(|_| {
+                .connections
+                .iter()
+                .find(|connection| connection.id == connection_id)
+                .map(|connection| (connection_id, connection.max_connections.clamp(1, 3)))
+        } else {
+            None
+        };
+        let connection_permit = if let Some((connection_id, max_connections)) = connection_limit {
+            // The concurrency map key consumes the id, so keep a copy for logging.
+            let log_connection_id = connection_id.clone();
+            let semaphore = {
+                let mut limits = state.connection_concurrency.lock().await;
+                let entry = limits.entry(connection_id).or_insert_with(|| {
                     (
-                        -32603,
-                        "connection concurrency controller is unavailable".to_string(),
+                        max_connections,
+                        Arc::new(Semaphore::new(max_connections as usize)),
                     )
-                })?,
-        )
-    } else {
-        None
-    };
+                });
+                if entry.0 != max_connections {
+                    *entry = (
+                        max_connections,
+                        Arc::new(Semaphore::new(max_connections as usize)),
+                    );
+                }
+                entry.1.clone()
+            };
+            Some(
+                tokio::time::timeout(TOOL_CONCURRENCY_WAIT, semaphore.acquire_owned())
+                    .await
+                    .map_err(|_| {
+                        crate::debug_log::warn(
+                            "mcp",
+                            format_args!(
+                                "tool call rejected: connection concurrency wait timed out (connection_id={log_connection_id})"
+                            ),
+                        );
+                        (-32000, "connection concurrency limit exceeded".to_string())
+                    })?
+                    .map_err(|_| {
+                        (
+                            -32603,
+                            "connection concurrency controller is unavailable".to_string(),
+                        )
+                    })?,
+            )
+        } else {
+            None
+        };
 
-    let call_result = call_tool_audited(state.app.clone(), actor, params).await;
-    drop(connection_permit);
-    drop(global_permit);
+        Ok::<_, (i32, String)>((global_permit, connection_permit))
+    };
+    let permits = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => None,
+        result = acquire_permits => Some(result?),
+    };
+    let call_result = call_tool_audited(state.app.clone(), actor, params, cancellation).await;
+    drop(permits);
     let call_failed = match &call_result {
         Ok(result) => result.denied,
         Err(_) => true,
@@ -1061,6 +1064,20 @@ fn query_result_schema() -> Value {
             "row_count": { "type": "integer" },
             "truncated": { "type": "boolean" },
             "truncation_reason": nullable_string(),
+            "truncated_cells": {
+                "type": "array",
+                "description": "Truncated cells; row_index is zero-based, lengths count BLOB bytes or CLOB UTF-16 units.",
+                "items": {
+                    "type": "object",
+                    "required": ["row_index", "column", "original_length", "returned_length"],
+                    "properties": {
+                        "row_index": { "type": "integer" },
+                        "column": { "type": "string" },
+                        "original_length": { "type": "integer" },
+                        "returned_length": { "type": "integer" }
+                    }
+                }
+            },
             "returned_bytes": { "type": "integer" },
             "elapsed_ms": { "type": "integer" },
             "rewritten_sql": { "type": "string" }
@@ -1163,6 +1180,7 @@ async fn call_tool_audited(
     app: Arc<AppState>,
     actor: AuditActor,
     params: Value,
+    cancellation: CancellationToken,
 ) -> anyhow::Result<McpToolCallResult> {
     let _config_transaction = app.config_transaction.read().await;
     let started = Instant::now();
@@ -1189,12 +1207,8 @@ async fn call_tool_audited(
     } else {
         false
     };
-    let result = call_tool(app.clone(), actor.clone(), params).await;
-    let result = if is_jdbc {
-        result.map_err(|error| anyhow::anyhow!(text.jdbc_error(&sanitize_error(&*error))))
-    } else {
-        result
-    };
+    let result = call_tool(app.clone(), actor.clone(), params, &cancellation).await;
+    let redact_errors = app.config.read().await.settings.audit_redact_sql_literals;
     let breaker_token_id = actor.token_id.clone();
     if let Err(error) = &result {
         let retention_days = audit_retention_days(&app).await;
@@ -1221,7 +1235,7 @@ async fn call_tool_audited(
                 format_args!(
                     "tool call failed (tool={name}, elapsed={}ms, error={})",
                     started.elapsed().as_millis(),
-                    sanitize_error(error)
+                    database_error_summary(error, true)
                 ),
             );
         }
@@ -1232,7 +1246,7 @@ async fn call_tool_audited(
                 audit_connection_name,
                 name,
                 status,
-                Some(sanitize_error(error)),
+                Some(database_error_summary(error, redact_errors)),
                 Some(started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)),
                 None,
                 audit_sql,
@@ -1240,7 +1254,10 @@ async fn call_tool_audited(
             )
             .await
             .map_err(|audit_error| {
-                anyhow::anyhow!("audit storage unavailable: {audit_error}; request failed")
+                anyhow::anyhow!(
+                    "audit storage unavailable: {}; request failed",
+                    database_error_summary(&audit_error, redact_errors)
+                )
             })?;
         // Evaluate the circuit breaker after the denial is persisted so the
         // count query includes the event that was just recorded.
@@ -1266,7 +1283,14 @@ async fn call_tool_audited(
             );
         }
     }
-    result
+    result.map_err(|error| {
+        let summary = database_error_summary(&error, redact_errors);
+        if is_jdbc {
+            anyhow::anyhow!(text.jdbc_error(&summary))
+        } else {
+            anyhow::anyhow!(summary)
+        }
+    })
 }
 
 async fn audit_sql_for_args(app: &Arc<AppState>, args: &Value) -> Option<AuditSql> {
@@ -1293,11 +1317,28 @@ async fn audit_sql_for_args(app: &Arc<AppState>, args: &Value) -> Option<AuditSq
     Some(AuditSql::redacted())
 }
 
+async fn run_cancellable<T>(
+    cancellation: &CancellationToken,
+    operation: impl std::future::Future<Output = anyhow::Result<T>>,
+) -> anyhow::Result<T> {
+    tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(anyhow::anyhow!("MCP request cancelled; database session closed")),
+        result = operation => result,
+    }
+}
+
 async fn call_tool(
     app: Arc<AppState>,
     actor: AuditActor,
     params: Value,
+    cancellation: &CancellationToken,
 ) -> anyhow::Result<McpToolCallResult> {
+    if cancellation.is_cancelled() {
+        return Err(anyhow::anyhow!(
+            "MCP request cancelled; database session closed"
+        ));
+    }
     let name = params
         .get("name")
         .and_then(Value::as_str)
@@ -1371,11 +1412,14 @@ async fn call_tool(
         "datanexa_get_schema" => {
             let connection_id = required_string(&args, "connection_id")?;
             let connection = connection(app.clone(), connection_id.clone()).await?;
-            let schema = if connection.kind == DbKind::Jdbc {
-                app.jdbc.list_schema(&connection, &app.vault).await?
-            } else {
-                app.db.list_schema(&connection, &app.vault, &text).await?
-            };
+            let schema = run_cancellable(cancellation, async {
+                Ok(if connection.kind == DbKind::Jdbc {
+                    app.jdbc.list_schema(&connection, &app.vault).await?
+                } else {
+                    app.db.list_schema(&connection, &app.vault, &text).await?
+                })
+            })
+            .await?;
             app.audit
                 .record_with_actor(
                     actor.clone(),
@@ -1397,15 +1441,18 @@ async fn call_tool(
             let table = required_string(&args, "table")?;
             let schema = optional_string(&args, "schema");
             let connection = connection(app.clone(), connection_id.clone()).await?;
-            let columns = if connection.kind == DbKind::Jdbc {
-                app.jdbc
-                    .describe_table(&connection, &app.vault, schema.as_deref(), &table)
-                    .await?
-            } else {
-                app.db
-                    .describe_table(&connection, &app.vault, schema.as_deref(), &table, &text)
-                    .await?
-            };
+            let columns = run_cancellable(cancellation, async {
+                Ok(if connection.kind == DbKind::Jdbc {
+                    app.jdbc
+                        .describe_table(&connection, &app.vault, schema.as_deref(), &table)
+                        .await?
+                } else {
+                    app.db
+                        .describe_table(&connection, &app.vault, schema.as_deref(), &table, &text)
+                        .await?
+                })
+            })
+            .await?;
             app.audit
                 .record_with_actor(
                     actor.clone(),
@@ -1454,17 +1501,18 @@ async fn call_tool(
                     reason,
                 ))
             } else {
-                let result = app
-                    .db
-                    .sample_rows(
+                let result = run_cancellable(
+                    cancellation,
+                    app.db.sample_rows(
                         &connection,
                         &app.vault,
                         schema.as_deref(),
                         &table,
                         limit,
                         &text,
-                    )
-                    .await?;
+                    ),
+                )
+                .await?;
                 app.audit
                     .record_with_actor(
                         actor.clone(),
@@ -1490,15 +1538,18 @@ async fn call_tool(
             let connection_id = required_string(&args, "connection_id")?;
             let sql = required_string(&args, "sql")?;
             let connection = connection(app.clone(), connection_id.clone()).await?;
-            let (policy, result) = if connection.kind == DbKind::Jdbc {
-                app.jdbc
-                    .execute_readonly(&connection, &app.vault, &sql, &text)
-                    .await?
-            } else {
-                app.db
-                    .execute_readonly(&connection, &app.vault, &sql, &text)
-                    .await?
-            };
+            let (policy, result) = run_cancellable(cancellation, async {
+                Ok(if connection.kind == DbKind::Jdbc {
+                    app.jdbc
+                        .execute_readonly(&connection, &app.vault, &sql, &text)
+                        .await?
+                } else {
+                    app.db
+                        .execute_readonly(&connection, &app.vault, &sql, &text)
+                        .await?
+                })
+            })
+            .await?;
             if !policy.allowed {
                 denied = true;
                 app.audit
@@ -1566,10 +1617,11 @@ async fn call_tool(
                     reason,
                 ))
             } else {
-                let (policy, result) = app
-                    .db
-                    .explain_sql(&connection, &app.vault, &sql, &text)
-                    .await?;
+                let (policy, result) = run_cancellable(
+                    cancellation,
+                    app.db.explain_sql(&connection, &app.vault, &sql, &text),
+                )
+                .await?;
                 if !policy.allowed {
                     denied = true;
                     app.audit
@@ -1859,6 +1911,7 @@ mod tests {
             store,
             config: tokio::sync::RwLock::new(config),
             config_transaction: tokio::sync::RwLock::new(()),
+            snapshot_sequence: tokio::sync::Mutex::new(0),
             vault: CredentialVault::new(),
             audit: AuditLogger::for_test(audit_path.to_path_buf()),
             access,
@@ -1882,6 +1935,7 @@ mod tests {
             store: ConfigStore::for_test(invalid_target),
             config: tokio::sync::RwLock::new(config),
             config_transaction: tokio::sync::RwLock::new(()),
+            snapshot_sequence: tokio::sync::Mutex::new(0),
             vault: CredentialVault::new(),
             audit: AuditLogger::for_test(root.join("audit.json")),
             access: AccessControlStore::for_test(root.join("access-control.db")),
@@ -2038,6 +2092,7 @@ mod tests {
                 "name": "datanexa_policy_check",
                 "arguments": { "kind": "sqlite", "sql": "SELECT 1" }
             }),
+            &CancellationToken::new(),
         )
         .await
         .expect("allowed policy check");
@@ -2064,6 +2119,7 @@ mod tests {
                 "name": "datanexa_policy_check",
                 "arguments": { "kind": "sqlite", "sql": "DELETE FROM users" }
             }),
+            &CancellationToken::new(),
         )
         .await
         .expect("denied policy check");

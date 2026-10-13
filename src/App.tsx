@@ -387,10 +387,14 @@ function App() {
     return scopes.some((scope) => (busyScopes.get(scope) ?? 0) > 0);
   }
 
+  function applySnapshot(next: AppSnapshot) {
+    setSnapshot((current) => current && current.version >= next.version ? current : next);
+  }
+
   async function refresh(options: { quiet?: boolean } = {}) {
     if (!options.quiet) beginBusy("refresh");
     try {
-      setSnapshot(await api.snapshot());
+      applySnapshot(await api.snapshot());
     } catch (error) {
       showError(error);
     } finally {
@@ -439,7 +443,7 @@ function App() {
         password: password.length > 0 ? password : null,
         clear_password: clearPassword
       });
-      setSnapshot(next);
+      applySnapshot(next);
       setEditing(null);
       setPassword("");
       setClearPassword(false);
@@ -463,7 +467,7 @@ function App() {
   async function deleteConnection(id: string) {
     beginBusy("connections");
     try {
-      setSnapshot(await api.deleteConnection(id));
+      applySnapshot(await api.deleteConnection(id));
       pushToast(t.toast.connectionDeleted);
     } catch (error) {
       showError(error);
@@ -476,7 +480,7 @@ function App() {
     beginBusy("connections");
     try {
       const connectionName = snapshot?.config.connections.find((connection) => connection.id === id)?.name ?? id;
-      setSnapshot(await api.setConnectionEnabled(id, enabled));
+      applySnapshot(await api.setConnectionEnabled(id, enabled));
       pushToast(
         formatMessage(enabled ? t.toast.connectionEnabled : t.toast.connectionDisabled, {
           connection: connectionName
@@ -494,7 +498,7 @@ function App() {
     const wasEmergencyDisconnected = Boolean(snapshot?.emergency_disconnect);
     beginBusy("connections");
     try {
-      setSnapshot(await api.disableAllConnections());
+      applySnapshot(await api.disableAllConnections());
       pushToast(
         wasEmergencyDisconnected
           ? t.toast.emergencyDisconnectRestored
@@ -511,7 +515,7 @@ function App() {
   async function clearAuditEvents() {
     beginBusy("audit");
     try {
-      setSnapshot(await api.clearAuditEvents());
+      applySnapshot(await api.clearAuditEvents());
       setSelectedAudit(null);
       pushToast(t.toast.auditCleared, "info");
     } catch (error) {
@@ -570,7 +574,7 @@ function App() {
     if (!snapshot?.server_status.running && snapshot?.audit_migration.status !== "ready") return;
     beginBusy("server");
     try {
-      setSnapshot(snapshot?.server_status.running ? await api.stopServer() : await api.startServer());
+      applySnapshot(snapshot?.server_status.running ? await api.stopServer() : await api.startServer());
     } catch (error) {
       showError(error);
       await refresh({ quiet: true });
@@ -582,7 +586,7 @@ function App() {
   async function retryAuditMigration() {
     setMigrationRecoveryBusy(true);
     try {
-      setSnapshot(await api.retryAuditMigration());
+      applySnapshot(await api.retryAuditMigration());
     } catch (error) {
       showError(error);
       await refresh({ quiet: true });
@@ -594,7 +598,7 @@ function App() {
   async function clearLegacyAuditLog() {
     setMigrationRecoveryBusy(true);
     try {
-      setSnapshot(await api.clearLegacyAuditLog());
+      applySnapshot(await api.clearLegacyAuditLog());
     } catch (error) {
       showError(error);
       await refresh({ quiet: true });
@@ -793,7 +797,7 @@ function App() {
   async function updateAccess(action: () => Promise<AppSnapshot>, message: string): Promise<boolean> {
     beginBusy("access");
     try {
-      setSnapshot(await action());
+      applySnapshot(await action());
       pushToast(message, "info");
       return true;
     } catch (error) {
@@ -848,7 +852,7 @@ function App() {
   async function saveServer(server: ServerConfig): Promise<boolean> {
     beginBusy("settings");
     try {
-      setSnapshot(await api.saveServerConfig(server));
+      applySnapshot(await api.saveServerConfig(server));
       pushToast(t.toast.serverSaved, "info");
       return true;
     } catch (error) {
@@ -871,7 +875,7 @@ function App() {
     beginBusy("settings");
     try {
       const nextSnapshot = await api.saveSettingsConfig({ ...settings, language: next }, false);
-      setSnapshot(nextSnapshot);
+      applySnapshot(nextSnapshot);
     } catch (error) {
       showError(error);
     } finally {
@@ -886,7 +890,7 @@ function App() {
       setLocale(nextLocale);
       persistLocale(nextLocale);
       const nextSnapshot = await api.saveSettingsConfig({ ...settings, language: nextLocale }, applyAutoStart);
-      setSnapshot(nextSnapshot);
+      applySnapshot(nextSnapshot);
       if (applyAutoStart && settings.auto_start_mcp && nextSnapshot.auto_start_status === "requires_approval") {
         pushToast(messages[nextLocale].toast.autoStartRequiresApproval, "error");
       }
@@ -925,7 +929,7 @@ function App() {
 
   async function applyConnectionsImport(path: string, password: string | null) {
     const result = await api.importConnections(path, password);
-    setSnapshot(result.snapshot);
+    applySnapshot(result.snapshot);
     pushToast(formatMessage(
       result.skipped_count > 0 ? t.toast.connectionsImportedPartial : t.toast.connectionsImported,
       { count: result.imported_count, skipped: result.skipped_count }
@@ -990,7 +994,7 @@ function App() {
   async function setToolEnabled(name: string, enabled: boolean) {
     beginBusy("tools");
     try {
-      setSnapshot(await api.setMcpToolEnabled(name, enabled));
+      applySnapshot(await api.setMcpToolEnabled(name, enabled));
       pushToast(
         formatMessage(enabled ? t.toast.toolEnabled : t.toast.toolDisabled, {
           tool: toolDisplayName(t, name)

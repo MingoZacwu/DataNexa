@@ -23,6 +23,7 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.Comparator;
@@ -31,6 +32,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
 import java.util.ServiceConfigurationError;
@@ -203,9 +205,13 @@ public final class JdbcSidecar {
         Connection connection = openConnection(request);
         {
             DatabaseMetaData metadata = connection.getMetaData();
+            String[] target = resolveTable(metadata, connection.getCatalog(), schema, tableName);
             Set<String> primaryKeys = new HashSet<String>();
-            try (ResultSet result = metadata.getPrimaryKeys(null, schema, tableName)) {
+            try (ResultSet result = metadata.getPrimaryKeys(target[0], target[1], target[2])) {
                 while (result.next()) {
+                    if (!matchesTable(result, target)) {
+                        continue;
+                    }
                     String column = result.getString("COLUMN_NAME");
                     if (column != null) {
                         primaryKeys.add(column);
@@ -214,8 +220,13 @@ public final class JdbcSidecar {
             }
             ObjectNode response = success(requestId);
             ArrayNode columns = response.putArray("columns");
-            try (ResultSet result = metadata.getColumns(null, schema, tableName, "%")) {
+            try (ResultSet result = metadata.getColumns(
+                target[0], metadataPattern(metadata, target[1]), metadataPattern(metadata, target[2]), "%"
+            )) {
                 while (result.next()) {
+                    if (!matchesTable(result, target)) {
+                        continue;
+                    }
                     String name = result.getString("COLUMN_NAME");
                     if (name == null || name.trim().isEmpty()) {
                         continue;
@@ -229,6 +240,51 @@ public final class JdbcSidecar {
             }
             return response;
         }
+    }
+
+    private static String metadataPattern(DatabaseMetaData metadata, String value) throws SQLException {
+        if (value == null) {
+            return null;
+        }
+        String escape = metadata.getSearchStringEscape();
+        if (escape == null || escape.isEmpty()) {
+            // Exact identity filtering below also covers drivers without pattern escaping.
+            return value;
+        }
+        return value.replace(escape, escape + escape).replace("_", escape + "_").replace("%", escape + "%");
+    }
+
+    private static String[] resolveTable(DatabaseMetaData metadata, String catalog, String schema, String table)
+        throws SQLException {
+        String[] target = null;
+        try (ResultSet result = metadata.getTables(
+            catalog, metadataPattern(metadata, schema), metadataPattern(metadata, table), null
+        )) {
+            while (result.next()) {
+                String[] candidate = {
+                    result.getString("TABLE_CAT"), result.getString("TABLE_SCHEM"), result.getString("TABLE_NAME")
+                };
+                if (!table.equals(candidate[2])
+                    || (catalog != null && !catalog.equals(candidate[0]))
+                    || (schema != null && !schema.equals(candidate[1]))) {
+                    continue;
+                }
+                if (target != null && !Arrays.equals(target, candidate)) {
+                    throw new SidecarException("ambiguous_table", "Specify a schema or catalog to identify one table");
+                }
+                target = candidate;
+            }
+        }
+        if (target == null) {
+            throw new SidecarException("table_not_found", "The requested table was not found");
+        }
+        return target;
+    }
+
+    private static boolean matchesTable(ResultSet result, String[] target) throws SQLException {
+        return Objects.equals(target[0], result.getString("TABLE_CAT"))
+            && Objects.equals(target[1], result.getString("TABLE_SCHEM"))
+            && Objects.equals(target[2], result.getString("TABLE_NAME"));
     }
 
     private static ObjectNode query(String requestId, JsonNode request) throws Exception {
@@ -260,6 +316,7 @@ public final class JdbcSidecar {
                     columns.add(name);
                 }
                 ArrayNode rows = response.putArray("rows");
+                ArrayNode truncatedCells = response.putArray("truncated_cells");
                 boolean truncated = false;
                 String truncationReason = null;
                 while (result.next()) {
@@ -268,15 +325,26 @@ public final class JdbcSidecar {
                         truncationReason = "row_limit";
                         break;
                     }
+                    int previousTruncations = truncatedCells.size();
                     ObjectNode row = rows.addObject();
                     for (int index = 1; index <= names.size(); index++) {
-                        row.set(names.get(index - 1), jdbcValue(result.getObject(index)));
+                        String column = names.get(index - 1);
+                        row.set(column, jdbcValue(result.getObject(index), truncatedCells, rows.size() - 1, column));
                     }
                     if (JSON.writeValueAsBytes(response).length > maxBytes) {
                         rows.remove(rows.size() - 1);
+                        while (truncatedCells.size() > previousTruncations) {
+                            truncatedCells.remove(truncatedCells.size() - 1);
+                        }
                         truncated = true;
                         truncationReason = "result_size";
                         break;
+                    }
+                }
+                if (truncatedCells.size() > 0) {
+                    truncated = true;
+                    if (truncationReason == null) {
+                        truncationReason = "cell_size";
                     }
                 }
                 response.put("row_count", rows.size());
@@ -417,7 +485,8 @@ public final class JdbcSidecar {
         return names;
     }
 
-    private static JsonNode jdbcValue(Object value) {
+    private static JsonNode jdbcValue(Object value, ArrayNode truncatedCells, int row, String column)
+        throws SQLException {
         if (value == null) {
             return JSON.nullNode();
         }
@@ -425,27 +494,43 @@ public final class JdbcSidecar {
             return JSON.getNodeFactory().textNode("base64:" + Base64.getEncoder().encodeToString((byte[]) value));
         }
         if (value instanceof java.sql.Blob) {
+            java.sql.Blob blob = (java.sql.Blob) value;
             try {
-                java.sql.Blob blob = (java.sql.Blob) value;
-                long length = Math.min(blob.length(), 64 * 1024L);
-                return JSON.getNodeFactory().textNode("base64:" + Base64.getEncoder().encodeToString(blob.getBytes(1, (int) length)));
-            } catch (SQLException error) {
-                return JSON.getNodeFactory().textNode("[BLOB_UNAVAILABLE]");
+                long originalLength = blob.length();
+                int length = (int) Math.min(originalLength, 64 * 1024L);
+                byte[] bytes = blob.getBytes(1, length);
+                recordCellTruncation(truncatedCells, row, column, originalLength, bytes.length);
+                return JSON.getNodeFactory().textNode("base64:" + Base64.getEncoder().encodeToString(bytes));
+            } finally {
+                blob.free();
             }
         }
         if (value instanceof java.sql.Clob) {
+            java.sql.Clob clob = (java.sql.Clob) value;
             try {
-                java.sql.Clob clob = (java.sql.Clob) value;
-                long length = Math.min(clob.length(), 64 * 1024L);
-                return JSON.getNodeFactory().textNode(clob.getSubString(1, (int) length));
-            } catch (SQLException error) {
-                return JSON.getNodeFactory().textNode("[CLOB_UNAVAILABLE]");
+                long originalLength = clob.length();
+                int length = (int) Math.min(originalLength, 64 * 1024L);
+                String content = clob.getSubString(1, length);
+                recordCellTruncation(truncatedCells, row, column, originalLength, content.length());
+                return JSON.getNodeFactory().textNode(content);
+            } finally {
+                clob.free();
             }
         }
         if (value instanceof Number || value instanceof Boolean) {
             return JSON.valueToTree(value);
         }
-        return JSON.getNodeFactory().textNode(safeMetadata(String.valueOf(value)));
+        return JSON.getNodeFactory().textNode(String.valueOf(value));
+    }
+
+    private static void recordCellTruncation(ArrayNode cells, int row, String column, long original, long returned) {
+        if (original > returned) {
+            ObjectNode cell = cells.addObject();
+            cell.put("row_index", row);
+            cell.put("column", column);
+            cell.put("original_length", original);
+            cell.put("returned_length", returned);
+        }
     }
 
     private static URLClassLoader bundleClassLoader(String bundlePath) throws Exception {

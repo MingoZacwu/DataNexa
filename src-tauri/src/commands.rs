@@ -37,6 +37,7 @@ use crate::{hide_main_window_to_tray, refresh_tray_menu};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AppSnapshot {
+    pub version: u64,
     pub config: AppConfig,
     pub server_status: ServerStatus,
     pub emergency_disconnect: bool,
@@ -260,11 +261,12 @@ pub async fn delete_jdbc_driver(
 ) -> Result<JdbcStatus, String> {
     let _lifecycle = state.jdbc_lifecycle.lock().await;
     let text = text_for_state(state.inner()).await;
+    let _transaction = state.config_transaction.write().await;
     let connections = state.config.read().await.connections.clone();
-    state.jdbc.shutdown_sessions().await;
     state
         .jdbc
         .delete_driver(&bundle_id, &connections)
+        .await
         .map_err(|error| to_jdbc_client_error(error, &text))?;
     state
         .jdbc
@@ -900,24 +902,24 @@ pub async fn upsert_connection(
     validate_password_input(input.clear_password, input.password.as_deref())?;
     let text = text_for_state(state.inner()).await;
     validate_connection(&input.connection, &text).map_err(to_client_error)?;
-    if input.connection.kind == DbKind::Jdbc {
-        state
-            .jdbc
-            .ensure_bundle_exists(
-                input
-                    .connection
-                    .jdbc_bundle_id
-                    .as_deref()
-                    .ok_or_else(|| text.jdbc_driver_required().to_string())?,
-            )
-            .map_err(|error| to_jdbc_client_error(error, &text))?;
-    }
     let clear_password = input.clear_password;
     let mut connection = normalize_connection(input.connection);
     let password = input.password.filter(|value| !value.is_empty());
     let updates_credential = password.is_some();
     {
         let _transaction = state.config_transaction.write().await;
+        if connection.kind == DbKind::Jdbc {
+            state
+                .jdbc
+                .ensure_bundle_exists(
+                    connection
+                        .jdbc_bundle_id
+                        .as_deref()
+                        .ok_or_else(|| text.jdbc_driver_required().to_string())?,
+                )
+                .map_err(|error| to_jdbc_client_error(error, &text))?;
+        }
+
         let mut candidate = state.config.read().await.clone();
         let existing = candidate
             .connections
@@ -985,6 +987,7 @@ pub async fn upsert_connection(
             &state.store,
             &state.config,
             &state.db,
+            &state.jdbc,
             candidate,
             std::slice::from_ref(&connection.id),
         )
@@ -1061,6 +1064,7 @@ pub async fn delete_connection(
         &state.store,
         &state.config,
         &state.db,
+        &state.jdbc,
         candidate,
         std::slice::from_ref(&id),
     )
@@ -1143,11 +1147,11 @@ pub async fn disable_all_connections(
     }
 
     state.enter_emergency_mode().await;
-    state.db.close_all().await;
+    state.close_database_sessions().await;
     crate::debug_log::warn(
         "connection",
         format_args!(
-            "emergency disconnect engaged, in-flight requests cancelled and every connection pool closed"
+            "emergency disconnect engaged, in-flight requests cancelled and all native/JDBC sessions closed"
         ),
     );
 
@@ -1222,8 +1226,9 @@ pub async fn test_connection(
                 debug_log::error(
                     "connection_test",
                     format_args!(
-                        "JDBC connection test failed (id={}, name={}, error={error})",
-                        connection.id, connection.name
+                        "JDBC connection test failed (id={}, error={})",
+                        connection.id,
+                        database_error_summary(&error, true)
                     ),
                 );
                 Err(to_jdbc_client_error(error, &text))
@@ -1241,8 +1246,9 @@ pub async fn test_connection(
             debug_log::error(
                 "connection_test",
                 format_args!(
-                    "connection test failed (id={}, name={}, error={error})",
-                    connection.id, connection.name
+                    "connection test failed (id={}, error={})",
+                    connection.id,
+                    database_error_summary(&error, true)
                 ),
             );
             let diagnostics = state.db.diagnostics(&connection, &state.vault, &text);
@@ -1288,8 +1294,8 @@ pub async fn test_connection_input(
                 debug_log::error(
                     "connection_test",
                     format_args!(
-                        "JDBC connection test failed (name={}, error={error})",
-                        connection.name
+                        "JDBC connection test failed (error={})",
+                        database_error_summary(&error, true)
                     ),
                 );
                 Err(to_jdbc_client_error(error, &text))
@@ -1307,8 +1313,8 @@ pub async fn test_connection_input(
             debug_log::error(
                 "connection_test",
                 format_args!(
-                    "connection test failed (name={}, error={error})",
-                    connection.name
+                    "connection test failed (error={})",
+                    database_error_summary(&error, true)
                 ),
             );
             Err(to_client_error(&error))
@@ -1514,6 +1520,9 @@ pub async fn open_debug_log_directory(app: AppHandle) -> Result<(), String> {
 }
 
 async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
+    // Serialize collection so a slow older read can never receive a newer version.
+    let mut sequence = state.snapshot_sequence.lock().await;
+    *sequence += 1;
     let emergency_disconnect = state.is_emergency_disabled();
     let mut config = state.config.read().await.clone();
     if emergency_disconnect {
@@ -1548,6 +1557,7 @@ async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
     }
     let access_tokens = state.access.list().await?;
     Ok(AppSnapshot {
+        version: *sequence,
         server_status: mcp::status(state).await,
         emergency_disconnect,
         audit_events,
@@ -1635,6 +1645,7 @@ async fn commit_config_invalidating<T>(
         &state.store,
         &state.config,
         &state.db,
+        &state.jdbc,
         candidate,
         connection_ids,
     )
@@ -1646,12 +1657,16 @@ async fn persist_invalidating_candidate(
     store: &crate::config::ConfigStore,
     current: &tokio::sync::RwLock<AppConfig>,
     db: &crate::db::DatabaseManager,
+    jdbc: &crate::jdbc::JdbcManager,
     candidate: AppConfig,
     connection_ids: &[String],
 ) -> anyhow::Result<()> {
     store.save(&candidate)?;
     for connection_id in connection_ids {
-        db.close(connection_id).await;
+        tokio::join!(
+            db.close(connection_id),
+            jdbc.close_connection(connection_id)
+        );
     }
     *current.write().await = candidate;
     Ok(())
@@ -1932,6 +1947,46 @@ pub(crate) fn sanitize_error(value: impl std::fmt::Display) -> String {
     text.trim().to_string()
 }
 
+/// Driver messages can echo SQL literals without quotes. In redaction mode
+/// retain only structured error codes and application-owned summaries.
+pub(crate) fn database_error_summary(error: &anyhow::Error, redact: bool) -> String {
+    if !redact {
+        return sanitize_error(error);
+    }
+    for source in error.chain() {
+        if let Some(sqlx::Error::Database(database)) = source.downcast_ref::<sqlx::Error>() {
+            if let Some(code) = database.code().filter(|code| {
+                !code.is_empty()
+                    && code.len() <= 8
+                    && code.bytes().all(|byte| byte.is_ascii_alphanumeric())
+            }) {
+                return format!("Database operation failed (code={code}); details redacted");
+            }
+        }
+        if let Some(jdbc) = source.downcast_ref::<crate::jdbc::SidecarError>() {
+            let code = match jdbc.code.as_str() {
+                "authentication_failed" => "authentication_failed",
+                "connection_lost" => "connection_lost",
+                "jdbc_error" => "jdbc_error",
+                "table_not_found" => "table_not_found",
+                "ambiguous_table" => "ambiguous_table",
+                _ => "sidecar_error",
+            };
+            return format!("JDBC operation failed (code={code}); details redacted");
+        }
+        if source.is::<tokio::time::error::Elapsed>() {
+            return "Database operation timed out".to_string();
+        }
+    }
+    match error.to_string().as_str() {
+        "MCP request cancelled; database session closed" | "JDBC session cancelled" => {
+            "MCP request cancelled; database session closed".to_string()
+        }
+        "JDBC operation timed out" => "Database operation timed out".to_string(),
+        _ => "Database operation failed; details redacted".to_string(),
+    }
+}
+
 fn format_diagnostics_for_client(
     diagnostics: &ConnectionDiagnostics,
     text: &BackendText,
@@ -2026,11 +2081,16 @@ mod tests {
             .map(str::to_string)
             .to_vec();
 
-        assert!(
-            persist_invalidating_candidate(&store, &current, &db, AppConfig::default(), &ids,)
-                .await
-                .is_err()
-        );
+        assert!(persist_invalidating_candidate(
+            &store,
+            &current,
+            &db,
+            &crate::jdbc::JdbcManager::for_test(),
+            AppConfig::default(),
+            &ids,
+        )
+        .await
+        .is_err());
         for id in ids {
             assert_eq!(db.generation_for_test(&id).await, 0);
         }

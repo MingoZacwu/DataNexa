@@ -98,6 +98,7 @@ export interface AccessTokenSecretResult {
 }
 
 export interface AppSnapshot {
+  version: number;
   config: AppConfig;
   server_status: ServerStatus;
   emergency_disconnect: boolean;

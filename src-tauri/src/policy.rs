@@ -57,12 +57,12 @@ impl PolicyEngine {
         let sql_dialect = dialect(kind);
         let mut statements = match Parser::parse_sql(sql_dialect, trimmed) {
             Ok(statements) => statements,
-            Err(error) => {
+            Err(_) => {
                 return deny_logged(
                     PolicyDenial::ParseError,
                     kind,
                     mode,
-                    text.policy_parser_rejected(&error.to_string()),
+                    text.policy_parser_rejected("SQL could not be parsed safely"),
                 )
             }
         };
@@ -96,12 +96,12 @@ impl PolicyEngine {
         let rewritten_sql = statements[0].to_string();
         let reparsed = match Parser::parse_sql(sql_dialect, &rewritten_sql) {
             Ok(statements) => statements,
-            Err(error) => {
+            Err(_) => {
                 return deny_logged(
                     PolicyDenial::ParseError,
                     kind,
                     mode,
-                    text.policy_parser_rejected(&error.to_string()),
+                    text.policy_parser_rejected("SQL could not be parsed safely"),
                 )
             }
         };
@@ -165,106 +165,13 @@ fn check_jdbc(
             }
             allowed_logged(&kind, mode, false, trimmed.to_string(), text)
         }
-        Err(_) => match jdbc_lexical_fallback(trimmed) {
-            Ok(()) => {
-                // The parser did not recognize the dialect, so the weaker
-                // lexical path made the call. That is worth recording alone.
-                crate::debug_log::warn(
-                    "policy",
-                    format_args!("sql allowed via lexical fallback (kind=jdbc, mode={mode})"),
-                );
-                allowed_logged(&kind, mode, false, trimmed.to_string(), text)
-            }
-            Err(violation) => deny_logged(
-                PolicyDenial::Violation(violation),
-                &kind,
-                mode,
-                violation.reason(text),
-            ),
-        },
+        Err(_) => deny_logged(
+            PolicyDenial::ParseError,
+            &kind,
+            mode,
+            text.policy_parser_rejected("SQL could not be parsed safely"),
+        ),
     }
-}
-
-fn jdbc_lexical_fallback(sql: &str) -> Result<(), PolicyViolation> {
-    let mut words = Vec::new();
-    let mut current = String::new();
-    let mut chars = sql.chars().peekable();
-    let mut quote = None;
-    while let Some(character) = chars.next() {
-        if let Some(delimiter) = quote {
-            if character == delimiter {
-                if chars.peek().copied() == Some(delimiter) {
-                    chars.next();
-                } else {
-                    quote = None;
-                }
-            }
-            continue;
-        }
-        if character == '\'' || character == '"' || character == '`' {
-            quote = Some(character);
-            continue;
-        }
-        if character == '-' && chars.peek().copied() == Some('-') {
-            chars.next();
-            for next in chars.by_ref() {
-                if next == '\n' || next == '\r' {
-                    break;
-                }
-            }
-            continue;
-        }
-        if character == '/' && chars.peek().copied() == Some('*') {
-            chars.next();
-            let mut previous = '\0';
-            for next in chars.by_ref() {
-                if previous == '*' && next == '/' {
-                    break;
-                }
-                previous = next;
-            }
-            continue;
-        }
-        if character == ';' {
-            return Err(PolicyViolation::Destructive);
-        }
-        if character.is_ascii_alphabetic() || character == '_' {
-            current.push(character.to_ascii_lowercase());
-        } else if !current.is_empty() {
-            words.push(std::mem::take(&mut current));
-        }
-    }
-    if !current.is_empty() {
-        words.push(current);
-    }
-    let Some(first) = words.first().map(String::as_str) else {
-        return Err(PolicyViolation::SelectOnly);
-    };
-    if !matches!(first, "select" | "with" | "explain") {
-        return Err(PolicyViolation::SelectOnly);
-    }
-    const DANGEROUS: &[&str] = &[
-        "insert", "update", "delete", "merge", "drop", "alter", "create", "truncate", "grant",
-        "revoke", "call", "execute", "do", "vacuum", "analyze", "attach", "detach", "pragma",
-        "set", "reset", "begin", "commit", "rollback", "copy", "outfile", "dumpfile", "load",
-        "unlock",
-    ];
-    if words.iter().any(|word| DANGEROUS.contains(&word.as_str())) {
-        return Err(PolicyViolation::Destructive);
-    }
-    for window in words.windows(2) {
-        if matches!(window, [first, second] if first == "for" && matches!(second.as_str(), "update" | "share"))
-        {
-            return Err(PolicyViolation::Destructive);
-        }
-    }
-    for window in words.windows(3) {
-        if matches!(window, [first, second, third] if first == "lock" && second == "in" && third == "share")
-        {
-            return Err(PolicyViolation::Destructive);
-        }
-    }
-    Ok(())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -544,37 +451,9 @@ fn is_side_effect_function(kind: &DbKind, name: &str) -> bool {
                         | "setval"
                 )
         }
-        DbKind::Jdbc => {
-            // Generic JDBC backends may be any database, so block the union of
-            // dialect-specific side-effect functions instead of a dialect-specific list.
-            name.starts_with("dblink")
-                || matches!(
-                    name.as_str(),
-                    "benchmark"
-                        | "get_lock"
-                        | "load_extension"
-                        | "load_file"
-                        | "lo_create"
-                        | "lo_export"
-                        | "lo_import"
-                        | "lo_unlink"
-                        | "master_pos_wait"
-                        | "pg_read_binary_file"
-                        | "pg_read_file"
-                        | "pg_sleep"
-                        | "pg_sleep_for"
-                        | "pg_sleep_until"
-                        | "readfile"
-                        | "release_all_locks"
-                        | "release_lock"
-                        | "service_get_write_locks"
-                        | "sleep"
-                        | "source_pos_wait"
-                        | "sys_exec"
-                        | "sys_eval"
-                        | "writefile"
-                )
-        }
+        DbKind::Jdbc => [DbKind::Sqlite, DbKind::Mysql, DbKind::Postgres]
+            .iter()
+            .any(|kind| is_side_effect_function(kind, &name)),
     }
 }
 

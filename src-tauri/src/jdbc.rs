@@ -16,14 +16,15 @@ use sysinfo::{MemoryRefreshKind, Pid, ProcessRefreshKind, ProcessesToUpdate, Ref
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, MutexGuard};
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::commands::sanitize_error;
 use crate::config::{ConfigStore, ConnectionConfig, DbKind};
-use crate::db::{ColumnInfo, QueryResult, TableInfo};
+use crate::db::{ColumnInfo, QueryResult, TableInfo, TruncatedCell};
 use crate::jdbc_runtime;
 use crate::vault::CredentialVault;
 
@@ -203,6 +204,7 @@ struct SidecarRequest<'a> {
 
 #[derive(Debug, Default)]
 struct SidecarQuery<'a> {
+    connection_id: Option<&'a str>,
     sql: Option<&'a str>,
     schema: Option<&'a str>,
     table: Option<&'a str>,
@@ -245,6 +247,8 @@ struct SidecarResponse {
     #[serde(default)]
     truncation_reason: Option<String>,
     #[serde(default)]
+    truncated_cells: Vec<TruncatedCell>,
+    #[serde(default)]
     returned_bytes: usize,
     #[serde(default)]
     artifacts: Vec<SidecarArtifact>,
@@ -259,9 +263,10 @@ struct SidecarArtifact {
     sha256: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct SidecarError {
-    code: String,
+#[derive(Debug, Deserialize, thiserror::Error)]
+#[error("JDBC {code}: {message}")]
+pub(crate) struct SidecarError {
+    pub(crate) code: String,
     message: String,
 }
 
@@ -269,9 +274,12 @@ struct SidecarError {
 pub struct JdbcManager {
     app: Option<AppHandle>,
     sessions: Arc<Mutex<HashMap<String, Arc<JdbcSidecarSession>>>>,
+    session_generation: Arc<AtomicU64>,
 }
 
 struct JdbcSidecarSession {
+    connection_id: String,
+    cancellation: CancellationToken,
     bundle_id: String,
     /// Cached from the spawn so the monitoring poll can report the PID without
     /// waiting on `process`, which a running query holds until it responds.
@@ -308,6 +316,7 @@ impl JdbcManager {
         Self {
             app: Some(app),
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            session_generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -316,6 +325,7 @@ impl JdbcManager {
         Self {
             app: None,
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            session_generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -359,9 +369,30 @@ impl JdbcManager {
     }
 
     pub async fn shutdown_sessions(&self) {
-        let sessions = std::mem::take(&mut *self.sessions.lock().await);
+        let sessions = {
+            let mut sessions = self.sessions.lock().await;
+            self.session_generation.fetch_add(1, Ordering::AcqRel);
+            std::mem::take(&mut *sessions)
+        };
+        for session in sessions.values() {
+            session.cancellation.cancel();
+        }
         for session in sessions.into_values() {
-            session.shutdown("application shutdown").await;
+            session.shutdown("database sessions closed").await;
+        }
+    }
+
+    pub async fn close_connection(&self, connection_id: &str) {
+        let mut sessions = self.sessions.lock().await;
+        let keys = sessions
+            .iter()
+            .filter(|(_, session)| session.connection_id == connection_id)
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        for key in keys {
+            if let Some(session) = sessions.remove(&key) {
+                session.shutdown("connection invalidated").await;
+            }
         }
     }
 
@@ -881,7 +912,7 @@ impl JdbcManager {
         Ok(())
     }
 
-    pub fn delete_driver(
+    pub async fn delete_driver(
         &self,
         bundle_id: &str,
         connections: &[ConnectionConfig],
@@ -902,6 +933,7 @@ impl JdbcManager {
         if !target.is_dir() {
             return Err(anyhow::anyhow!("JDBC driver bundle was not found"));
         }
+        self.stop_driver_sessions(bundle_id).await?;
         fs::remove_dir_all(target)?;
         Ok(())
     }
@@ -951,7 +983,10 @@ impl JdbcManager {
                 config.username.as_deref().unwrap_or(""),
                 password,
                 config.jdbc_driver_class.as_deref().unwrap_or(""),
-                SidecarQuery::default(),
+                SidecarQuery {
+                    connection_id: Some(&config.id),
+                    ..SidecarQuery::default()
+                },
                 Duration::from_millis(config.query_timeout_ms.clamp(500, 60_000)),
             )
             .await?;
@@ -983,7 +1018,10 @@ impl JdbcManager {
                 &username,
                 &password,
                 &driver_class,
-                SidecarQuery::default(),
+                SidecarQuery {
+                    connection_id: Some(&config.id),
+                    ..SidecarQuery::default()
+                },
                 query_timeout(config),
             )
             .await?;
@@ -1012,6 +1050,7 @@ impl JdbcManager {
                 &password,
                 &driver_class,
                 SidecarQuery {
+                    connection_id: Some(&config.id),
                     schema,
                     table: Some(table),
                     ..SidecarQuery::default()
@@ -1070,6 +1109,7 @@ impl JdbcManager {
                 &password,
                 &driver_class,
                 SidecarQuery {
+                    connection_id: Some(&config.id),
                     sql: Some(sql),
                     max_rows: Some(max_rows),
                     max_result_bytes: Some(config.max_result_bytes),
@@ -1085,6 +1125,7 @@ impl JdbcManager {
             row_count: response.row_count,
             truncated: response.truncated,
             truncation_reason: response.truncation_reason,
+            truncated_cells: response.truncated_cells,
             returned_bytes: response.returned_bytes,
             elapsed_ms: started.elapsed().as_millis() as u64,
             rewritten_sql,
@@ -1191,51 +1232,26 @@ impl JdbcManager {
         query: SidecarQuery<'_>,
         operation_timeout: Duration,
     ) -> anyhow::Result<SidecarResponse> {
-        let session_key = jdbc_session_key(bundle_path, jdbc_url, username, password, driver_class);
-        for attempt in 0..2 {
-            let result = self
-                .run_sidecar_session(
-                    &session_key,
-                    action,
-                    bundle_path,
-                    jdbc_url,
-                    username,
-                    password,
-                    driver_class,
-                    &query,
-                    operation_timeout,
-                )
-                .await;
-            match result {
-                Ok(response) => return Ok(response),
-                Err(error) if retryable_sidecar_error(&error) => {
-                    if attempt == 0 {
-                        crate::debug_log::warn(
-                            "jdbc",
-                            format_args!(
-                                "JDBC operation failed, restarting sidecar (action={}, error={})",
-                                action, error
-                            ),
-                        );
-                        self.invalidate_session(&session_key, "restarting after sidecar error")
-                            .await;
-                        tokio::time::sleep(Duration::from_millis(150)).await;
-                    } else {
-                        crate::debug_log::warn(
-                            "jdbc",
-                            format_args!(
-                                "JDBC operation failed after sidecar restart (action={}, error={})",
-                                action, error
-                            ),
-                        );
-                        self.invalidate_session(&session_key, "retry failed").await;
-                        return Err(error);
-                    }
-                }
-                Err(error) => return Err(error),
-            }
-        }
-        unreachable!("sidecar retry loop must return on every attempt")
+        let connection_id = query.connection_id.unwrap_or_default();
+        let session_key = format!(
+            "{}:{}",
+            connection_id,
+            jdbc_session_key(bundle_path, jdbc_url, username, password, driver_class)
+        );
+        // A submitted request may already have executed. Never replay it after
+        // transport failure or cancellation; the next request gets a fresh session.
+        self.run_sidecar_session(
+            &session_key,
+            action,
+            bundle_path,
+            jdbc_url,
+            username,
+            password,
+            driver_class,
+            &query,
+            operation_timeout,
+        )
+        .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1251,7 +1267,15 @@ impl JdbcManager {
         query: &SidecarQuery<'_>,
         operation_timeout: Duration,
     ) -> anyhow::Result<SidecarResponse> {
-        let session = self.get_or_create_session(session_key, bundle_path).await?;
+        let generation = self.session_generation.load(Ordering::Acquire);
+        let session = self
+            .get_or_create_session(
+                session_key,
+                bundle_path,
+                query.connection_id.unwrap_or_default(),
+                generation,
+            )
+            .await?;
         let request_id = session
             .next_request_id
             .fetch_add(1, Ordering::Relaxed)
@@ -1287,10 +1311,20 @@ impl JdbcManager {
         &self,
         session_key: &str,
         bundle_path: &Path,
+        connection_id: &str,
+        generation: u64,
     ) -> anyhow::Result<Arc<JdbcSidecarSession>> {
         let mut sessions = self.sessions.lock().await;
+        if generation != self.session_generation.load(Ordering::Acquire) {
+            return Err(anyhow::anyhow!("JDBC session cancelled"));
+        }
         if let Some(session) = sessions.get(session_key) {
-            return Ok(session.clone());
+            if !session.cancellation.is_cancelled() {
+                return Ok(session.clone());
+            }
+        }
+        if let Some(session) = sessions.remove(session_key) {
+            session.shutdown("discarding interrupted session").await;
         }
         let (java, _) = self.java_executable()?;
         let java = normalize_java_path(java);
@@ -1329,11 +1363,27 @@ impl JdbcManager {
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stderr);
                 let mut line = String::new();
-                while reader.read_line(&mut line).await.unwrap_or(0) > 0 {
-                    // The sidecar stdout carries the JSON protocol, so stderr
-                    // is the only channel for JVM and driver diagnostics.
-                    crate::debug_log::warn("jdbc", format_args!("{}", line.trim_end()));
-                    line.clear();
+                let mut reported = false;
+                loop {
+                    match reader.read_line(&mut line).await {
+                        Ok(0) => break,
+                        Ok(_) => {
+                            if !reported {
+                                crate::debug_log::warn("jdbc", format_args!(
+                                    "JDBC driver emitted diagnostics; unstructured content omitted for privacy"
+                                ));
+                                reported = true;
+                            }
+                            line.clear();
+                        }
+                        Err(error) => {
+                            crate::debug_log::warn(
+                                "jdbc",
+                                format_args!("failed to read sidecar diagnostics: {error}"),
+                            );
+                            break;
+                        }
+                    }
                 }
             });
         }
@@ -1344,6 +1394,8 @@ impl JdbcManager {
             .to_string();
         let sidecar_pid = child.id().unwrap_or(0);
         let session = Arc::new(JdbcSidecarSession {
+            connection_id: connection_id.to_string(),
+            cancellation: CancellationToken::new(),
             bundle_id: bundle_id.clone(),
             sidecar_pid,
             started_at,
@@ -1568,13 +1620,6 @@ impl JdbcManager {
         })
     }
 
-    async fn invalidate_session(&self, session_key: &str, reason: &str) {
-        let session = self.sessions.lock().await.remove(session_key);
-        if let Some(session) = session {
-            session.shutdown(reason).await;
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     async fn run_sidecar_once(
         &self,
@@ -1773,6 +1818,26 @@ impl JdbcManager {
     }
 }
 
+struct JdbcInvocation<'a> {
+    process: MutexGuard<'a, JdbcSidecarProcess>,
+    cancellation: &'a CancellationToken,
+    completed: bool,
+}
+
+impl Drop for JdbcInvocation<'_> {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.cancellation.cancel();
+            if let Err(error) = self.process.child.start_kill() {
+                crate::debug_log::warn(
+                    "jdbc",
+                    format_args!("failed to terminate interrupted sidecar: {error}"),
+                );
+            }
+        }
+    }
+}
+
 impl JdbcSidecarSession {
     async fn invoke(
         &self,
@@ -1783,7 +1848,16 @@ impl JdbcSidecarSession {
         let mut payload = Zeroizing::new(serde_json::to_vec(&request)?);
         payload.push(b'\n');
         let invoke = async {
-            let mut process = self.process.lock().await;
+            let process = self.process.lock().await;
+            let mut invocation = JdbcInvocation {
+                process,
+                cancellation: &self.cancellation,
+                completed: false,
+            };
+            if self.cancellation.is_cancelled() {
+                return Err(anyhow::anyhow!("JDBC session cancelled"));
+            }
+            let process = &mut *invocation.process;
             process
                 .stdin
                 .write_all(payload.as_slice())
@@ -1822,22 +1896,26 @@ impl JdbcSidecarSession {
             if response.protocol_version != PROTOCOL_VERSION || response.request_id != request_id {
                 return Err(anyhow::anyhow!("JDBC sidecar protocol validation failed"));
             }
+            invocation.completed = true;
             if !response.ok {
                 let error = response.error.unwrap_or(SidecarError {
                     code: "sidecar_error".to_string(),
                     message: "JDBC operation failed".to_string(),
                 });
-                return Err(anyhow::anyhow!(
-                    "JDBC {}: {}",
-                    sanitize_error(&error.code),
-                    sanitize_error(&error.message)
-                ));
+                if error.code == "connection_lost" {
+                    invocation.completed = false;
+                }
+                return Err(error.into());
             }
             Ok(response)
         };
-        let result = timeout(operation_timeout, invoke)
-            .await
-            .map_err(|_| anyhow::anyhow!("JDBC operation timed out"))?;
+        let result = tokio::select! {
+            biased;
+            _ = self.cancellation.cancelled() => Err(anyhow::anyhow!("JDBC session cancelled")),
+            result = timeout(operation_timeout, invoke) => {
+                result.map_err(|_| anyhow::anyhow!("JDBC operation timed out"))?
+            }
+        };
         payload.zeroize();
         let response = result?;
         if !self.startup_logged.swap(true, Ordering::AcqRel) {
@@ -1857,6 +1935,7 @@ impl JdbcSidecarSession {
     }
 
     async fn shutdown(&self, reason: &str) {
+        self.cancellation.cancel();
         {
             let mut process = self.process.lock().await;
             if let Err(error) = process.child.kill().await {
@@ -1900,19 +1979,6 @@ fn jdbc_session_key(
         digest.update([0]);
     }
     format!("jdbc-{:x}", digest.finalize())
-}
-
-fn retryable_sidecar_error(error: &anyhow::Error) -> bool {
-    let message = error.to_string();
-    message.contains("JDBC operation timed out")
-        || message.contains("JDBC runtime could not be started")
-        || message.contains("JDBC sidecar exited unexpectedly")
-        || message.contains("JDBC sidecar stdin failed")
-        || message.contains("JDBC sidecar stdin flush failed")
-        || message.contains("JDBC sidecar stdout failed")
-        || message.contains("JDBC sidecar protocol validation failed")
-        || message.contains("JDBC sidecar returned an invalid response")
-        || message.contains("JDBC connection_lost:")
 }
 
 fn runtime_roots(app: &AppHandle) -> Vec<PathBuf> {

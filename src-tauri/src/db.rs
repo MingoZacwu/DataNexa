@@ -40,12 +40,22 @@ pub struct ColumnInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TruncatedCell {
+    pub row_index: usize,
+    pub column: String,
+    pub original_length: u64,
+    pub returned_length: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryResult {
     pub columns: Vec<String>,
     pub rows: Vec<Map<String, Value>>,
     pub row_count: usize,
     pub truncated: bool,
     pub truncation_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub truncated_cells: Vec<TruncatedCell>,
     pub returned_bytes: usize,
     pub elapsed_ms: u64,
     pub rewritten_sql: String,
@@ -616,9 +626,10 @@ impl DatabaseManager {
                 crate::debug_log::error(
                     "database",
                     format_args!(
-                        "connection pool creation failed (id={}, kind={}, error={error})",
+                        "connection pool creation failed (id={}, kind={}, error={})",
                         config.id,
-                        kind_label(&config.kind)
+                        kind_label(&config.kind),
+                        crate::commands::database_error_summary(&error, true)
                     ),
                 );
                 return Err(error);
@@ -1136,6 +1147,7 @@ fn unique_column_names<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<Stri
 fn result(collected: CollectedRows, elapsed: Duration, rewritten_sql: String) -> QueryResult {
     let row_count = collected.rows.len();
     QueryResult {
+        truncated_cells: Vec::new(),
         columns: collected.columns,
         rows: collected.rows,
         row_count,

@@ -64,6 +64,7 @@ const mockTools: McpToolInfo[] = [
 ];
 
 const mockSnapshot: AppSnapshot = {
+  version: 0,
   emergency_disconnect: false,
   updater_enabled: false,
   startup_error: null,
@@ -273,13 +274,22 @@ function getMockJdbcStorageStatus(): JdbcStorageStatus {
   };
 }
 
+let previewSnapshotVersion = 0;
+
 async function command<T>(name: string, args?: Record<string, unknown>, fallback?: T): Promise<T> {
   if (!isTauri) {
     if (fallback === undefined) {
       throw new Error(formatMessage(previewText.desktopOnly, { name }));
     }
+    // Version the captured preview response before simulating transport latency.
+    let response = fallback;
+    if (typeof response === "object" && response !== null && "version" in response && "config" in response) {
+      response = { ...response, version: ++previewSnapshotVersion };
+    } else if (typeof response === "object" && response !== null && "snapshot" in response) {
+      response = { ...response, snapshot: { ...(response.snapshot as AppSnapshot), version: ++previewSnapshotVersion } };
+    }
     await new Promise((resolve) => window.setTimeout(resolve, 120));
-    return fallback;
+    return response;
   }
 
   return invoke<T>(name, args);
