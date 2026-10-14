@@ -553,5 +553,16 @@ export const api = {
       return Promise.resolve();
     }
     return command<void>("open_project_site", undefined, undefined);
+  },
+  // Passing no version opens the changelog top; passing one deep-links to that
+  // version's card (`#v<version>`), matching the anchors the site generates.
+  openProjectChangelog: (version?: string | null) => {
+    if (!isTauri) {
+      const tag = (version ?? "").trim().replace(/^v/i, "");
+      const hash = tag ? `#v${tag}` : "";
+      window.open(`https://mingozacwu.github.io/datanexa-site/changelog.html${hash}`, "_blank", "noopener,noreferrer");
+      return Promise.resolve();
+    }
+    return command<void>("open_project_changelog", { version: version ?? null }, undefined);
   }
 };

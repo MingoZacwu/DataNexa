@@ -1462,6 +1462,32 @@ pub async fn open_project_site() -> Result<(), String> {
         .map_err(to_client_error)
 }
 
+/// Open the changelog page on the project site. The base URL is fixed here so
+/// the front end cannot open arbitrary locations; the version only selects the
+/// in-page anchor (`#v<version>`) and is reduced to the characters a version
+/// tag can contain.
+#[tauri::command]
+pub fn open_project_changelog(version: Option<String>) -> Result<(), String> {
+    const CHANGELOG_URL: &str = "https://mingozacwu.github.io/datanexa-site/changelog.html";
+
+    let tag: String = version
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .trim_start_matches(|c| c == 'v' || c == 'V')
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '+'))
+        .collect();
+
+    let url = if tag.is_empty() {
+        CHANGELOG_URL.to_string()
+    } else {
+        format!("{CHANGELOG_URL}#v{tag}")
+    };
+
+    tauri_plugin_opener::open_url(url, None::<&str>).map_err(to_client_error)
+}
+
 /// Triggered by the front-end when the main window becomes visible.
 /// Performs an update check only if the 24h interval has elapsed since
 /// the last attempt. Returns `Some(version)` when an update is available.

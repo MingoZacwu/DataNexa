@@ -1265,6 +1265,7 @@ function App() {
                     onImportConnections={() => void importConnections()}
                     onOpenProjectHomepage={() => void api.openProjectHomepage().catch(showError)}
                     onOpenProjectSite={() => void api.openProjectSite().catch(showError)}
+                    onOpenProjectChangelog={(version) => void api.openProjectChangelog(version).catch(showError)}
                   />
                 )}
               </div>

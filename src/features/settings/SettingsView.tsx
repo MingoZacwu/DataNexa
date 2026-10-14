@@ -29,11 +29,13 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  ScrollText,
   SearchCheck, ShieldAlert,
   ShieldCheck,
   ShieldOff,
   Sparkle,
   Square,
+  SquareArrowUpRight,
   Trash2,
   X
 } from "lucide-react";
@@ -106,7 +108,8 @@ export function SettingsView({
   onExportConnections,
   onImportConnections,
   onOpenProjectHomepage,
-  onOpenProjectSite
+  onOpenProjectSite,
+  onOpenProjectChangelog
 }: {
   t: I18nMessages;
   locale: Locale;
@@ -160,6 +163,9 @@ export function SettingsView({
   onImportConnections: () => void;
   onOpenProjectHomepage: () => void;
   onOpenProjectSite: () => void;
+  /** Without a version the changelog opens at its top, which is what the
+   * update-available card wants; the About footer passes the running version. */
+  onOpenProjectChangelog: (version?: string | null) => void;
 }) {
   const [serverDraft, setServerDraft] = useState(server);
   const [settingsDraft, setSettingsDraft] = useState(settings);
@@ -175,6 +181,9 @@ export function SettingsView({
   const [debugOptionsVisible, setDebugOptionsVisible] = useState(false);
   const [debugLogConfirmOpen, setDebugLogConfirmOpen] = useState(false);
   const scrollFadeRef = useScrollFade();
+  // Mirrors the condition that labels the update card "local build"; such a
+  // build is never published on the changelog site, so it gets no changelog link.
+  const isLocalBuild = !updaterEnabled || updateState.kind === "disabled";
 
   useEffect(() => {
     setServerDraft((current) => {
@@ -810,18 +819,36 @@ export function SettingsView({
             <div className="about-hero">
               <img src={appIconUrl} alt="DataNexa" />
               <div>
-                <h2>DataNexa <span
-                  className="version-badge"
-                  onClick={() => {
-                    const next = versionTaps + 1;
-                    if (next >= DEBUG_OPTIONS_UNLOCK_TAPS) {
-                      setVersionTaps(0);
-                      setDebugOptionsVisible(true);
-                    } else {
-                      setVersionTaps(next);
-                    }
-                  }}
-                >v{APP_VERSION}</span></h2>
+                <h2>DataNexa <span className="version-badge">
+                  <span
+                    className="version-badge-taps"
+                    onClick={() => {
+                      const next = versionTaps + 1;
+                      if (next >= DEBUG_OPTIONS_UNLOCK_TAPS) {
+                        setVersionTaps(0);
+                        setDebugOptionsVisible(true);
+                      } else {
+                        setVersionTaps(next);
+                      }
+                    }}
+                  >v{APP_VERSION}</span>
+                  {!isLocalBuild && (
+                    <IconTooltip label={t.settings.changelog}>
+                      <a
+                        className="version-badge-changelog"
+                        href={`https://mingozacwu.github.io/datanexa-site/changelog.html#v${APP_VERSION}`}
+                        aria-label={t.settings.changelog}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          onOpenProjectChangelog(APP_VERSION);
+                        }}
+                      >
+                        <SquareArrowUpRight size={13} />
+                      </a>
+                    </IconTooltip>
+                  )}
+                </span>
+                </h2>
                 <p>{t.settings.aboutText}</p>
               </div>
             </div>
@@ -839,6 +866,7 @@ export function SettingsView({
               onCheck={onCheckUpdate}
               onUpdate={onUpdate}
               onOpenProjectReleases={onOpenProjectReleases}
+              onOpenChangelog={onOpenProjectChangelog}
             >
               {debugOptionsVisible && (
                 <>
@@ -1833,6 +1861,7 @@ export function AboutUpdateSection({
   onCheck,
   onUpdate,
   onOpenProjectReleases,
+  onOpenChangelog,
   children
 }: {
   t: I18nMessages;
@@ -1843,6 +1872,9 @@ export function AboutUpdateSection({
   onCheck: () => void;
   onUpdate: () => void;
   onOpenProjectReleases: () => void;
+  /** Opens the site changelog at its top; the released version is the newest
+   * card there, so no version anchor is needed. */
+  onOpenChangelog: () => void;
   children?: ReactNode;
 }) {
   let icon: ReactNode = <RefreshCw size={19} />;
@@ -1931,8 +1963,8 @@ export function AboutUpdateSection({
         )}
         {state.kind === "available" && (
           <>
-            <button type="button" className="button soft" onClick={onOpenProjectReleases}>
-              <ExternalLink size={16} />
+            <button type="button" className="button soft" onClick={() => onOpenChangelog()}>
+              <ScrollText size={16} />
               {t.updates.viewReleaseNotes}
             </button>
             <button type="button" className="button primary" onClick={onUpdate}>
