@@ -196,19 +196,28 @@ const mockJdbcStatus: JdbcStatus = {
       driver_classes: ["oracle.jdbc.OracleDriver"],
       files: [],
       total_size: 4.2 * 1024 * 1024,
-      source: "maven"
+      source: "maven",
+      capabilities: {
+        read_only: true,
+        query_timeout: true,
+        probed_at: "2026-10-12T09:30:00.000Z",
+        driver_name: "Oracle JDBC driver",
+        driver_version: "23.4.0.24.05",
+        database_product: "Oracle"
+      }
     },
     {
       schema_version: 1,
       bundle_id: "00000000-0000-4000-8000-000000000022",
       display_name: "PostgreSQL JDBC",
       maven_coordinate: "org.postgresql:postgresql:42.7.7",
-      repository_url: "https://maven.aliyun.com/repository/public",
+      repository_url: "https://repo.maven.aliyun.com/repository/public",
       installed_at: "2026-08-24T14:30:00.000Z",
       driver_classes: ["org.postgresql.Driver"],
       files: [],
       total_size: 2.4 * 1024 * 1024,
-      source: "maven"
+      source: "maven",
+      capabilities: null
     }
   ]
 };

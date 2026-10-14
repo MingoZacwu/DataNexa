@@ -158,6 +158,16 @@ public final class JdbcSidecar {
         response.put("database_version", safeMetadata(metadata.getDatabaseProductVersion()));
         response.put("driver_name", safeMetadata(metadata.getDriverName()));
         response.put("driver_version", safeMetadata(metadata.getDriverVersion()));
+        CapabilityReport capabilities = null;
+        try (Statement statement = connection.createStatement()) {
+            capabilities = probeCapabilities(connection, statement, 1);
+        } catch (SQLException error) {
+            // A driver that cannot create statements is still probed for read-only mode.
+        }
+        if (capabilities == null) {
+            capabilities = probeCapabilities(connection, null, 1);
+        }
+        appendCapabilityReport(response, capabilities);
         return response;
     }
 
@@ -294,22 +304,14 @@ public final class JdbcSidecar {
         }
         int maxRows = Math.max(1, Math.min(5000, request.path("max_rows").asInt(500)));
         long maxBytes = Math.max(64 * 1024L, Math.min(8 * 1024 * 1024L, request.path("max_result_bytes").asLong(1024 * 1024L)));
+        int timeoutSeconds = Math.max(1, Math.min(60, request.path("query_timeout_ms").asInt(8000) / 1000));
         Connection connection = openConnection(request);
         try (Statement statement = connection.createStatement()) {
-            try {
-                connection.setReadOnly(true);
-            } catch (SQLException ignored) {
-                // Some drivers only accept read-only mode in connection properties.
-            }
-            int timeoutSeconds = Math.max(1, Math.min(60, request.path("query_timeout_ms").asInt(8000) / 1000));
-            try {
-                statement.setQueryTimeout(timeoutSeconds);
-            } catch (SQLException ignored) {
-                // Some drivers (e.g. read-only CSV drivers) do not support query timeouts.
-            }
+            CapabilityReport capabilities = probeCapabilities(connection, statement, timeoutSeconds);
             try (ResultSet result = statement.executeQuery(sql)) {
                 ResultSetMetaData metadata = result.getMetaData();
                 ObjectNode response = success(requestId);
+                appendCapabilityReport(response, capabilities);
                 ArrayNode columns = response.putArray("column_names");
                 List<String> names = uniqueColumnNames(metadata);
                 for (String name : names) {
@@ -357,6 +359,62 @@ public final class JdbcSidecar {
                 response.put("returned_bytes", JSON.writeValueAsBytes(response).length);
                 return response;
             }
+        }
+    }
+
+    /** Probes the driver capabilities DataNexa relies on for defense in depth.
+     * Both calls are enforcement, not just probing: read-only mode stays set on
+     * the connection, and the timeout must be applied to the very statement
+     * that runs, so they are repeated on every call by design. Drivers that
+     * reject them are reported as unsupported instead of failing the operation.
+     * A null statement skips the timeout probe, leaving it unset. */
+    private static CapabilityReport probeCapabilities(Connection connection, Statement statement, int timeoutSeconds) {
+        String readOnlyDetail = null;
+        try {
+            connection.setReadOnly(true);
+        } catch (SQLException error) {
+            // Some drivers only accept read-only mode in connection properties.
+            readOnlyDetail = message(error);
+        }
+        Boolean timeoutSupported = null;
+        String timeoutDetail = null;
+        if (statement != null) {
+            try {
+                statement.setQueryTimeout(timeoutSeconds);
+                timeoutSupported = Boolean.TRUE;
+            } catch (SQLException error) {
+                // Some drivers (e.g. read-only CSV drivers) do not support query timeouts.
+                timeoutSupported = Boolean.FALSE;
+                timeoutDetail = message(error);
+            }
+        }
+        return new CapabilityReport(
+            readOnlyDetail == null,
+            sanitize(readOnlyDetail == null ? "" : readOnlyDetail, "", ""),
+            timeoutSupported,
+            sanitize(timeoutDetail == null ? "" : timeoutDetail, "", "")
+        );
+    }
+
+    private static void appendCapabilityReport(ObjectNode response, CapabilityReport report) {
+        ObjectNode capabilities = response.putObject("capabilities");
+        ObjectNode readOnly = capabilities.putObject("read_only");
+        readOnly.put("supported", report.readOnlySupported);
+        if (report.readOnlyDetail == null) {
+            readOnly.putNull("detail");
+        } else {
+            readOnly.put("detail", report.readOnlyDetail);
+        }
+        ObjectNode timeout = capabilities.putObject("query_timeout");
+        if (report.timeoutSupported == null) {
+            timeout.putNull("supported");
+        } else {
+            timeout.put("supported", report.timeoutSupported);
+        }
+        if (report.timeoutDetail == null) {
+            timeout.putNull("detail");
+        } else {
+            timeout.put("detail", report.timeoutDetail);
         }
     }
 
@@ -652,6 +710,21 @@ public final class JdbcSidecar {
             return "";
         }
         return value.replaceAll("[\\r\\n\\t]+", " ").trim();
+    }
+
+    /** Per-statement driver capability probe result; null detail means supported. */
+    private static final class CapabilityReport {
+        final Boolean readOnlySupported;
+        final String readOnlyDetail;
+        final Boolean timeoutSupported;
+        final String timeoutDetail;
+
+        CapabilityReport(Boolean readOnlySupported, String readOnlyDetail, Boolean timeoutSupported, String timeoutDetail) {
+            this.readOnlySupported = readOnlySupported;
+            this.readOnlyDetail = readOnlyDetail;
+            this.timeoutSupported = timeoutSupported;
+            this.timeoutDetail = timeoutDetail;
+        }
     }
 
     private static final class SidecarException extends RuntimeException {

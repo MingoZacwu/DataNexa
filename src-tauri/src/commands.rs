@@ -1221,7 +1221,21 @@ pub async fn test_connection(
             .test_connection(&connection, &state.vault, None)
             .await
         {
-            Ok(duration) => Ok(text.connection_test_ok(duration.as_millis())),
+            Ok(report) => {
+                debug_log::info(
+                    "connection_test",
+                    format_args!(
+                        "JDBC connection test passed (id={}, elapsed_ms={}, database={} {}, driver={} {})",
+                        connection.id,
+                        report.elapsed.as_millis(),
+                        report.database_product,
+                        report.database_version,
+                        report.driver_name,
+                        report.driver_version,
+                    ),
+                );
+                Ok(text.connection_test_ok(report.elapsed.as_millis()))
+            }
             Err(error) => {
                 debug_log::error(
                     "connection_test",
@@ -1289,7 +1303,20 @@ pub async fn test_connection_input(
             .test_connection(&connection, &state.vault, password_override)
             .await
         {
-            Ok(duration) => Ok(text.connection_test_ok(duration.as_millis())),
+            Ok(report) => {
+                debug_log::info(
+                    "connection_test",
+                    format_args!(
+                        "JDBC connection test passed (elapsed_ms={}, database={} {}, driver={} {})",
+                        report.elapsed.as_millis(),
+                        report.database_product,
+                        report.database_version,
+                        report.driver_name,
+                        report.driver_version,
+                    ),
+                );
+                Ok(text.connection_test_ok(report.elapsed.as_millis()))
+            }
             Err(error) => {
                 debug_log::error(
                     "connection_test",

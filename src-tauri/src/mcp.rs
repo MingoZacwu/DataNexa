@@ -1132,6 +1132,7 @@ fn policy_output_schema() -> Value {
 // other query tools wrap the result in a policy envelope.
 fn sample_rows_output_schema() -> Value {
     json!({
+        "type": "object",
         "oneOf": [
             query_result_schema(),
             unsupported_tool_output_schema("generic_jdbc")
@@ -1143,6 +1144,7 @@ fn sample_rows_output_schema() -> Value {
 // unsupported-profile envelope instead.
 fn explain_output_schema() -> Value {
     json!({
+        "type": "object",
         "oneOf": [
             query_output_schema(),
             unsupported_tool_output_schema("generic_jdbc")

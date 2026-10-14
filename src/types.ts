@@ -146,6 +146,17 @@ export interface JdbcDriverFile {
   sha256: string;
 }
 
+/** Native driver capability probe persisted in the bundle manifest after a
+ * successful test connection or query. Absent until the first probe. */
+export interface JdbcDriverCapabilities {
+  read_only: boolean | null;
+  query_timeout: boolean | null;
+  probed_at: string;
+  driver_name?: string | null;
+  driver_version?: string | null;
+  database_product?: string | null;
+}
+
 export interface JdbcDriverBundle {
   schema_version: number;
   bundle_id: string;
@@ -157,6 +168,7 @@ export interface JdbcDriverBundle {
   files: JdbcDriverFile[];
   total_size: number;
   source?: "maven" | "local" | string;
+  capabilities?: JdbcDriverCapabilities | null;
 }
 
 export interface JdbcRuntimeStatus {

@@ -48,6 +48,50 @@ pub struct JdbcDriverFile {
     pub sha256: String,
 }
 
+/// JDBC connection test outcome: timing plus the driver/server metadata the
+/// sidecar already collected. Consumed by the connection-test toast.
+#[derive(Debug, Clone, Serialize)]
+pub struct JdbcTestReport {
+    pub elapsed: Duration,
+    pub database_product: String,
+    pub database_version: String,
+    pub driver_name: String,
+    pub driver_version: String,
+}
+
+/// Driver capability probe reported by the sidecar. `supported: None` means the
+/// probe did not run, not that it failed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SidecarCapability {
+    pub supported: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SidecarCapabilities {
+    #[serde(default)]
+    pub read_only: SidecarCapability,
+    #[serde(default)]
+    pub query_timeout: SidecarCapability,
+}
+
+/// Capability knowledge persisted into a driver bundle's manifest after a
+/// successful test or query. Mirrors the sidecar probe plus metadata from the
+/// connection that produced it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct JdbcDriverCapabilities {
+    pub read_only: Option<bool>,
+    pub query_timeout: Option<bool>,
+    pub probed_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub driver_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub driver_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database_product: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JdbcDriverBundle {
     pub schema_version: u16,
@@ -61,6 +105,8 @@ pub struct JdbcDriverBundle {
     pub total_size: u64,
     #[serde(default = "default_driver_source")]
     pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<JdbcDriverCapabilities>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -252,6 +298,8 @@ struct SidecarResponse {
     returned_bytes: usize,
     #[serde(default)]
     artifacts: Vec<SidecarArtifact>,
+    #[serde(default)]
+    capabilities: Option<SidecarCapabilities>,
     #[serde(default)]
     error: Option<SidecarError>,
 }
@@ -608,6 +656,7 @@ impl JdbcManager {
             files,
             total_size,
             source: "maven".to_string(),
+            capabilities: None,
         };
         let mut manifest = serde_json::to_vec_pretty(&bundle)?;
         manifest.push(b'\n');
@@ -718,6 +767,7 @@ impl JdbcManager {
             files,
             total_size,
             source: "local".to_string(),
+            capabilities: None,
         };
         let mut manifest = serde_json::to_vec_pretty(&bundle)?;
         manifest.push(b'\n');
@@ -950,12 +1000,98 @@ impl JdbcManager {
         Ok(())
     }
 
+    /// Folds a sidecar capability probe into the bundle's manifest. The probe
+    /// result is stable for a given driver, so the manifest is only rewritten
+    /// when the stored knowledge actually changes; several connections sharing
+    /// one bundle therefore cost at most one write in total. Failures are
+    /// logged and swallowed: capability tracking must never break a query or
+    /// connection test that otherwise succeeded.
+    fn absorb_capabilities(
+        &self,
+        bundle_id: &str,
+        probe: Option<&SidecarCapabilities>,
+        response: &SidecarResponse,
+    ) {
+        let Some(probe) = probe else {
+            return;
+        };
+        let read_only = probe.read_only.supported;
+        let query_timeout = probe.query_timeout.supported;
+        if read_only.is_none() && query_timeout.is_none() {
+            return;
+        }
+        if let Some(supported) = read_only {
+            if !supported {
+                crate::debug_log::warn("jdbc", format_args!(
+                    "driver rejected connection.setReadOnly (bundle_id={}, detail={})",
+                    bundle_id,
+                    probe.read_only.detail.as_deref().unwrap_or("unavailable")
+                ));
+            }
+        }
+        if let Some(supported) = query_timeout {
+            if !supported {
+                crate::debug_log::warn("jdbc", format_args!(
+                    "driver rejected statement.setQueryTimeout (bundle_id={}, detail={})",
+                    bundle_id,
+                    probe.query_timeout.detail.as_deref().unwrap_or("unavailable")
+                ));
+            }
+        }
+        let Ok(bundle_path) = self.bundle_path(bundle_id) else {
+            return;
+        };
+        let Ok(mut bundle) = read_manifest(&bundle_path) else {
+            return;
+        };
+        // Merge instead of replace: a probe only covers what it could test
+        // (e.g. a query response carries no driver metadata, and a test that
+        // could not create a statement has no timeout answer), so unset
+        // fields must not erase knowledge an earlier probe established.
+        let previous = bundle.capabilities.take();
+        let updated = JdbcDriverCapabilities {
+            read_only: read_only.or_else(|| previous.as_ref().and_then(|value| value.read_only)),
+            query_timeout: query_timeout
+                .or_else(|| previous.as_ref().and_then(|value| value.query_timeout)),
+            probed_at: Utc::now().to_rfc3339(),
+            driver_name: non_empty(response.driver_name.clone())
+                .or_else(|| previous.as_ref().and_then(|value| value.driver_name.clone())),
+            driver_version: non_empty(response.driver_version.clone())
+                .or_else(|| previous.as_ref().and_then(|value| value.driver_version.clone())),
+            database_product: non_empty(response.database_product.clone())
+                .or_else(|| previous.as_ref().and_then(|value| value.database_product.clone())),
+        };
+        let needs_write = match &previous {
+            None => true,
+            Some(stored) => {
+                stored.read_only != updated.read_only
+                    || stored.query_timeout != updated.query_timeout
+                    || stored.driver_name != updated.driver_name
+                    || stored.driver_version != updated.driver_version
+                    || stored.database_product != updated.database_product
+            }
+        };
+        if !needs_write {
+            bundle.capabilities = previous;
+            return;
+        }
+        bundle.capabilities = Some(updated);
+        if let Err(error) = write_manifest_atomic(&bundle_path, &bundle) {
+            crate::debug_log::warn("jdbc", format_args!(
+                "failed to persist driver capability probe (bundle_id={}, error={})",
+                bundle_id, error
+            ));
+        }
+    }
+
+    /// Connection test outcome for JDBC connections: the elapsed time plus the
+    /// driver/server metadata the sidecar already fetched.
     pub async fn test_connection(
         &self,
         config: &ConnectionConfig,
         vault: &CredentialVault,
         password_override: Option<&str>,
-    ) -> anyhow::Result<Duration> {
+    ) -> anyhow::Result<JdbcTestReport> {
         if config.kind != DbKind::Jdbc {
             return Err(anyhow::anyhow!("Connection is not a JDBC connection"));
         }
@@ -995,12 +1131,14 @@ impl JdbcManager {
                 "JDBC connection did not return database metadata"
             ));
         }
-        let _metadata = (
-            response.database_version,
-            response.driver_name,
-            response.driver_version,
-        );
-        Ok(started.elapsed())
+        self.absorb_capabilities(bundle_id, response.capabilities.as_ref(), &response);
+        Ok(JdbcTestReport {
+            elapsed: started.elapsed(),
+            database_product: response.database_product,
+            database_version: response.database_version,
+            driver_name: response.driver_name,
+            driver_version: response.driver_version,
+        })
     }
 
     pub async fn list_schema(
@@ -1119,6 +1257,11 @@ impl JdbcManager {
                 query_timeout(config),
             )
             .await?;
+        self.absorb_capabilities(
+            config.jdbc_bundle_id.as_deref().unwrap_or_default(),
+            response.capabilities.as_ref(),
+            &response,
+        );
         Ok(QueryResult {
             columns: response.column_names,
             rows: response.rows,
@@ -2036,6 +2179,39 @@ fn read_manifest(bundle_path: &Path) -> anyhow::Result<JdbcDriverBundle> {
         return Err(anyhow::anyhow!("Unsupported JDBC driver bundle manifest"));
     }
     Ok(bundle)
+}
+
+/// Serializes manifest rewrites across threads: several connections on the same
+/// bundle may report probes concurrently, and a stale-but-valid manifest must
+/// never win over a fresh one mid-write.
+static MANIFEST_WRITE_LOCK: StdMutex<()> = StdMutex::new(());
+
+/// Replaces a bundle manifest through a staging file plus rename so a reader
+/// never observes a half-written JSON document.
+fn write_manifest_atomic(bundle_path: &Path, bundle: &JdbcDriverBundle) -> anyhow::Result<()> {
+    let _guard = MANIFEST_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let manifest = bundle_path.join("manifest.json");
+    let staging = bundle_path.join(".manifest-write.tmp");
+    let bytes = serde_json::to_vec_pretty(bundle)?;
+    // The trailing newline matches what install/import write.
+    let mut bytes = bytes;
+    bytes.push(b'\n');
+    fs::write(&staging, &bytes)?;
+    if let Err(error) = fs::rename(&staging, &manifest) {
+        let _ = fs::remove_file(&staging);
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+fn non_empty(value: String) -> Option<String> {
+    if value.trim().is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 fn default_driver_source() -> String {

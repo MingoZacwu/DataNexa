@@ -2084,36 +2084,104 @@ p {
   font-size: 12px;
 }
 
-.jdbc-risk-summary {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+.driver-capability-row {
+  display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
+  margin-top: 2px;
+  overflow: visible;
+}
+
+/* Scoped under .driver-capability-row so these win over the broader
+   `.driver-row-main span` rule that would otherwise restyle the badges. */
+.driver-capability-row .driver-capability-label {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.driver-capability-row .driver-capability-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 20px;
+  padding: 0 7px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.driver-capability-badge svg {
+  flex: 0 0 auto;
+}
+
+.driver-capability-badge.supported {
+  color: var(--green);
+  background: rgba(22, 160, 100, 0.1);
+}
+
+.driver-capability-badge.unsupported {
+  color: var(--amber);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.driver-capability-badge.undetected {
+  color: var(--muted);
+  background: rgba(100, 116, 139, 0.1);
+}
+
+.jdbc-assurance-panel {
+  min-width: 0;
+}
+
+/* One neutral card holding both the assurance and the risk note as two rows,
+   so the statements read as a single block instead of two stacked boxes. */
+.jdbc-assurance-summary {
+  display: grid;
   margin-top: 0;
-  padding: 11px 12px;
-  border: 1px solid rgba(245, 158, 11, 0.28);
+  padding: 2px 12px;
+  border: 1px solid var(--line);
   border-radius: var(--card-radius);
-  background: rgba(245, 158, 11, 0.07);
+  background: var(--surface-strong);
   box-shadow: var(--soft-shadow);
   backdrop-filter: blur(22px);
 }
 
-.jdbc-risk-panel {
-  min-width: 0;
+.jdbc-assurance-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
 }
 
-.jdbc-risk-summary-icon {
+.jdbc-assurance-row + .jdbc-assurance-row {
+  border-top: 1px solid var(--line);
+}
+
+/* The risk row adds the details button as a third column. */
+.jdbc-assurance-row.risk {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.jdbc-assurance-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border-radius: 7px;
-  color: var(--amber);
-  background: rgba(245, 158, 11, 0.14);
+  color: var(--green);
+  background: rgba(22, 160, 100, 0.12);
 }
 
-.jdbc-risk-summary p {
+.jdbc-assurance-icon.risk {
+  color: var(--amber);
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.jdbc-assurance-row > p {
   min-width: 0;
   margin: 0;
   color: var(--muted);
@@ -2121,9 +2189,16 @@ p {
   line-height: 1.55;
 }
 
+/* The assurance statement is the primary message: full ink, slightly
+   stronger than the muted risk note below it. */
+.jdbc-assurance-row:not(.risk) > p {
+  color: var(--ink);
+  font-weight: 600;
+}
+
 .jdbc-risk-details-button {
   flex: 0 0 auto;
-  min-height: 30px;
+  min-height: 28px;
   padding-inline: 10px;
   color: var(--ink);
   white-space: nowrap;
@@ -2171,7 +2246,7 @@ p {
 }
 
 @media (max-width: 720px) {
-  .jdbc-risk-summary {
+  .jdbc-assurance-row.risk {
     grid-template-columns: auto minmax(0, 1fr);
   }
 

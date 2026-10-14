@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   AppWindow,
   Bug,
+  Check,
   CheckCircle2,
   CircleDashed,
   Database,
@@ -31,6 +32,7 @@ import {
   SearchCheck, ShieldAlert,
   ShieldCheck,
   ShieldOff,
+  Sparkle,
   Square,
   Trash2,
   X
@@ -40,7 +42,7 @@ import type { FormEvent, ReactNode } from "react";
 import appConfig from "../../../app.config.json";
 import appIconUrl from "../../../resources/icon.png";
 import { formatMessage, languageOptions, normalizeLocale, type I18nMessages, type Locale } from "../../i18n";
-import type { AppSnapshot, AuditEvent, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcDriverRuntimeInfo, JdbcInstallProgress, JdbcRuntimeInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ProcessUsageInfo, ServerConfig, SettingsConfig } from "../../types";
+import type { AppSnapshot, AuditEvent, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcDriverCapabilities, JdbcDriverRuntimeInfo, JdbcInstallProgress, JdbcRuntimeInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ProcessUsageInfo, ServerConfig, SettingsConfig } from "../../types";
 import type { UpdateState } from "../../lib/updater";
 import type { EffectiveTheme, SettingsTab, ThemeMode } from "../../app/types";
 import { updateScrollFade, useScrollFade } from "../../app/utils";
@@ -1204,6 +1206,10 @@ function DriverManagement({
                   {driver.driver_classes[0] ?? t.settings.driverClassNotDetected}
                   {" · "}{formatBytes(driver.total_size)}
                 </span>
+                <div className="driver-capability-row">
+                  <span className="driver-capability-label">{t.settings.driverCapLabel}</span>
+                  <DriverCapabilities t={t} capabilities={driver.capabilities} />
+                </div>
               </div>
               <IconTooltip label={t.settings.deleteDriver}>
                 <button type="button" className="icon-button danger" onClick={() => onDelete(driver.bundle_id)} disabled={busy}>
@@ -1215,15 +1221,23 @@ function DriverManagement({
         </div>
       </section>
 
-      <section className="jdbc-risk-panel">
-        <div className="jdbc-risk-summary">
-          <div className="jdbc-risk-summary-icon" aria-hidden="true">
-            <ShieldAlert size={18} />
+      <section className="jdbc-assurance-panel">
+        <div className="jdbc-assurance-summary">
+          <div className="jdbc-assurance-row">
+            <div className="jdbc-assurance-icon" aria-hidden="true">
+              <ShieldCheck size={16} />
+            </div>
+            <p>{t.settings.jdbcAssuranceSummary}</p>
           </div>
-          <p>{t.settings.jdbcRiskSummary}</p>
-          <button type="button" className="button ghost jdbc-risk-details-button" onClick={() => setDetailsOpen(true)}>
-            {t.settings.jdbcRiskDetails}
-          </button>
+          <div className="jdbc-assurance-row risk">
+            <div className="jdbc-assurance-icon risk" aria-hidden="true">
+              <ShieldAlert size={16} />
+            </div>
+            <p>{t.settings.jdbcRiskSummary}</p>
+            <button type="button" className="button ghost jdbc-risk-details-button" onClick={() => setDetailsOpen(true)}>
+              {t.settings.jdbcRiskDetails}
+            </button>
+          </div>
         </div>
       </section>
 
@@ -1735,6 +1749,39 @@ function ProcessUsageRow({ process, t }: { process: ProcessUsageInfo; t: I18nMes
 
 function StatusBadge({ available, label }: { available: boolean; label: string }) {
   return <span className={clsx("runtime-status-badge", available ? "available" : "unavailable")}>{label}</span>;
+}
+
+/** Native capability badges for one driver bundle. Unprobed drivers show a
+ * single grey badge whose label is itself the call to action. Only the
+ * undetected state carries a hint; probed badges stay plain because a
+ * detected capability needs no explanation. */
+function DriverCapabilities({ t, capabilities }: { t: I18nMessages; capabilities?: JdbcDriverCapabilities | null }) {
+  if (!capabilities || (capabilities.read_only == null && capabilities.query_timeout == null)) {
+    return (
+      <IconTooltip label={t.settings.driverCapNotProbedHint}>
+        <span className="driver-capability-badge undetected">
+          <Sparkle size={12} />
+          {t.settings.driverCapNotProbed}
+        </span>
+      </IconTooltip>
+    );
+  }
+  return (
+    <>
+      {capabilities.read_only == null ? null : (
+        <span className={clsx("driver-capability-badge", capabilities.read_only ? "supported" : "unsupported")}>
+          {capabilities.read_only ? <Check size={12} /> : <X size={12} />}
+          {t.settings.driverCapReadOnly}
+        </span>
+      )}
+      {capabilities.query_timeout == null ? null : (
+        <span className={clsx("driver-capability-badge", capabilities.query_timeout ? "supported" : "unsupported")}>
+          {capabilities.query_timeout ? <Check size={12} /> : <X size={12} />}
+          {t.settings.driverCapQueryTimeout}
+        </span>
+      )}
+    </>
+  );
 }
 
 function runtimeSourceLabel(t: I18nMessages, source: string) {
