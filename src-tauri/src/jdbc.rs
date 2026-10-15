@@ -12,7 +12,10 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
-use sysinfo::{MemoryRefreshKind, Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
+use sysinfo::{
+    CpuRefreshKind, MemoryRefreshKind, Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind,
+    System,
+};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -2325,18 +2328,27 @@ fn process_system() -> &'static StdMutex<System> {
         StdMutex::new(System::new_with_specifics(
             RefreshKind::new()
                 .with_memory(MemoryRefreshKind::everything())
+                // Only so `cpus()` is populated: the list stays empty until a CPU
+                // kind is requested, and the per-core to whole-machine conversion
+                // below divides by its length. Usage refreshes stay off.
+                .with_cpu(CpuRefreshKind::new())
                 .with_processes(process_refresh_kind()),
         ))
     })
 }
 
+/// `cpu_usage()` counts against a single logical core, so a multi-threaded JVM can
+/// sit far above 100%. Dividing by the core count — the same count sysinfo
+/// multiplies by on Windows — publishes the share of the whole machine instead,
+/// which is what Task Manager reports and what the memory figures beside it mean.
 fn snapshot_process_stats(system: &System, pid: u32) -> Option<ProcessStats> {
+    let core_count = system.cpus().len().max(1) as f32;
     system
         .process(Pid::from_u32(pid))
         .map(|process| ProcessStats {
             name: process.name().to_string_lossy().into_owned(),
             memory_bytes: process.memory(),
-            cpu_percent: process.cpu_usage().max(0.0),
+            cpu_percent: process.cpu_usage().max(0.0) / core_count,
         })
 }
 
