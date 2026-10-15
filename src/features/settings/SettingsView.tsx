@@ -272,8 +272,11 @@ export function SettingsView({
         </button>
       </div>
 
+      {/* Key each tab's root by the tab id: without it React keeps the same
+          scroll container when moving between the general/security/about
+          branches, so a freshly opened tab inherits the previous scroll offset. */}
       {tab === "general" ? (
-        <div ref={scrollFadeRef} className="settings-stack" onScroll={updateScrollFade}>
+        <div key={tab} ref={scrollFadeRef} className="settings-stack" onScroll={updateScrollFade}>
           <section className="panel">
             <h2>{t.settings.servicePolicy}</h2>
             <div className="form-grid settings-grid">
@@ -584,7 +587,7 @@ export function SettingsView({
           </Dialog.Root>
         </div>
       ) : tab === "security" ? (
-        <div ref={scrollFadeRef} className="settings-stack" onScroll={updateScrollFade}>
+        <div key={tab} ref={scrollFadeRef} className="settings-stack" onScroll={updateScrollFade}>
           <Dialog.Root open={policyDialogOpen} onOpenChange={setPolicyDialogOpen}>
             <section className={clsx("security-hero", blockedLast24Hours > 0 && "alerted")}>
               <div className="security-hero-core">
@@ -814,7 +817,7 @@ export function SettingsView({
       ) : tab === "storage" ? (
         <StorageManagement status={jdbcStorageStatus} busy={jdbcBusy} onRefresh={onRefreshJdbcStorageStatus} onClearJdbcCache={onClearJdbcCache} onOpenDataDirectory={onOpenDataDirectory} onStopJdbcDriverRuntime={onStopJdbcDriverRuntime} debugLoggingEnabled={settingsDraft.debug_logging_enabled} t={t} />
       ) : (
-        <div ref={scrollFadeRef} className="settings-stack" onScroll={updateScrollFade}>
+        <div key={tab} ref={scrollFadeRef} className="settings-stack" onScroll={updateScrollFade}>
           <section className="panel about-panel">
             <div className="about-hero">
               <img src={appIconUrl} alt="DataNexa" />
