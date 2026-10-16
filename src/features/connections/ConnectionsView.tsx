@@ -372,7 +372,7 @@ export function ConnectionListItem({ t, connection, compact = false, showJdbcBad
   const copyLabel = t.connections.copyName;
   return (
     <div className={clsx("connection-item", compact && "compact")}>
-      <div className={clsx("db-badge", connection.type)}>
+      <div className={clsx("db-badge", connection.type, !connection.enabled && "disabled")}>
         {DATABASE_LOGOS[connection.type]
           ? <img src={DATABASE_LOGOS[connection.type]} alt="" aria-hidden="true" />
           : <Database size={24} aria-hidden="true" />}
