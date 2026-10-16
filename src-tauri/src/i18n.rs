@@ -251,6 +251,17 @@ impl BackendText {
         }
     }
 
+    pub fn query_deadline_exceeded(self, db: &str, timeout_ms: u128) -> String {
+        match self.locale {
+            Locale::ZhCn => format!(
+                "{db} 查询超过 {timeout_ms}ms 超时上限。该连接已丢弃，下次调用会重新建立连接。"
+            ),
+            Locale::En => format!(
+                "{db} query exceeded the {timeout_ms}ms timeout. The connection was dropped, which aborts the statement on the server; the next call opens a new one."
+            ),
+        }
+    }
+
     pub fn policy_sql_empty(self) -> &'static str {
         match self.locale {
             Locale::ZhCn => "SQL 不能为空。",

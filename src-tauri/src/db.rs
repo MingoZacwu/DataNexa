@@ -12,11 +12,14 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions, MySqlRow, MySqlSslMode};
+use sqlx::pool::PoolConnection;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgRow, PgSslMode};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
-use sqlx::{Column, Executor, MySqlPool, PgPool, Row, SqlitePool, TypeInfo, ValueRef};
+use sqlx::{
+    Column, Database, Executor, MySqlPool, PgPool, Row, SqlitePool, Statement, TypeInfo, ValueRef,
+};
 use tokio::sync::{Mutex, RwLock};
-use tokio::time::timeout;
+use tokio::time::{error::Elapsed, timeout};
 use zeroize::Zeroizing;
 
 use crate::config::{default_port, ConnectionConfig, DbKind};
@@ -510,13 +513,16 @@ impl DatabaseManager {
         let started = Instant::now();
         match self.pool(config, vault, text).await? {
             ManagedPool::Sqlite(pool) => {
-                let rows = timeout(
-                    query_timeout(config),
+                let mut connection = pool.acquire().await?;
+                let outcome = timeout(query_timeout(config), async {
+                    let statement = (&mut *connection).prepare(sql).await?;
+                    let columns =
+                        unique_column_names(statement.columns().iter().map(|column| column.name()));
                     collect_query_rows(
-                        sqlx::query(sql).fetch(&pool),
+                        statement.query().fetch(&mut *connection),
+                        columns,
                         max_rows,
                         config.max_result_bytes,
-                        |row| unique_column_names(row.columns().iter().map(|column| column.name())),
                         sqlite_raw_row_bytes,
                         |row, columns| {
                             columns
@@ -525,9 +531,11 @@ impl DatabaseManager {
                                 .map(|(index, column)| (column.clone(), sqlite_cell(row, index)))
                                 .collect()
                         },
-                    ),
-                )
-                .await??;
+                    )
+                    .await
+                })
+                .await;
+                let rows = bounded_query_outcome(connection, outcome, config, text)?;
                 Ok(result_logged(
                     config,
                     rows,
@@ -536,13 +544,16 @@ impl DatabaseManager {
                 ))
             }
             ManagedPool::Mysql(pool) => {
-                let rows = timeout(
-                    query_timeout(config),
+                let mut connection = pool.acquire().await?;
+                let outcome = timeout(query_timeout(config), async {
+                    let statement = (&mut *connection).prepare(sql).await?;
+                    let columns =
+                        unique_column_names(statement.columns().iter().map(|column| column.name()));
                     collect_query_rows(
-                        sqlx::query(sql).fetch(&pool),
+                        statement.query().fetch(&mut *connection),
+                        columns,
                         max_rows,
                         config.max_result_bytes,
-                        |row| unique_column_names(row.columns().iter().map(|column| column.name())),
                         mysql_raw_row_bytes,
                         |row, columns| {
                             columns
@@ -551,9 +562,11 @@ impl DatabaseManager {
                                 .map(|(index, column)| (column.clone(), mysql_cell(row, index)))
                                 .collect()
                         },
-                    ),
-                )
-                .await??;
+                    )
+                    .await
+                })
+                .await;
+                let rows = bounded_query_outcome(connection, outcome, config, text)?;
                 Ok(result_logged(
                     config,
                     rows,
@@ -562,13 +575,16 @@ impl DatabaseManager {
                 ))
             }
             ManagedPool::Postgres(pool) => {
-                let rows = timeout(
-                    query_timeout(config),
+                let mut connection = pool.acquire().await?;
+                let outcome = timeout(query_timeout(config), async {
+                    let statement = (&mut *connection).prepare(sql).await?;
+                    let columns =
+                        unique_column_names(statement.columns().iter().map(|column| column.name()));
                     collect_query_rows(
-                        sqlx::query(sql).fetch(&pool),
+                        statement.query().fetch(&mut *connection),
+                        columns,
                         max_rows,
                         config.max_result_bytes,
-                        |row| unique_column_names(row.columns().iter().map(|column| column.name())),
                         pg_raw_row_bytes,
                         |row, columns| {
                             columns
@@ -577,9 +593,11 @@ impl DatabaseManager {
                                 .map(|(index, column)| (column.clone(), pg_cell(row, index)))
                                 .collect()
                         },
-                    ),
-                )
-                .await??;
+                    )
+                    .await
+                })
+                .await;
+                let rows = bounded_query_outcome(connection, outcome, config, text)?;
                 Ok(result_logged(
                     config,
                     rows,
@@ -738,6 +756,11 @@ async fn connect_pool_with_password(
         DbKind::Mysql => {
             let password = resolve_password(config, vault, password_override)?;
             let host = required(config.host.as_deref(), "MySQL host")?;
+            // The client-side deadline only stops the wait. Asking the server for
+            // its own limit keeps a statement that outlives it from running to
+            // completion on a connection nobody reads from any more.
+            let statement_timeout_ms = query_timeout(config).as_millis();
+            let connection_id = config.id.clone();
             let options = MySqlConnectOptions::new()
                 .host(host)
                 .port(
@@ -753,11 +776,30 @@ async fn connect_pool_with_password(
             let pool = MySqlPoolOptions::new()
                 .max_connections(max_connections)
                 .acquire_timeout(Duration::from_millis(config.query_timeout_ms))
-                .after_connect(|connection, _meta| {
+                .after_connect(move |connection, _meta| {
+                    let connection_id = connection_id.clone();
                     Box::pin(async move {
-                        connection
+                        (&mut *connection)
                             .execute("SET SESSION TRANSACTION READ ONLY")
                             .await?;
+                        // Best effort: a server without this variable (MariaDB
+                        // spells it `max_statement_time` and counts seconds)
+                        // keeps relying on the client-side deadline alone.
+                        if let Err(error) = (&mut *connection)
+                            .execute(
+                                format!("SET SESSION max_execution_time = {statement_timeout_ms}")
+                                    .as_str(),
+                            )
+                            .await
+                        {
+                            crate::debug_log::warn(
+                                "database",
+                                format_args!(
+                                    "server-side statement limit not applied (id={}, error={})",
+                                    connection_id, error
+                                ),
+                            );
+                        }
                         Ok(())
                     })
                 })
@@ -795,6 +837,37 @@ async fn connect_pool_with_password(
         DbKind::Jdbc => Err(anyhow::anyhow!(
             "JDBC connections are handled by the JDBC sidecar"
         )),
+    }
+}
+
+/// Unwraps the outcome of a statement that ran under the connection's deadline.
+///
+/// Handing a connection back while its statement still runs on the server keeps
+/// the pool slot busy: SQLx pings a connection before releasing it for reuse,
+/// and that ping waits for the response of the statement the server is still
+/// executing, so a single runaway query parks the whole connection. A connection
+/// that outlives the client-side deadline is therefore detached from the pool and
+/// dropped: closing the socket aborts the statement on the server and lets the
+/// next call open a replacement immediately.
+fn bounded_query_outcome<DB: Database>(
+    connection: PoolConnection<DB>,
+    outcome: Result<anyhow::Result<CollectedRows>, Elapsed>,
+    config: &ConnectionConfig,
+    text: &BackendText,
+) -> anyhow::Result<CollectedRows> {
+    match outcome {
+        Ok(collected) => collected,
+        Err(elapsed) => {
+            drop(connection.detach());
+            // Keep `Elapsed` in the chain: the audit trail and the client error
+            // mapping classify a call as a timeout by finding it there.
+            Err(
+                anyhow::Error::new(elapsed).context(text.query_deadline_exceeded(
+                    db_label(&config.kind),
+                    query_timeout(config).as_millis(),
+                )),
+            )
+        }
     }
 }
 
@@ -1040,23 +1113,26 @@ struct CollectedRows {
     returned_bytes: usize,
 }
 
-async fn collect_query_rows<S, T, C, R, F>(
+/// Collects the rows of one statement. The column names come from the statement
+/// metadata, not from the first row, so a statement that matches nothing still
+/// reports the shape of its result set.
+async fn collect_query_rows<S, T, R, F>(
     stream: S,
+    columns: Vec<String>,
     max_rows: u32,
     max_bytes: usize,
-    columns_for: C,
     raw_bytes_for: R,
     map_row: F,
 ) -> anyhow::Result<CollectedRows>
 where
     S: Stream<Item = Result<T, sqlx::Error>>,
-    C: Fn(&T) -> Vec<String>,
+    T: Row,
     R: Fn(&T) -> usize,
     F: Fn(&T, &[String]) -> Map<String, Value>,
 {
     let mut stream = Box::pin(stream);
     let max_rows = usize::try_from(max_rows.max(1))?;
-    let mut columns = Vec::new();
+    let mut columns = columns;
     let mut rows = Vec::with_capacity(max_rows.min(1_024));
     let mut returned_bytes = 2usize;
     let mut truncation_reason = None;
@@ -1067,7 +1143,9 @@ where
             break;
         }
         if columns.is_empty() {
-            columns = columns_for(&row);
+            // A statement executed over the text protocol reports no columns up
+            // front, and then the first row is the earliest source of them.
+            columns = unique_column_names(row.columns().iter().map(|column| column.name()));
         }
         if returned_bytes.saturating_add(raw_bytes_for(&row)) > max_bytes.max(1) {
             truncation_reason = Some("bytes".to_string());
@@ -1240,6 +1318,15 @@ fn mysql_cell(row: &MySqlRow, index: usize) -> Value {
     if let Ok(value) = row.try_get::<Decimal, _>(index) {
         return Value::String(value.to_string());
     }
+    // SQLx keeps TIMESTAMP and DATETIME apart: only `DateTime<Utc>` accepts
+    // TIMESTAMP, and it assumes the session runs with `time_zone='+00:00'`,
+    // which SQLx sets by default. DATETIME keeps its naive wall-clock decoding,
+    // because it carries no time zone.
+    if database_type == "TIMESTAMP" {
+        if let Ok(value) = row.try_get::<DateTime<Utc>, _>(index) {
+            return Value::String(value.to_rfc3339());
+        }
+    }
     if let Ok(value) = row.try_get::<NaiveDateTime, _>(index) {
         return Value::String(value.to_string());
     }
@@ -1269,7 +1356,7 @@ fn mysql_cell(row: &MySqlRow, index: usize) -> Value {
         return Value::String(value);
     }
     if let Ok(value) = row.try_get::<Vec<u8>, _>(index) {
-        return binary_value(value);
+        return mysql_binary_flagged_value(value, database_type);
     }
     unsupported_cell(database_type)
 }
@@ -1327,6 +1414,40 @@ fn pg_cell(row: &PgRow, index: usize) -> Value {
 
 fn binary_value(value: Vec<u8>) -> Value {
     Value::String(format!("base64:{}", BASE64_STANDARD.encode(value)))
+}
+
+/// Column type names SQLx reports for a string column that carries MySQL's BINARY
+/// flag. MySQL sets that flag for the binary character set *and* for every `_bin`
+/// collation, and `TypeInfo::name` folds the flag into the binary variant of the
+/// name, so a text column with a binary collation is indistinguishable from a true
+/// binary column by name alone.
+const MYSQL_BINARY_FLAGGED_TYPE_NAMES: [&str; 6] = [
+    "VARBINARY",
+    "BINARY",
+    "BLOB",
+    "TINYBLOB",
+    "MEDIUMBLOB",
+    "LONGBLOB",
+];
+
+/// Renders a MySQL value whose column is flagged binary.
+///
+/// SQLx refuses to decode such a column as a string, so text with a binary
+/// collation reaches the binary path: that covers every `information_schema`
+/// string column and any `utf8mb4_bin` column. The bytes decide instead, where
+/// valid UTF-8 is read as text and anything else keeps the `base64:` form. The
+/// trade-off is deliberate, because SQLx exposes neither the collation nor the
+/// character set of a column: binary content that happens to be valid UTF-8 is
+/// shown as text, and `HEX()` or `TO_BASE64()` still return the bytes when a
+/// caller needs them.
+fn mysql_binary_flagged_value(value: Vec<u8>, database_type: &str) -> Value {
+    if !MYSQL_BINARY_FLAGGED_TYPE_NAMES.contains(&database_type) {
+        return binary_value(value);
+    }
+    match String::from_utf8(value) {
+        Ok(text) => Value::String(text),
+        Err(error) => binary_value(error.into_bytes()),
+    }
 }
 
 fn unsupported_cell(database_type: &str) -> Value {
@@ -1469,16 +1590,20 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .expect("in-memory SQLite pool should open");
-        let rows = collect_query_rows(
-            sqlx::query(
+        let statement = (&pool)
+            .prepare(
                 "SELECT 1 AS id, 2 AS id, X'0001FF' AS payload, NULL AS missing
                  UNION ALL
                  SELECT 3, 4, X'02', 'present'",
             )
-            .fetch(&pool),
+            .await
+            .expect("SQLite statement should prepare");
+        let columns = unique_column_names(statement.columns().iter().map(|column| column.name()));
+        let rows = collect_query_rows(
+            statement.query().fetch(&pool),
+            columns,
             1,
             crate::config::default_max_result_bytes(),
-            |row| unique_column_names(row.columns().iter().map(|column| column.name())),
             sqlite_raw_row_bytes,
             |row, columns| {
                 columns
