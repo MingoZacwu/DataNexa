@@ -1,34 +1,60 @@
-# DataNexa v0.8.1
+# DataNexa v0.8.2
 
-[中文发布说明](https://github.com/MingoZacwu/DataNexa/blob/v0.8.1/RELEASE_NOTES.md)
+[中文发布说明](https://github.com/MingoZacwu/DataNexa/blob/v0.8.2/RELEASE_NOTES.md)
 
 ## Highlights
 
-- Connection exports can now be protected with an encryption password: exported connection files are encrypted by default, and only someone who knows the password can read the database connections inside.
-- The "Storage & performance" settings page now includes live resource monitoring, covering DataNexa itself as well as JDBC drivers.
+- Added a language switcher to the top bar of the overview page, so the language setting is easier to find and switching languages is quicker.
+- The driver list shows what each JDBC driver supports natively, so you can see whether read-only mode and query timeouts are available.
+- Added quick copying of connection names: click the name in the connection list or the connection details to copy it.
+- This update also includes a number of bug fixes and smaller improvements.
 
 ## Added
 
-### Encrypted Connection Exports
+### Language Switcher
 
-- Exporting connections now uses an encryption password by default: with a password of at least 8 characters, only someone who knows it can read the database connections in the file (the password is never stored, and the file cannot be recovered without it). "Export without encryption" is still available — it still requires acknowledging the plaintext warning — and produces the same file as previous versions.
-- Encrypted files use the `.dnxc` extension, and import detects the file type from its contents rather than the extension. Importing an encrypted file asks for the password first and shows when the file was exported.
-- A wrong password or a damaged file imports nothing, so the password can simply be retyped; plaintext connection files exported by earlier versions still import directly.
+- A language button now sits in the top bar of the overview page. Each language is listed under its own name and switching takes effect immediately. The language option under Settings > General is unchanged.
+- Chinese systems use Chinese; every other language defaults to English. A default language is no longer written on first launch — only a choice you make yourself is saved.
 
-### Live Resource Monitoring
+### Quick Copy for Connection Names
 
-- The "Storage & performance" page now has a Resources view alongside the existing Storage view.
-- Resources covers both DataNexa itself (the main process and its WebView/GPU children) and JDBC driver runtimes, listing CPU, memory, and process count, with a PID for each of DataNexa's own processes.
-- The CPU area shows total usage and a live trend chart, labelled with the DataNexa and JDBC driver shares; the memory area shows the breakdown of DataNexa, JDBC drivers, and other system usage, with used memory against total system memory (hover for available memory).
-- Individual JDBC driver runtimes can be stopped, with resource usage refreshing immediately.
+- The connection name in the connection list or the connection details can be clicked to copy ([Issue #14](https://github.com/MingoZacwu/DataNexa/issues/14)).
+
+### JDBC Driver Capabilities
+
+- The driver list reports what each driver supports natively, including read-only mode and query timeouts.
+- Run Test Connection on a connection that uses the driver, or issue a query over MCP, and the result is recorded automatically.
+- When a driver does not support them, DataNexa still applies read-only protection and a timeout to every query.
 
 ## Changes and Improvements
 
-- macOS builds now use Xcode 26.3 (macOS 26.2 SDK) to follow macOS 27's redesigned window controls (the "traffic lights"). The minimum requirement is still macOS 15.0.
+- English text and numbers now use the bundled Geist font, while Chinese keeps using the system font. Font sizes and weights have also been unified, so bold Chinese text renders more cleanly.
+- Popovers, tooltips, and toasts share one frosted-glass treatment, icons and disabled states in resource lists follow a consistent style, and enabling or disabling a resource is now animated.
+- Improved compatibility with MCP clients, so results are less likely to be misread.
 
-## Upgrade Notes and Feedback
+## Fixed
 
-- Encrypted `.dnxc` files cannot be imported by 0.8.0 or earlier (older builds do not recognise the format and the import fails), so upgrade both sides to 0.8.1 or later before migrating connections with an encrypted file. Plaintext connection files exported by earlier versions are unaffected.
+### MySQL Connections
+
+- MySQL time columns could not be read; they now return their values, in UTC.
+- A query that timed out left its connection unusable for a long time. The connection is now released as soon as the query times out, so later operations are unaffected.
+- Empty results no longer lose their field information, and some string values no longer appear as base64 text.
+
+### JDBC Queries
+
+- JDBC statements that cannot be parsed are now rejected, so they cannot bypass read-only protection.
+- Cancelling a query now terminates the database session correctly.
+- Fixed string values being converted incorrectly, and cells being truncated without any indication.
+- Database errors are redacted consistently in audit records and debug logs.
+
+### Interface and Resource Monitoring
+
+- A single request in progress no longer makes a large part of the interface unavailable; only the features involved are affected.
+- Switching settings tabs no longer leaves the new tab at the previous tab's scroll position.
+- JDBC driver CPU usage no longer reports more than 100%; it is now measured the same way Task Manager measures it.
+
+## Feedback
+
 - If you run into problems after upgrading, please report them on [GitHub Issues](https://github.com/MingoZacwu/DataNexa/issues) with steps to reproduce and details about your environment.
 - To help us diagnose problems faster: on the Settings > About page, tap the version number area 5 times to reveal the hidden debug logging option. Enable it, reproduce the problem, then open the log folder from the settings to collect the log file. Log content is sanitized and never records plaintext credentials; attaching it to your issue can help us locate the problem faster.
 

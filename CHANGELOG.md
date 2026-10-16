@@ -17,64 +17,111 @@
 发版时若尚未补上对应小节，官网会先用 GitHub Release 正文兜底，并在 CI 中给出提醒。
 -->
 
-## [0.8.1] - 2026-10-02
+<!-- 发版前请把下一行的 TODO 换成发布日期（YYYY-MM-DD），例如 `## [0.8.2] - 2026-10-16`。 -->
+## [0.8.2] - TODO
 
 ### 中文
 
 #### 版本亮点
 
-- 连接导出支持密码加密：导出的连接文件默认使用加密密码保护，只有知道密码的人才能读取其中的数据库连接。
-- “存储与性能”页面新增实时资源监控：除 JDBC 驱动外，还可以查看 DataNexa 自身的 CPU、内存与进程明细。
+- 概览页顶部新增语言切换入口，避免用户找不到语言设置入口，方便用户快速切换语言。
+- JDBC 驱动的原生能力检测结果显示在驱动列表中，可以直接看到驱动是否支持只读限制与查询超时。
+- 新增快速复制连接名功能，可在连接列表 → 连接详情中点击连接名复制。
+- 本次更新还包含诸多问题修复与细节改进。
 
 #### 新增功能
 
-##### 加密导出连接
+##### 语言切换入口
 
-- 导出连接时默认使用加密密码保护：设置不少于 8 个字符的加密密码后，只有知道该密码的人才能读取文件中的数据库连接(加密密码不会被保存，丢失后文件将无法恢复)；也可以选择“不加密导出”，此时仍需确认明文风险提示，导出的文件与旧版本保持一致。
-- 加密文件使用 `.dnxc` 扩展名，导入时按文件内容而不是扩展名识别类型；导入加密文件会先提示输入加密密码，并显示文件的导出时间。
-- 密码错误或文件损坏不会导入任何连接，可以重新输入密码；旧版本导出的明文连接文件仍可直接导入。
+- 概览页顶部新增语言按钮，各语言以其自身名称显示，选择后立即生效。“设置 → 常规”中的语言选项保持不变。
+- 中文系统使用中文，其他语言默认使用英文。默认语言不再在首次启动时写入，只有主动选择后才会保存。
 
-##### 实时资源监控
+##### 连接名快速复制
 
-- “存储与性能”页面新增“资源监控”视图，与原有的“空间占用”视图并列。
-- 资源监控同时覆盖 DataNexa 自身(主进程及其 WebView、GPU 等子进程)与 JDBC 驱动运行时，分别展示 CPU、内存与进程数量，其中 DataNexa 的进程还会显示 PID。
-- CPU 区域展示总占用与实时趋势曲线，并分别标注 DataNexa 与 JDBC 驱动的占用；内存区域展示 DataNexa、JDBC 驱动与系统其他占用的构成，并以“已用/系统总内存”展示整体内存占用(悬停可查看可用内存)。
-- 可以单独停止某个 JDBC 驱动运行时，并即时看到资源占用变化。
+- 连接列表 → 连接详情中的连接名可以直接点击复制。
+
+##### JDBC 驱动能力标识
+
+- 驱动列表显示每个驱动的原生支持情况，包括只读限制与查询超时。
+- 对使用该驱动的连接执行一次“测试连接”，或通过 MCP 发起一次查询，检测结果会自动记录。
+- 驱动本身不支持时，DataNexa 仍会为查询应用只读保护与超时限制。
 
 #### 调整与改进
 
-- macOS 构建改用 Xcode 26.3(macOS 26.2 SDK)，以适配 macOS 27 的新版窗口控件(红绿灯)设计；最低系统要求仍为 macOS 15.0。
+- 英文与数字改用内置的 Geist 字体，中文继续使用系统字体；字号与字重也已统一，中文粗体显示更清晰。
+- 统一了弹层、提示与 Toast 的毛玻璃质感，以及资源列表图标与禁用状态的显示方式，并补充了启用/停用的过渡动画。
+- 改进了与 MCP 客户端的兼容性，减少客户端误读查询结果字段的情况。
 
-#### 升级须知
+#### 问题修复
 
-- 加密导出的 `.dnxc` 文件无法在 0.8.0 及更早版本中导入(旧版本不识别该格式，导入会直接失败)，如需使用加密文件迁移连接，请先将两端都升级到 0.8.1 及以上版本；旧版本导出的明文连接文件不受影响。
+##### MySQL 连接
+
+- 修复 MySQL 时间类型字段无法读取的问题，时间值统一按 UTC 返回。
+- 修复查询超时后连接长时间不可用的问题，超时的查询会及时释放连接，不再影响后续操作。
+- 修复查询结果为空时不返回字段信息、部分字符串内容显示为 base64 编码的问题。
+
+##### JDBC 查询
+
+- 无法解析的 JDBC 语句会被拒绝执行，避免绕过只读限制。
+- 修复取消查询后数据库会话未正确终止的问题。
+- 修复字符串内容被错误转换、单元格内容被截断却没有任何提示的问题。
+- 审计记录与调试日志中的数据库错误信息统一脱敏。
+
+##### 界面与资源监控
+
+- 修复一次请求进行中时，界面上大量无关功能都会变为不可用的问题，现在只有相关功能会受影响。
+- 修复设置页切换标签后滚动位置错乱的问题。
+- 修复资源监控中 JDBC 驱动 CPU 占用显示超过 100% 的问题，统计方式现在与系统任务管理器一致。
 
 ### English
 
 #### Highlights
 
-- Connection exports can now be protected with an encryption password: exported connection files are encrypted by default, and only someone who knows the password can read the database connections inside.
-- The "Storage & performance" settings page now includes live resource monitoring, covering DataNexa itself as well as JDBC drivers.
+- Added a language switcher to the top bar of the overview page, so the language setting is easier to find and switching languages is quicker.
+- The driver list shows what each JDBC driver supports natively, so you can see whether read-only mode and query timeouts are available.
+- Added quick copying of connection names: click the name in the connection list or the connection details to copy it.
+- This update also includes a number of bug fixes and smaller improvements.
 
 #### Added
 
-##### Encrypted Connection Exports
+##### Language Switcher
 
-- Exporting connections now uses an encryption password by default: with a password of at least 8 characters, only someone who knows it can read the database connections in the file (the password is never stored, and the file cannot be recovered without it). "Export without encryption" is still available — it still requires acknowledging the plaintext warning — and produces the same file as previous versions.
-- Encrypted files use the `.dnxc` extension, and import detects the file type from its contents rather than the extension. Importing an encrypted file asks for the password first and shows when the file was exported.
-- A wrong password or a damaged file imports nothing, so the password can simply be retyped; plaintext connection files exported by earlier versions still import directly.
+- A language button now sits in the top bar of the overview page. Each language is listed under its own name and switching takes effect immediately. The language option under Settings > General is unchanged.
+- Chinese systems use Chinese; every other language defaults to English. A default language is no longer written on first launch — only a choice you make yourself is saved.
 
-##### Live Resource Monitoring
+##### Quick Copy for Connection Names
 
-- The "Storage & performance" page now has a Resources view alongside the existing Storage view.
-- Resources covers both DataNexa itself (the main process and its WebView/GPU children) and JDBC driver runtimes, listing CPU, memory, and process count, with a PID for each of DataNexa's own processes.
-- The CPU area shows total usage and a live trend chart, labelled with the DataNexa and JDBC driver shares; the memory area shows the breakdown of DataNexa, JDBC drivers, and other system usage, with used memory against total system memory (hover for available memory).
-- Individual JDBC driver runtimes can be stopped, with resource usage refreshing immediately.
+- The connection name in the connection list or the connection details can be clicked to copy.
+
+##### JDBC Driver Capabilities
+
+- The driver list reports what each driver supports natively, including read-only mode and query timeouts.
+- Run Test Connection on a connection that uses the driver, or issue a query over MCP, and the result is recorded automatically.
+- When a driver does not support them, DataNexa still applies read-only protection and a timeout to every query.
 
 #### Changes and Improvements
 
-- macOS builds now use Xcode 26.3 (macOS 26.2 SDK) to follow macOS 27's redesigned window controls (the "traffic lights"). The minimum requirement is still macOS 15.0.
+- English text and numbers now use the bundled Geist font, while Chinese keeps using the system font. Font sizes and weights have also been unified, so bold Chinese text renders more cleanly.
+- Popovers, tooltips, and toasts share one frosted-glass treatment, icons and disabled states in resource lists follow a consistent style, and enabling or disabling a resource is now animated.
+- Improved compatibility with MCP clients, so results are less likely to be misread.
 
-#### Upgrade Notes
+#### Fixed
 
-- Encrypted `.dnxc` files cannot be imported by 0.8.0 or earlier (older builds do not recognise the format and the import fails), so upgrade both sides to 0.8.1 or later before migrating connections with an encrypted file. Plaintext connection files exported by earlier versions are unaffected.
+##### MySQL Connections
+
+- MySQL time columns could not be read; they now return their values, in UTC.
+- A query that timed out left its connection unusable for a long time. The connection is now released as soon as the query times out, so later operations are unaffected.
+- Empty results no longer lose their field information, and some string values no longer appear as base64 text.
+
+##### JDBC Queries
+
+- JDBC statements that cannot be parsed are now rejected, so they cannot bypass read-only protection.
+- Cancelling a query now terminates the database session correctly.
+- Fixed string values being converted incorrectly, and cells being truncated without any indication.
+- Database errors are redacted consistently in audit records and debug logs.
+
+##### Interface and Resource Monitoring
+
+- A single request in progress no longer makes a large part of the interface unavailable; only the features involved are affected.
+- Switching settings tabs no longer leaves the new tab at the previous tab's scroll position.
+- JDBC driver CPU usage no longer reports more than 100%; it is now measured the same way Task Manager measures it.
