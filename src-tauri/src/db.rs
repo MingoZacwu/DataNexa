@@ -320,7 +320,7 @@ impl DatabaseManager {
             validate_identifier(schema)?;
         }
 
-        match self.pool(config, vault, text).await? {
+        let columns: Vec<ColumnInfo> = match self.pool(config, vault, text).await? {
             ManagedPool::Sqlite(pool) => {
                 let sql = format!(
                     "PRAGMA table_info({})",
@@ -331,15 +331,14 @@ impl DatabaseManager {
                     collect_metadata_rows(sqlx::query(&sql).fetch(&pool)),
                 )
                 .await??;
-                Ok(rows
-                    .iter()
+                rows.iter()
                     .map(|row| ColumnInfo {
                         name: row.try_get::<String, _>("name").unwrap_or_default(),
                         data_type: row.try_get::<String, _>("type").unwrap_or_default(),
                         nullable: row.try_get::<i64, _>("notnull").unwrap_or(0) == 0,
                         primary_key: row.try_get::<i64, _>("pk").unwrap_or(0) > 0,
                     })
-                    .collect())
+                    .collect()
             }
             ManagedPool::Mysql(pool) => {
                 let schema = schema.unwrap_or(&config.database);
@@ -353,8 +352,7 @@ impl DatabaseManager {
                     ),
                 )
                 .await??;
-                Ok(rows
-                    .iter()
+                rows.iter()
                     .map(|row| ColumnInfo {
                         name: row.try_get::<String, _>("COLUMN_NAME").unwrap_or_default(),
                         data_type: row.try_get::<String, _>("DATA_TYPE").unwrap_or_default(),
@@ -363,7 +361,7 @@ impl DatabaseManager {
                         primary_key: row.try_get::<String, _>("COLUMN_KEY").unwrap_or_default()
                             == "PRI",
                     })
-                    .collect())
+                    .collect()
             }
             ManagedPool::Postgres(pool) => {
                 let schema = schema.unwrap_or("public");
@@ -393,8 +391,7 @@ impl DatabaseManager {
                     ),
                 )
                 .await??;
-                Ok(rows
-                    .iter()
+                rows.iter()
                     .map(|row| ColumnInfo {
                         name: row.try_get::<String, _>("column_name").unwrap_or_default(),
                         data_type: row.try_get::<String, _>("data_type").unwrap_or_default(),
@@ -402,9 +399,15 @@ impl DatabaseManager {
                             == "YES",
                         primary_key: row.try_get::<bool, _>("primary_key").unwrap_or(false),
                     })
-                    .collect())
+                    .collect()
             }
+        };
+        if columns.is_empty() {
+            return Err(anyhow::Error::new(TableNotFoundError(
+                text.table_not_found(schema, table),
+            )));
         }
+        Ok(columns)
     }
 
     pub async fn sample_rows(
@@ -1057,6 +1060,20 @@ fn required<'a>(value: Option<&'a str>, field: &str) -> anyhow::Result<&'a str> 
 fn query_timeout(config: &ConnectionConfig) -> Duration {
     Duration::from_millis(config.query_timeout_ms.max(500))
 }
+
+/// Metadata lookups report a missing table through this marker so the message
+/// stays intact in error redaction, where only application-owned summaries are
+/// retained.
+#[derive(Debug)]
+pub(crate) struct TableNotFoundError(String);
+
+impl std::fmt::Display for TableNotFoundError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for TableNotFoundError {}
 
 fn validate_identifier(identifier: &str) -> anyhow::Result<()> {
     let re = Regex::new(r"^[A-Za-z_][A-Za-z0-9_$]*$").expect("valid identifier regex");
@@ -1769,5 +1786,50 @@ mod tests {
             second.database
         );
         manager.close(&second.id).await;
+    }
+
+    #[tokio::test]
+    async fn describe_table_reports_missing_tables_instead_of_empty_columns() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let config = sqlite_connection(directory.path(), "describe.db").await;
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(directory.path().join("describe.db"))
+                    .create_if_missing(true),
+            )
+            .await
+            .expect("SQLite fixture opens");
+        sqlx::query("CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+            .execute(&pool)
+            .await
+            .expect("fixture table is created");
+        pool.close().await;
+
+        let manager = DatabaseManager::default();
+        let vault = CredentialVault::new();
+        let text = crate::i18n::backend_text("en");
+
+        let columns = manager
+            .describe_table(&config, &vault, None, "widgets", &text)
+            .await
+            .expect("existing table describes");
+        assert_eq!(
+            columns
+                .iter()
+                .map(|column| column.name.as_str())
+                .collect::<Vec<_>>(),
+            ["id", "name"]
+        );
+        assert!(columns[0].primary_key);
+        assert!(!columns[1].nullable);
+
+        let error = manager
+            .describe_table(&config, &vault, None, "missing_widgets", &text)
+            .await
+            .expect_err("missing table must not describe as an empty column list");
+        assert_eq!(error.to_string(), "Table not found: missing_widgets");
+        manager.close(&config.id).await;
     }
 }

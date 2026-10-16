@@ -1474,7 +1474,7 @@ pub fn open_project_changelog(version: Option<String>) -> Result<(), String> {
         .as_deref()
         .unwrap_or_default()
         .trim()
-        .trim_start_matches(|c| c == 'v' || c == 'V')
+        .trim_start_matches(['v', 'V'])
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '+'))
         .collect();
@@ -2007,6 +2007,9 @@ pub(crate) fn database_error_summary(error: &anyhow::Error, redact: bool) -> Str
         return sanitize_error(error);
     }
     for source in error.chain() {
+        if let Some(missing) = source.downcast_ref::<crate::db::TableNotFoundError>() {
+            return missing.to_string();
+        }
         if let Some(sqlx::Error::Database(database)) = source.downcast_ref::<sqlx::Error>() {
             if let Some(code) = database.code().filter(|code| {
                 !code.is_empty()

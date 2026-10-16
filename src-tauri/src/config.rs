@@ -409,8 +409,7 @@ fn normalize_connection(connection: &mut ConnectionConfig) -> anyhow::Result<()>
         .take()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    connection.max_rows =
-        clamp_with_log(&connection.id, "max_rows", connection.max_rows, 1, 5000);
+    connection.max_rows = clamp_with_log(&connection.id, "max_rows", connection.max_rows, 1, 5000);
     connection.query_timeout_ms = clamp_with_log(
         &connection.id,
         "query_timeout_ms",
@@ -418,8 +417,13 @@ fn normalize_connection(connection: &mut ConnectionConfig) -> anyhow::Result<()>
         500,
         60_000,
     );
-    connection.max_connections =
-        clamp_with_log(&connection.id, "max_connections", connection.max_connections, 1, 3);
+    connection.max_connections = clamp_with_log(
+        &connection.id,
+        "max_connections",
+        connection.max_connections,
+        1,
+        3,
+    );
     connection.max_result_bytes = clamp_with_log(
         &connection.id,
         "max_result_bytes",

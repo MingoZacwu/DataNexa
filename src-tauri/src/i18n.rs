@@ -262,6 +262,19 @@ impl BackendText {
         }
     }
 
+    pub fn table_not_found(self, schema: Option<&str>, table: &str) -> String {
+        match self.locale {
+            Locale::ZhCn => match schema {
+                Some(schema) => format!("表不存在：{schema}.{table}"),
+                None => format!("表不存在：{table}"),
+            },
+            Locale::En => match schema {
+                Some(schema) => format!("Table not found: {schema}.{table}"),
+                None => format!("Table not found: {table}"),
+            },
+        }
+    }
+
     pub fn policy_sql_empty(self) -> &'static str {
         match self.locale {
             Locale::ZhCn => "SQL 不能为空。",
@@ -497,6 +510,7 @@ impl BackendText {
                 "jdbc_error" => "JDBC 数据库操作失败",
                 "invalid_bundle" => "JDBC 驱动 Bundle 无效",
                 "invalid_table" => "表名无效",
+                "table_not_found" => "表不存在",
                 "invalid_sql" => "SQL 无效",
                 "protocol_mismatch" => "JDBC sidecar 协议版本不兼容",
                 "unsupported_action" => "JDBC sidecar 不支持此操作",
@@ -512,6 +526,7 @@ impl BackendText {
                 "JDBC driver bundle does not contain a jars directory" => "JDBC 驱动 Bundle 不包含 jars 目录。",
                 "JDBC driver bundle contains no JAR files" => "JDBC 驱动 Bundle 不包含 JAR 文件。",
                 "A table name is required" => "必须填写表名。",
+                "The requested table was not found" => "",
                 "A SQL statement is required" => "必须填写 SQL 语句。",
                 "JDBC operation failed" => "JDBC 操作失败。",
                 _ => detail,

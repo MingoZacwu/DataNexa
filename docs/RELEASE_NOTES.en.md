@@ -53,6 +53,10 @@
 - Switching settings tabs no longer leaves the new tab at the previous tab's scroll position.
 - JDBC driver CPU usage no longer reports more than 100%; it is now measured the same way Task Manager measures it.
 
+### MCP Tools
+
+- Describing the columns of a table that does not exist no longer returns an empty column list; it now reports that the table was not found, so the result cannot be confused with a table that has no columns.
+
 ## Feedback
 
 - If you run into problems after upgrading, please report them on [GitHub Issues](https://github.com/MingoZacwu/DataNexa/issues) with steps to reproduce and details about your environment.

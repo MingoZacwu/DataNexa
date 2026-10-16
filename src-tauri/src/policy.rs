@@ -44,7 +44,11 @@ impl PolicyEngine {
         text: &BackendText,
         enforce_row_limit: bool,
     ) -> PolicyCheckResult {
-        let mode = if enforce_row_limit { "execute" } else { "explain" };
+        let mode = if enforce_row_limit {
+            "execute"
+        } else {
+            "explain"
+        };
         let trimmed = sql.trim();
         if trimmed.is_empty() {
             return deny_logged(PolicyDenial::Empty, kind, mode, text.policy_sql_empty());

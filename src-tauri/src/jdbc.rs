@@ -912,8 +912,7 @@ impl JdbcManager {
                     .flatten()
                     .filter(|entry| {
                         entry.file_name() != "current.json"
-                            && current_runtime_path
-                                .is_none_or(|current| entry.path() != current)
+                            && current_runtime_path.is_none_or(|current| entry.path() != current)
                     })
                     .map(|entry| path_size_bytes(&entry.path()))
                     .sum()
@@ -1025,20 +1024,30 @@ impl JdbcManager {
         }
         if let Some(supported) = read_only {
             if !supported {
-                crate::debug_log::warn("jdbc", format_args!(
-                    "driver rejected connection.setReadOnly (bundle_id={}, detail={})",
-                    bundle_id,
-                    probe.read_only.detail.as_deref().unwrap_or("unavailable")
-                ));
+                crate::debug_log::warn(
+                    "jdbc",
+                    format_args!(
+                        "driver rejected connection.setReadOnly (bundle_id={}, detail={})",
+                        bundle_id,
+                        probe.read_only.detail.as_deref().unwrap_or("unavailable")
+                    ),
+                );
             }
         }
         if let Some(supported) = query_timeout {
             if !supported {
-                crate::debug_log::warn("jdbc", format_args!(
-                    "driver rejected statement.setQueryTimeout (bundle_id={}, detail={})",
-                    bundle_id,
-                    probe.query_timeout.detail.as_deref().unwrap_or("unavailable")
-                ));
+                crate::debug_log::warn(
+                    "jdbc",
+                    format_args!(
+                        "driver rejected statement.setQueryTimeout (bundle_id={}, detail={})",
+                        bundle_id,
+                        probe
+                            .query_timeout
+                            .detail
+                            .as_deref()
+                            .unwrap_or("unavailable")
+                    ),
+                );
             }
         }
         let Ok(bundle_path) = self.bundle_path(bundle_id) else {
@@ -1057,12 +1066,21 @@ impl JdbcManager {
             query_timeout: query_timeout
                 .or_else(|| previous.as_ref().and_then(|value| value.query_timeout)),
             probed_at: Utc::now().to_rfc3339(),
-            driver_name: non_empty(response.driver_name.clone())
-                .or_else(|| previous.as_ref().and_then(|value| value.driver_name.clone())),
-            driver_version: non_empty(response.driver_version.clone())
-                .or_else(|| previous.as_ref().and_then(|value| value.driver_version.clone())),
-            database_product: non_empty(response.database_product.clone())
-                .or_else(|| previous.as_ref().and_then(|value| value.database_product.clone())),
+            driver_name: non_empty(response.driver_name.clone()).or_else(|| {
+                previous
+                    .as_ref()
+                    .and_then(|value| value.driver_name.clone())
+            }),
+            driver_version: non_empty(response.driver_version.clone()).or_else(|| {
+                previous
+                    .as_ref()
+                    .and_then(|value| value.driver_version.clone())
+            }),
+            database_product: non_empty(response.database_product.clone()).or_else(|| {
+                previous
+                    .as_ref()
+                    .and_then(|value| value.database_product.clone())
+            }),
         };
         let needs_write = match &previous {
             None => true,
@@ -1080,10 +1098,13 @@ impl JdbcManager {
         }
         bundle.capabilities = Some(updated);
         if let Err(error) = write_manifest_atomic(&bundle_path, &bundle) {
-            crate::debug_log::warn("jdbc", format_args!(
-                "failed to persist driver capability probe (bundle_id={}, error={})",
-                bundle_id, error
-            ));
+            crate::debug_log::warn(
+                "jdbc",
+                format_args!(
+                    "failed to persist driver capability probe (bundle_id={}, error={})",
+                    bundle_id, error
+                ),
+            );
         }
     }
 

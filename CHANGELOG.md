@@ -17,8 +17,7 @@
 发版时若尚未补上对应小节，官网会先用 GitHub Release 正文兜底，并在 CI 中给出提醒。
 -->
 
-<!-- 发版前请把下一行的 TODO 换成发布日期（YYYY-MM-DD），例如 `## [0.8.2] - 2026-10-16`。 -->
-## [0.8.2] - TODO
+## [0.8.2] - 2026-10-17
 
 ### 中文
 
@@ -73,6 +72,10 @@
 - 修复设置页切换标签后滚动位置错乱的问题。
 - 修复资源监控中 JDBC 驱动 CPU 占用显示超过 100% 的问题，统计方式现在与系统任务管理器一致。
 
+##### MCP 工具
+
+- 修复查询表字段时表不存在会返回空字段列表的问题，现在会明确返回“表不存在”，不再与真正无字段的结果混淆。
+
 ### English
 
 #### Highlights
@@ -125,3 +128,7 @@
 - A single request in progress no longer makes a large part of the interface unavailable; only the features involved are affected.
 - Switching settings tabs no longer leaves the new tab at the previous tab's scroll position.
 - JDBC driver CPU usage no longer reports more than 100%; it is now measured the same way Task Manager measures it.
+
+##### MCP Tools
+
+- Describing the columns of a table that does not exist no longer returns an empty column list; it now reports that the table was not found, so the result cannot be confused with a table that has no columns.
