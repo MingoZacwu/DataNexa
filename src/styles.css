@@ -60,8 +60,8 @@ body {
   overflow: hidden;
   color: var(--ink);
   background: var(--bg);
-  font-family: "Segoe UI Variable", "Microsoft YaHei UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans CJK SC", sans-serif;
-  font-size: 13px;
+  font-family: "Geist Variable", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
   letter-spacing: 0;
 }
 
@@ -188,7 +188,7 @@ p {
 .brand strong {
   display: block;
   white-space: nowrap;
-  font-size: 17px;
+  font-size: 18px;
   color: #1f4ed8;
   line-height: 1.05;
   font-weight: 700;
@@ -216,7 +216,7 @@ p {
   border-radius: 8px;
   color: #46566f;
   background: transparent;
-  font-weight: 600;
+  font-weight: 700;
   text-align: left;
   transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease;
 }
@@ -283,7 +283,7 @@ p {
   flex: 1;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .sidebar-status-line span:last-child {
@@ -470,6 +470,74 @@ p {
 .top-icon-actions .icon-button {
   width: var(--control-height);
   height: var(--control-height);
+}
+
+.language-switcher {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Portalled to <body> so the scrollable workspace cannot clip it.
+   Frosted glass: a strong blur turns the content below into soft colour, and
+   the saturation boost keeps that colour from washing out grey. The base fill
+   stays translucent enough to let that tint through, but not so translucent
+   that the labels lose contrast, so the selected row carries its state with a
+   filled blue pill instead of coloured text. */
+.language-menu {
+  position: fixed;
+  z-index: 1200;
+  min-width: 132px;
+  display: grid;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--line-strong, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  box-shadow:
+    inset 0 1px 0 var(--glass-edge, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--glass-edge, transparent) 45%, transparent),
+    var(--soft-shadow);
+  backdrop-filter: blur(28px) saturate(200%);
+  -webkit-backdrop-filter: blur(28px) saturate(200%);
+}
+
+.language-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px;
+  min-height: 30px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--ink);
+  background: transparent;
+  text-align: left;
+  font-weight: 700;
+}
+
+.language-menu-item:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--blue) 12%, transparent);
+}
+
+.language-menu-item.active {
+  color: #fff;
+  background: var(--blue);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 22%, transparent);
+}
+
+/* Dark mode's accent is a light blue, so the filled pill needs dark text. */
+:root.dark .language-menu-item.active {
+  color: #10151f;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 30%, transparent);
+}
+
+.language-menu-check {
+  width: 14px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
 }
 
 .top-filter-actions {
@@ -681,7 +749,7 @@ p {
 .metric-card small {
   color: var(--muted);
   font-weight: 700;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .metric-card > div {
@@ -694,7 +762,7 @@ p {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 17px;
+  font-size: 18px;
   line-height: 1.1;
   font-weight: 700;
 }
@@ -719,7 +787,7 @@ p {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1;
   font-weight: 600;
 }
@@ -770,6 +838,11 @@ p {
   background: rgba(15, 23, 42, 0.46);
 }
 
+.connection-row .icon-button,
+.connection-row .status-pill {
+  transition: color 160ms ease, border-color 160ms ease, background-color 160ms ease, opacity 160ms ease;
+}
+
 .connection-item.compact {
   grid-template-columns: 38px minmax(0, 1fr);
   padding: 9px 10px;
@@ -784,6 +857,7 @@ p {
   overflow: hidden;
   border-radius: 8px;
   box-shadow: 0 12px 24px rgba(31, 68, 130, 0.14);
+  transition: opacity 160ms ease, filter 160ms ease;
 }
 
 .db-badge img {
@@ -791,6 +865,11 @@ p {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.db-badge.disabled {
+  opacity: .55;
+  filter: grayscale(1);
 }
 
 .connection-info {
@@ -809,8 +888,28 @@ p {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
+}
+
+.connection-info .connection-name-copy {
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  color: inherit;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 160ms ease;
+}
+
+.connection-info .connection-name-copy:hover {
+  color: var(--blue);
 }
 
 .connection-info p {
@@ -944,7 +1043,7 @@ p {
 
 .tools-summary h2 {
   margin: 0;
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 700;
 }
 
@@ -994,6 +1093,11 @@ p {
   gap: 12px;
 }
 
+.tool-card.disabled .tool-icon {
+  opacity: .55;
+  filter: grayscale(1);
+}
+
 .tool-title-row strong,
 .tool-title-row code {
   display: block;
@@ -1002,7 +1106,7 @@ p {
 .tool-title-row code {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   overflow-wrap: anywhere;
 }
 
@@ -1066,7 +1170,7 @@ p {
   border-radius: 6px;
   color: var(--muted);
   background: transparent;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .settings-tabs button.active {
@@ -1083,17 +1187,25 @@ p {
   white-space: nowrap;
 }
 
+/* The label yields first if the tab is ever narrower than its content, so the
+   badge can never be pushed outside the tab. */
+.settings-tabs .jdbc-support-tab > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .settings-tab-badge {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   min-height: 18px;
-  padding: 0 6px;
+  padding: 0 5px;
   border: 1px solid color-mix(in srgb, var(--blue) 20%, transparent);
   border-radius: 999px;
   color: var(--blue);
   background: color-mix(in srgb, var(--blue) 8%, transparent);
-  font-size: 12px;
+  font-size: 10px;
   line-height: 1;
   font-weight: 700;
 }
@@ -1148,7 +1260,7 @@ p {
 .runtime-details-panel .driver-section-heading p {
   margin-top: 4px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 400;
 }
 
@@ -1172,7 +1284,7 @@ p {
 
 .live-hero-heading > span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1183,7 +1295,7 @@ p {
   align-items: center;
   gap: 6px;
   color: var(--green);
-  font-size: 11px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 700;
 }
@@ -1256,14 +1368,14 @@ p {
 
 .live-metric-top span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 
 .live-metric-top em {
   flex: 0 0 auto;
   color: var(--violet);
-  font-size: 13px;
+  font-size: 14px;
   font-style: normal;
   font-weight: 750;
   font-variant-numeric: tabular-nums;
@@ -1272,7 +1384,7 @@ p {
 .live-metric > p {
   align-self: end;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.3;
   font-variant-numeric: tabular-nums;
 }
@@ -1378,7 +1490,7 @@ p {
 
 .usage-section-heading span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.3;
 }
 
@@ -1430,7 +1542,7 @@ p {
 
 .usage-process-sub {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.3;
   font-variant-numeric: tabular-nums;
 }
@@ -1470,7 +1582,7 @@ p {
   flex: 0 0 auto;
   color: color-mix(in srgb, var(--ink) 74%, var(--muted));
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .runtime-empty-dot {
@@ -1485,7 +1597,7 @@ p {
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1622,7 +1734,7 @@ p {
   flex-wrap: wrap;
   gap: 10px 16px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .runtime-cpu-legend > span {
@@ -1728,8 +1840,8 @@ p {
   font-variant-numeric: tabular-nums;
 }
 
-.storage-detail-row code { min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
-.storage-detail-row > span { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.storage-detail-row code { min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.storage-detail-row > span { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 
 .jdbc-cache-dialog {
   width: min(480px, calc(100vw - 40px));
@@ -1779,7 +1891,7 @@ p {
 
 .jdbc-cache-option span {
   min-width: 0;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .jdbc-cache-option strong,
@@ -1802,7 +1914,7 @@ p {
 }
 
 .jdbc-cache-clean p {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .jdbc-cache-total {
@@ -1816,7 +1928,7 @@ p {
 
 .jdbc-cache-total strong {
   color: var(--ink);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .jdbc-cache-dialog footer {
@@ -1842,7 +1954,7 @@ p {
 .runtime-driver-identity > div:last-child { min-width: 0; display: grid; gap: 3px; }
 .runtime-driver-identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .runtime-driver-identity span,
-.runtime-driver-stat span { color: var(--muted); font-size: 11px; }
+.runtime-driver-stat span { color: var(--muted); font-size: 12px; }
 .runtime-driver-stat { display: grid; gap: 3px; text-align: right; }
 .runtime-driver-stat strong { font-size: 12px; font-variant-numeric: tabular-nums; }
 
@@ -1929,7 +2041,7 @@ p {
   padding: 0 8px;
   border-radius: 6px;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .runtime-status-badge.available {
@@ -1985,39 +2097,107 @@ p {
 
 .driver-row-main span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
-.jdbc-risk-summary {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+.driver-capability-row {
+  display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
+  margin-top: 2px;
+  overflow: visible;
+}
+
+/* Scoped under .driver-capability-row so these win over the broader
+   `.driver-row-main span` rule that would otherwise restyle the badges. */
+.driver-capability-row .driver-capability-label {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.driver-capability-row .driver-capability-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 20px;
+  padding: 0 7px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.driver-capability-badge svg {
+  flex: 0 0 auto;
+}
+
+.driver-capability-badge.supported {
+  color: var(--green);
+  background: rgba(22, 160, 100, 0.1);
+}
+
+.driver-capability-badge.unsupported {
+  color: var(--amber);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.driver-capability-badge.undetected {
+  color: var(--muted);
+  background: rgba(100, 116, 139, 0.1);
+}
+
+.jdbc-assurance-panel {
+  min-width: 0;
+}
+
+/* One neutral card holding both the assurance and the risk note as two rows,
+   so the statements read as a single block instead of two stacked boxes. */
+.jdbc-assurance-summary {
+  display: grid;
   margin-top: 0;
-  padding: 11px 12px;
-  border: 1px solid rgba(245, 158, 11, 0.28);
+  padding: 2px 12px;
+  border: 1px solid var(--line);
   border-radius: var(--card-radius);
-  background: rgba(245, 158, 11, 0.07);
+  background: var(--surface-strong);
   box-shadow: var(--soft-shadow);
   backdrop-filter: blur(22px);
 }
 
-.jdbc-risk-panel {
-  min-width: 0;
+.jdbc-assurance-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
 }
 
-.jdbc-risk-summary-icon {
+.jdbc-assurance-row + .jdbc-assurance-row {
+  border-top: 1px solid var(--line);
+}
+
+/* The risk row adds the details button as a third column. */
+.jdbc-assurance-row.risk {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.jdbc-assurance-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border-radius: 7px;
-  color: var(--amber);
-  background: rgba(245, 158, 11, 0.14);
+  color: var(--green);
+  background: rgba(22, 160, 100, 0.12);
 }
 
-.jdbc-risk-summary p {
+.jdbc-assurance-icon.risk {
+  color: var(--amber);
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.jdbc-assurance-row > p {
   min-width: 0;
   margin: 0;
   color: var(--muted);
@@ -2025,9 +2205,16 @@ p {
   line-height: 1.55;
 }
 
+/* The assurance statement is the primary message: full ink, slightly
+   stronger than the muted risk note below it. */
+.jdbc-assurance-row:not(.risk) > p {
+  color: var(--ink);
+  font-weight: 600;
+}
+
 .jdbc-risk-details-button {
   flex: 0 0 auto;
-  min-height: 30px;
+  min-height: 28px;
   padding-inline: 10px;
   color: var(--ink);
   white-space: nowrap;
@@ -2041,7 +2228,7 @@ p {
   display: grid;
   gap: 12px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.65;
 }
 
@@ -2075,7 +2262,7 @@ p {
 }
 
 @media (max-width: 720px) {
-  .jdbc-risk-summary {
+  .jdbc-assurance-row.risk {
     grid-template-columns: auto minmax(0, 1fr);
   }
 
@@ -2182,7 +2369,7 @@ p {
   border-radius: 6px;
   color: var(--muted);
   background: transparent;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .theme-mode-control button:not(.active):hover {
@@ -2222,9 +2409,9 @@ p {
 
 .server-card h2 {
   margin: 8px 0 12px;
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 700;
   overflow-wrap: anywhere;
 }
 
@@ -2253,7 +2440,7 @@ p {
 
 .panel-kicker {
   color: var(--blue);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -2355,6 +2542,10 @@ p {
   background: rgba(244, 63, 94, 0.10);
 }
 
+.connection-toggle-button {
+  transition: color 160ms ease, border-color 160ms ease, background-color 160ms ease;
+}
+
 .button:disabled,
 .icon-button:disabled,
 .switch:disabled {
@@ -2369,7 +2560,7 @@ p {
   min-height: 20px;
   padding: 0 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -2413,11 +2604,11 @@ p {
 
 .toast.error {
   color: var(--red);
-  background: rgba(255, 246, 247, 0.92);
+  background: rgba(255, 246, 247, 0.86);
 }
 
 :root.dark .toast.error {
-  background: rgba(69, 26, 35, 0.74);
+  background: rgba(69, 26, 35, 0.86);
 }
 
 .toast span {
@@ -2459,7 +2650,7 @@ textarea {
   color: var(--ink);
   background: var(--surface-strong);
   outline: none;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 input,
@@ -2474,7 +2665,7 @@ select {
 textarea {
   min-height: 118px;
   resize: vertical;
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
 }
 
 input:focus,
@@ -2486,7 +2677,7 @@ textarea:focus {
 
 code,
 pre {
-  font-family: "Cascadia Code", Consolas, monospace;
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
 }
 
 pre {
@@ -2640,14 +2831,14 @@ pre {
 
 .dialog-titlebar h2,
 .connection-dialog [data-radix-dialog-title] {
-  font-size: 17px;
+  font-size: 18px;
 }
 
 .dialog-titlebar p,
 .connection-dialog [data-radix-dialog-description] {
   margin-top: 7px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .connection-form {
@@ -2668,7 +2859,7 @@ pre {
 
 .form-section h3 {
   margin-bottom: 9px;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
 }
 
@@ -2761,7 +2952,7 @@ pre {
 
 .audit-filter-dialog .dialog-titlebar [data-radix-dialog-title] {
   margin: 0;
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 700;
   line-height: 1.3;
 }
@@ -2838,6 +3029,11 @@ pre {
   background: rgba(36, 107, 254, 0.1);
 }
 
+/* Frosted glass, matching .language-menu. The calendar sits inside the filter
+   dialog, whose transform container limits backdrop-filter to the dialog's own
+   contents, so the tint reads as a soft sheen rather than a view of the page
+   behind — portalling it out is not an option because Radix's focus trap then
+   steals focus and closes the dialog on the first click. */
 .audit-calendar {
   position: absolute;
   z-index: 1200;
@@ -2845,10 +3041,15 @@ pre {
   left: 0;
   width: 252px;
   padding: 10px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong, var(--line));
   border-radius: 10px;
-  background: var(--surface-strong);
-  box-shadow: var(--shadow);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  box-shadow:
+    inset 0 1px 0 var(--glass-edge, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--glass-edge, transparent) 45%, transparent),
+    var(--shadow);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
 }
 
 .audit-calendar-header,
@@ -2885,7 +3086,7 @@ pre {
 
 .audit-calendar-weekdays {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   text-align: center;
 }
@@ -2926,7 +3127,7 @@ pre {
   margin: 12px 0 -8px;
   color: var(--red);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .audit-filter-grid input:focus,
@@ -2975,7 +3176,7 @@ pre {
   border-top: 0;
   color: var(--ink);
   font-size: 12px;
-  font-weight: 900;
+  font-weight: 700;
   background: var(--surface-strong);
 }
 
@@ -3012,7 +3213,7 @@ pre {
   border-top: 1px solid var(--line);
   color: var(--muted);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
   background: var(--surface-strong);
 }
 
@@ -3136,7 +3337,7 @@ pre {
 .about-meta dt {
   margin-bottom: 4px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -3160,7 +3361,7 @@ pre {
 }
 
 .detail-section h3 {
-  font-size: 15px;
+  font-size: 16px;
 }
 
 .detail-section p {
@@ -3199,17 +3400,44 @@ pre {
 
 .version-badge {
   display: inline-flex;
-  align-items: center;
+  align-items: stretch;
   min-height: 20px;
-  padding: 0 8px;
   border: 1px solid rgba(37, 99, 235, 0.18);
   border-radius: 999px;
   color: var(--blue);
   background: rgba(37, 99, 235, 0.08);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
+  overflow: hidden;
+}
+
+.version-badge-taps {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px 0 9px;
   cursor: default;
   user-select: none;
+}
+
+/* Local builds hide the changelog segment, which leaves a plain version badge
+   whose text needs the padding back on the right. */
+.version-badge-taps:only-child {
+  padding: 0 9px;
+}
+
+/* Second slice of the pill: the tap gesture for the hidden debug options owns
+   the version text, so the changelog link gets a segment of its own instead. */
+.version-badge-changelog {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 7px 0 6px;
+  border-left: 1px solid rgba(37, 99, 235, 0.22);
+  color: inherit;
+  text-decoration: none;
+}
+
+.version-badge-changelog:hover {
+  background: rgba(37, 99, 235, 0.16);
 }
 
 .about-hero p {
@@ -3257,7 +3485,7 @@ pre {
   padding-top: 16px;
   border-top: 1px solid var(--line);
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .about-footer p {
@@ -3303,7 +3531,7 @@ pre {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-strong);
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .security-list li.security-warning {
@@ -3342,19 +3570,24 @@ pre {
   text-align: left;
 }
 
+/* Tooltips stay opaque and dark so the 12px text keeps its contrast. The
+   arrow is an SVG fill, which cannot run backdrop-filter, so a frosted panel
+   would never match it — see future-glass.css for the shared solid colour. */
 .tooltip {
   max-width: min(320px, calc(100vw - 24px));
   padding: 7px 9px;
   border-radius: 8px;
   color: #fff;
-  background: #172033;
+  background: #1e2634;
   font-size: 12px;
   line-height: 1.5;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
 }
 
+/* The arrow is an SVG fill and cannot run backdrop-filter, so it must be the
+   same solid colour as the panel in future-glass.css. */
 .tooltip-arrow {
-  fill: #172033;
+  fill: #1e2634;
 }
 
 .access-workbench { min-height: 0; height: 100%; display: grid; grid-template-columns: minmax(280px, .78fr) minmax(440px, 1.22fr); gap: 14px; }
@@ -3366,7 +3599,12 @@ pre {
 .access-token-row:hover, .access-token-row.selected { background: color-mix(in srgb, var(--blue) 6%, transparent); }
 .access-token-row.selected::before { opacity: 1; transform: scaleY(1); box-shadow: 0 0 12px var(--blue); }
 .access-token-row.disabled { background: color-mix(in srgb, var(--muted) 4%, transparent); }
-.token-glyph { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid color-mix(in srgb, var(--blue) 24%, var(--line)); border-radius: 7px; color: var(--blue); background: color-mix(in srgb, var(--blue) 9%, var(--surface-strong)); box-shadow: 0 8px 20px rgba(25, 71, 143, .12); }
+.token-glyph,
+.permission-icon,
+.tool-icon { width: 34px; height: 34px; display: grid; place-items: center; overflow: hidden; border: 1px solid color-mix(in srgb, var(--tile-accent) 24%, var(--line)); border-radius: 7px; color: var(--tile-accent); background: color-mix(in srgb, var(--tile-accent) 9%, var(--surface-strong)); box-shadow: 0 8px 20px rgba(25, 71, 143, .12); transition: opacity 160ms ease, filter 160ms ease; }
+.token-glyph,
+.permission-icon { --tile-accent: var(--blue); }
+.tool-icon { --tile-accent: var(--violet); }
 .token-glyph.large { width: 40px; height: 40px; }
 .access-token-copy, .permission-copy { min-width: 0; display: grid; gap: 5px; }
 .access-token-copy > span, .access-token-identity > div > span { min-width: 0; display: flex; align-items: center; gap: 7px; }
@@ -3381,20 +3619,21 @@ pre {
 .access-icon-actions { grid-column: 1 / -1; }
 .access-token-meta { flex: 0 0 auto; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; padding: 7px 16px; border-bottom: 1px solid var(--line); }
 .access-token-meta div { min-width: 0; padding: 10px 6px; }
-.access-token-meta dt { margin-bottom: 5px; color: var(--muted); font-size: 10px; font-weight: 600; }
-.access-token-meta dd { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 600; }
+.access-token-meta dt { margin-bottom: 5px; color: var(--muted); font-size: 10px; font-weight: 700; }
+.access-token-meta dd { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 700; }
 .access-permission-tabs { flex: 0 0 auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-bottom: 1px solid var(--line); }
-.access-permission-tabs button { min-height: 43px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-bottom: 2px solid transparent; color: var(--muted); background: transparent; font-weight: 650; }
+.access-permission-tabs button { min-height: 43px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-bottom: 2px solid transparent; color: var(--muted); background: transparent; font-weight: 700; }
 .access-permission-tabs button.active { color: var(--blue); border-bottom-color: var(--blue); background: color-mix(in srgb, var(--blue) 5%, transparent); }
 .access-permission-tabs small { min-width: 30px; padding: 2px 5px; border-radius: 5px; background: color-mix(in srgb, currentColor 9%, transparent); font-size: 10px; }
 .access-permission-list { flex: 1; overflow: auto; }
-.access-permission-row { min-height: 57px; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 8px 16px; border-bottom: 1px solid var(--line); }
+.access-permission-row { min-height: 57px; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 8px 16px; border-bottom: 1px solid var(--line); transition: opacity 160ms ease; }
 .access-permission-row.disabled { opacity: .55; }
-.permission-icon { width: 30px; height: 30px; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; color: var(--blue); background: var(--surface-strong); }
 .permission-icon img { width: 100%; height: 100%; object-fit: cover; }
+.permission-icon.denied, .tool-icon.denied { opacity: .55; }
+.permission-icon.globally-disabled, .tool-icon.globally-disabled { filter: grayscale(1); }
 .access-prerequisite { max-width: 620px; min-height: 300px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; margin: auto; text-align: center; }
 .access-prerequisite-icon { width: 54px; height: 54px; display: grid; place-items: center; border-radius: 50%; color: var(--amber); background: color-mix(in srgb, var(--amber) 13%, transparent); }
-.access-prerequisite h2 { margin: 4px 0 0; font-size: 17px; }
+.access-prerequisite h2 { margin: 4px 0 0; font-size: 18px; }
 .access-prerequisite p { max-width: 460px; margin: 0 0 8px; color: var(--muted); line-height: 1.65; }
 .access-dialog form { display: grid; gap: 20px; }
 .access-dialog footer { display: flex; justify-content: flex-end; gap: 8px; }
@@ -3459,7 +3698,7 @@ pre {
   }
 
   .brand strong {
-    font-size: 17px;
+    font-size: 18px;
   }
 
   .nav-button {
@@ -3660,12 +3899,12 @@ pre {
 
 .sidebar-migration-copy strong {
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .sidebar-migration-copy span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .migration-progress {
@@ -3708,7 +3947,7 @@ pre {
 
 .migration-dialog-copy [data-radix-dialog-title] {
   display: block;
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 700;
   line-height: 1.35;
 }
@@ -3716,7 +3955,7 @@ pre {
 .migration-dialog-copy [data-radix-dialog-description] {
   margin-top: 6px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.55;
 }
 
@@ -3876,12 +4115,12 @@ pre {
 
 .sidebar-update-copy strong {
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .sidebar-update-copy span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .sidebar-update-dismiss {

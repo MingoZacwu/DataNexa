@@ -6,7 +6,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import type { I18nMessages } from "../../i18n";
 import type { AccessTokenInfo, ConnectionConfig, McpToolInfo } from "../../types";
 import { DATABASE_LOGOS } from "../../app/assets";
-import { toolDisplayName } from "../../app/utils";
+import { toolDisplayName, toolIcon } from "../../app/utils";
 import { IconTooltip, StatusPill } from "../../components/ui";
 
 type PermissionTab = "connections" | "tools";
@@ -116,12 +116,13 @@ export function AccessControlView({
                 <PermissionSectionButton active={tab === "connections"} label={t.access.databasePermissions} count={`${allowedConnections(selected, connections)} / ${connections.filter((item) => item.enabled).length}`} onClick={() => setTab("connections")} />
                 {tab === "connections" && <div className="access-permission-list page-scroll-list">{connections.map((connection) => {
                   const allowed = connection.enabled && !selected.denied_connections.includes(connection.id);
-                  return <PermissionRow key={connection.id} icon={<img src={DATABASE_LOGOS[connection.type]} alt="" />} title={connection.name} detail={connection.enabled ? connection.database : t.access.globallyDisabled} checked={allowed} disabled={busy || !connection.enabled} label={t.access.allowConnection} onChange={(checked) => onConnectionAllowed(selected.id, connection.id, checked)} />;
+                  return <PermissionRow key={connection.id} icon={<img src={DATABASE_LOGOS[connection.type]} alt="" />} iconClassName="permission-icon" title={connection.name} detail={connection.enabled ? connection.database : t.access.globallyDisabled} checked={allowed} disabled={busy || !connection.enabled} globallyDisabled={!connection.enabled} label={t.access.allowConnection} onChange={(checked) => onConnectionAllowed(selected.id, connection.id, checked)} />;
                 })}</div>}
                 <PermissionSectionButton active={tab === "tools"} label={t.access.toolPermissions} count={`${allowedTools(selected, tools)} / ${tools.filter((item) => item.enabled).length}`} onClick={() => setTab("tools")} />
                 {tab === "tools" && <div className="access-permission-list page-scroll-list">{tools.map((tool) => {
                   const allowed = tool.enabled && !selected.denied_tools.includes(tool.name);
-                  return <PermissionRow key={tool.name} icon={<KeyRound size={16} />} title={toolDisplayName(t, tool.name)} detail={tool.enabled ? tool.name : t.access.globallyDisabled} checked={allowed} disabled={busy || !tool.enabled} label={t.access.allowTool} onChange={(checked) => onToolAllowed(selected.id, tool.name, checked)} />;
+                  const ToolIcon = toolIcon(tool.name);
+                  return <PermissionRow key={tool.name} icon={<ToolIcon size={16} />} iconClassName="tool-icon" title={toolDisplayName(t, tool.name)} detail={tool.enabled ? tool.name : t.access.globallyDisabled} checked={allowed} disabled={busy || !tool.enabled} globallyDisabled={!tool.enabled} label={t.access.allowTool} onChange={(checked) => onToolAllowed(selected.id, tool.name, checked)} />;
                 })}</div>}
               </div>
             </>
@@ -144,8 +145,8 @@ export function PromptTokenDialog({ t, open, tokens, connections, tools, busy, o
   return <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}><Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="policy-dialog prompt-token-dialog"><div className="dialog-titlebar"><div><Dialog.Title>{t.access.chooseToken}</Dialog.Title><Dialog.Description>{t.access.chooseTokenText}</Dialog.Description></div><Dialog.Close asChild><button type="button" className="icon-button" aria-label={t.common.close}><X size={18} /></button></Dialog.Close></div><div className="prompt-token-list">{tokens.filter((token) => token.enabled).map((token) => <button type="button" key={token.id} disabled={busy} onClick={() => onSelect(token.id)}><span className="token-glyph"><KeyRound size={17} /></span><span><strong>{token.name}</strong><code>{shortId(token.id)} · {t.access.allowedSummary.replace("{connections}", String(allowedConnections(token, connections))).replace("{tools}", String(allowedTools(token, tools)))} · {token.last_used_at ? new Date(token.last_used_at).toLocaleString() : t.access.neverUsed}</code></span></button>)}</div></Dialog.Content></Dialog.Portal></Dialog.Root>;
 }
 
-function PermissionRow({ icon, title, detail, checked, disabled, label, onChange }: { icon: React.ReactNode; title: string; detail: string; checked: boolean; disabled: boolean; label: string; onChange: (checked: boolean) => void }) {
-  return <div className={clsx("access-permission-row", disabled && "disabled")}><span className="permission-icon">{icon}</span><span className="permission-copy"><strong>{title}</strong><code>{detail}</code></span><Switch.Root className="switch" checked={checked} disabled={disabled} onCheckedChange={onChange} aria-label={`${label}: ${title}`}><Switch.Thumb className="switch-thumb" /></Switch.Root></div>;
+function PermissionRow({ icon, iconClassName, title, detail, checked, disabled, globallyDisabled, label, onChange }: { icon: React.ReactNode; iconClassName: string; title: string; detail: string; checked: boolean; disabled: boolean; globallyDisabled: boolean; label: string; onChange: (checked: boolean) => void }) {
+  return <div className={clsx("access-permission-row", disabled && "disabled")}><span className={clsx(iconClassName, globallyDisabled ? "globally-disabled" : !checked && "denied")}>{icon}</span><span className="permission-copy"><strong>{title}</strong><code>{detail}</code></span><Switch.Root className="switch" checked={checked} disabled={disabled} onCheckedChange={onChange} aria-label={`${label}: ${title}`}><Switch.Thumb className="switch-thumb" /></Switch.Root></div>;
 }
 
 function PermissionSectionButton({ active, label, count, onClick }: { active: boolean; label: string; count: string; onClick: () => void }) {

@@ -339,3 +339,49 @@ jobs:
             --repo "${{ github.repository }}" \
             --draft=false
           echo "Release $RELEASE_TAG published."
+
+  # Website changelog: after the release is published, notify the datanexa-site
+  # repository and let that repository do the work. It owns the sync script, pulls
+  # the release data and CHANGELOG itself, and commits the result — this repository
+  # only sends the signal, so no website files pass through here.
+  #
+  # Requires a repository secret SITE_SYNC_TOKEN: a fine-grained PAT with
+  # "Contents: Read and write" on MingoZacwu/datanexa-site — creating a
+  # repository_dispatch event requires that permission on the target repository.
+  # Without it the step is skipped with a notice, and the site still catches up
+  # through its own daily scheduled sync. This job is deliberately non-fatal: it
+  # runs after the release is already published, so a failure only prints a warning.
+  notify-site-changelog:
+    name: Notify website changelog
+    needs: [resolve-tag, publish-release]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check whether SITE_SYNC_TOKEN is configured
+        id: guard
+        env:
+          SITE_SYNC_TOKEN: ${{ secrets.SITE_SYNC_TOKEN }}
+        run: |
+          if [ -z "$SITE_SYNC_TOKEN" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::SITE_SYNC_TOKEN is not configured — skipping the website notification. The site repo syncs on its own daily schedule."
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Dispatch release-published to datanexa-site
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.SITE_SYNC_TOKEN }}
+          RELEASE_TAG: ${{ needs.resolve-tag.outputs.release_tag }}
+        run: |
+          jq -n --arg tag "$RELEASE_TAG" \
+            '{event_type: "release-published", client_payload: {tag: $tag}}' \
+            > dispatch-payload.json
+
+          if gh api --method POST repos/MingoZacwu/datanexa-site/dispatches \
+              -H "Accept: application/vnd.github+json" \
+              --input dispatch-payload.json; then
+            echo "Notified MingoZacwu/datanexa-site to sync $RELEASE_TAG."
+          else
+            echo "::warning::Could not notify datanexa-site about $RELEASE_TAG (release already published). The website will catch up on its next scheduled sync."
+          fi

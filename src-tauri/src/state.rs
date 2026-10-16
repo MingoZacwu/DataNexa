@@ -16,6 +16,7 @@ pub struct AppState {
     pub store: ConfigStore,
     pub config: RwLock<AppConfig>,
     pub config_transaction: RwLock<()>,
+    pub snapshot_sequence: Mutex<u64>,
     pub vault: CredentialVault,
     pub audit: AuditLogger,
     pub access: AccessControlStore,
@@ -54,6 +55,7 @@ impl AppState {
             store,
             config: RwLock::new(config),
             config_transaction: RwLock::new(()),
+            snapshot_sequence: Mutex::new(0),
             vault: CredentialVault::new(),
             audit,
             access,
@@ -73,6 +75,11 @@ impl AppState {
 
     pub async fn cancel_mcp_requests(&self) {
         self.mcp_cancellation.read().await.cancel();
+    }
+
+    pub async fn close_database_sessions(&self) {
+        self.cancel_mcp_requests().await;
+        tokio::join!(self.db.close_all(), self.jdbc.shutdown_sessions());
     }
 
     pub async fn reset_mcp_cancellation(&self) {

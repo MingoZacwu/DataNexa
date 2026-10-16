@@ -64,6 +64,7 @@ const mockTools: McpToolInfo[] = [
 ];
 
 const mockSnapshot: AppSnapshot = {
+  version: 0,
   emergency_disconnect: false,
   updater_enabled: false,
   startup_error: null,
@@ -195,19 +196,28 @@ const mockJdbcStatus: JdbcStatus = {
       driver_classes: ["oracle.jdbc.OracleDriver"],
       files: [],
       total_size: 4.2 * 1024 * 1024,
-      source: "maven"
+      source: "maven",
+      capabilities: {
+        read_only: true,
+        query_timeout: true,
+        probed_at: "2026-10-12T09:30:00.000Z",
+        driver_name: "Oracle JDBC driver",
+        driver_version: "23.4.0.24.05",
+        database_product: "Oracle"
+      }
     },
     {
       schema_version: 1,
       bundle_id: "00000000-0000-4000-8000-000000000022",
       display_name: "PostgreSQL JDBC",
       maven_coordinate: "org.postgresql:postgresql:42.7.7",
-      repository_url: "https://maven.aliyun.com/repository/public",
+      repository_url: "https://repo.maven.aliyun.com/repository/public",
       installed_at: "2026-08-24T14:30:00.000Z",
       driver_classes: ["org.postgresql.Driver"],
       files: [],
       total_size: 2.4 * 1024 * 1024,
-      source: "maven"
+      source: "maven",
+      capabilities: null
     }
   ]
 };
@@ -273,13 +283,22 @@ function getMockJdbcStorageStatus(): JdbcStorageStatus {
   };
 }
 
+let previewSnapshotVersion = 0;
+
 async function command<T>(name: string, args?: Record<string, unknown>, fallback?: T): Promise<T> {
   if (!isTauri) {
     if (fallback === undefined) {
       throw new Error(formatMessage(previewText.desktopOnly, { name }));
     }
+    // Version the captured preview response before simulating transport latency.
+    let response = fallback;
+    if (typeof response === "object" && response !== null && "version" in response && "config" in response) {
+      response = { ...response, version: ++previewSnapshotVersion };
+    } else if (typeof response === "object" && response !== null && "snapshot" in response) {
+      response = { ...response, snapshot: { ...(response.snapshot as AppSnapshot), version: ++previewSnapshotVersion } };
+    }
     await new Promise((resolve) => window.setTimeout(resolve, 120));
-    return fallback;
+    return response;
   }
 
   return invoke<T>(name, args);
@@ -418,12 +437,13 @@ export const api = {
     return invoke<void>("log_frontend_event", { kind, message });
   },
   openDebugLogDirectory: () => command<void>("open_debug_log_directory", undefined, undefined),
-  exportConnections: async (locale: Locale, password: string | null) => {
+  /** Picks the destination only, so the caller can defer any busy state until
+   * after the native dialog closes. */
+  pickConnectionExportPath: async (locale: Locale, encrypted: boolean) => {
     if (!isTauri) {
       throw new Error(formatMessage(previewText.desktopOnly, { name: "export_connections" }));
     }
     const dialogText = messages[locale].fileDialog;
-    const encrypted = password !== null;
     const path = await save({
       title: dialogText.exportConnectionsTitle,
       defaultPath: connectionTransferFileName(encrypted),
@@ -432,8 +452,10 @@ export const api = {
         : [{ name: dialogText.connectionFile, extensions: ["json"] }]
     });
     if (!path) return null;
-    return command<number>("export_connections", { path, password });
+    return path as string;
   },
+  exportConnections: (path: string, password: string | null) =>
+    command<number>("export_connections", { path, password }),
   /** Picks the file only. Deciding whether a password is needed belongs to
    * `inspectConnectionFile`, so the caller can prompt before anything is imported. */
   pickConnectionImportFile: async (locale: Locale) => {
@@ -531,5 +553,16 @@ export const api = {
       return Promise.resolve();
     }
     return command<void>("open_project_site", undefined, undefined);
+  },
+  // Passing no version opens the changelog top; passing one deep-links to that
+  // version's card (`#v<version>`), matching the anchors the site generates.
+  openProjectChangelog: (version?: string | null) => {
+    if (!isTauri) {
+      const tag = (version ?? "").trim().replace(/^v/i, "");
+      const hash = tag ? `#v${tag}` : "";
+      window.open(`https://mingozacwu.github.io/datanexa-site/changelog.html${hash}`, "_blank", "noopener,noreferrer");
+      return Promise.resolve();
+    }
+    return command<void>("open_project_changelog", { version: version ?? null }, undefined);
   }
 };

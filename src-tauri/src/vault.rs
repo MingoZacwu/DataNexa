@@ -33,11 +33,19 @@ impl CredentialVault {
         match self.get(credential_ref)? {
             Some(saved_password) if !saved_password.is_empty() => {}
             Some(_) => {
+                crate::debug_log::error(
+                    "vault",
+                    format_args!("secure storage returned an empty credential after save"),
+                );
                 return Err(anyhow::anyhow!(
                     "credential was saved but read back as empty; secure storage is not usable"
                 ));
             }
             None => {
+                crate::debug_log::error(
+                    "vault",
+                    format_args!("secure storage could not read back a saved credential"),
+                );
                 return Err(anyhow::anyhow!(
                     "credential was saved but could not be read back; secure storage is not usable"
                 ));
@@ -52,7 +60,14 @@ impl CredentialVault {
         match entry.get_password() {
             Ok(password) => Ok(Some(Zeroizing::new(password))),
             Err(keyring::Error::NoEntry) => Ok(None),
-            Err(error) => Err(error.into()),
+            Err(error) => {
+                // The reference is a pointer, not a secret, so it is safe here.
+                crate::debug_log::warn(
+                    "vault",
+                    format_args!("secure storage read failed for {credential_ref}: {error}"),
+                );
+                Err(error.into())
+            }
         }
     }
 
@@ -61,7 +76,13 @@ impl CredentialVault {
         let entry = Entry::new(&self.service, &account)?;
         match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(error.into()),
+            Err(error) => {
+                crate::debug_log::warn(
+                    "vault",
+                    format_args!("secure storage delete failed for {credential_ref}: {error}"),
+                );
+                Err(error.into())
+            }
         }
     }
 }

@@ -115,7 +115,7 @@ const zhCN = {
     jdbcDriverInstalled: "JDBC 驱动已安装。",
     jdbcDriverDeleted: "JDBC 驱动已删除。",
     mavenCacheCleared: "Maven 缓存已清除。",
-    jdbcCacheCleared: "JDBC 缓存和旧版 Java 运行时已清除。",
+    cacheCleared: "已清理 {items}。",
     jdbcRuntimeInstalled: "DataNexa Java 运行时已安装。",
     jdbcRuntimeRemoved: "DataNexa Java 运行时已卸载。",
     jdbcRuntimeUpdateAvailable: "发现 DataNexa Java 运行时新版本 {version}。",
@@ -161,7 +161,9 @@ const zhCN = {
     delete: "删除连接",
     enabled: "启用",
     paused: "暂停",
-    noDatabaseFile: "未选择数据库文件"
+    noDatabaseFile: "未选择数据库文件",
+    copyName: "点击复制",
+    nameCopied: "连接名已复制。"
   },
   tools: {
     summary: "{enabled} / {total} 个工具已启用",
@@ -360,6 +362,12 @@ const zhCN = {
     noJdbcDrivers: "尚未安装 JDBC 驱动。",
     driverClassNotDetected: "未自动发现 Driver Class，连接时需要手动填写",
     deleteDriver: "删除驱动",
+    driverCapLabel: "驱动原生支持",
+    driverCapReadOnly: "只读限制",
+    driverCapQueryTimeout: "超时限制",
+    driverCapNotProbed: "测试连接后检测",
+    driverCapNotProbedHint: "在连接页对该驱动的连接执行「测试连接」，或发起一次 MCP 查询，检测结果会自动记录到这里。",
+    jdbcAssuranceSummary: "无论驱动原生能力如何，DataNexa 的只读保护与超时兜底始终生效。",
     jdbcRiskSummary: "JDBC 驱动和 SQL 方言可能存在兼容性问题，导致连接失败、SQL 报错、超时或部分功能不可用。未知方言的只读保护能力有限，不能保证识别所有副作用；请使用可信驱动和数据库只读账号。",
     jdbcRiskDetails: "查看详情",
     jdbcRiskDetailsTitle: "JDBC 连接兼容性与风险详情",
@@ -383,6 +391,7 @@ const zhCN = {
     display: "显示",
     startup: "启动与后台",
     language: "界面语言",
+    languageSwitch: "语言 / Language",
     interfaceEffects: "界面动效",
     mcpActivityEffects: "MCP 被调用时显示“能量脉冲”光效",
     theme: "主题",
@@ -420,8 +429,9 @@ const zhCN = {
     denied: "已拒绝",
     security: "安全",
     securityWarning: "DataNexa 数据安全防护仅作为风险缓解措施，不能完全保证所有风险操作都被拦截，仍需约束 Agent，避免要求或允许其执行危险行为。",
-    securityBlockedLabel: "过去 24 小时拦截",
+    securityBlockedLabel: "过去 24 小时拦截可疑数据库操作",
     securityBlockedUnit: "次",
+    securityBlockedDetailHint: "被只读策略、令牌权限或自动熔断拒绝的数据库操作调用均计入此数，可在审计日志中逐条查看。",
     securityBlockedTruncatedHint: "审计日志展示数量已达上限，实际拦截次数可能更多",
     securityViewAudit: "查看审计日志",
     securityDefenseActive: "全链路数据安全防护已启用",
@@ -451,6 +461,7 @@ const zhCN = {
     circuitBreakerRequiresBearer: "自动熔断依赖 Bearer 访问令牌鉴权，请先在“通用 → 服务策略”中启用。",
     aboutText: "本地只读数据库 MCP 网关，让 Agent 通过统一、安全、可审计的入口访问你的数据源。",
     officialHomepage: "官方主页",
+    changelog: "更新日志",
     debugLogging: "启用调试日志",
     debugLoggingTooltip: "记录运行日志用于问题排查，包含脱敏后的错误信息",
     debugLogConfirmTitle: "启用调试日志？",
@@ -680,7 +691,7 @@ const en: I18nMessages = {
     jdbcDriverInstalled: "JDBC driver installed.",
     jdbcDriverDeleted: "JDBC driver deleted.",
     mavenCacheCleared: "Maven cache cleared.",
-    jdbcCacheCleared: "JDBC cache and old Runtime versions cleared.",
+    cacheCleared: "Cleared: {items}.",
     jdbcRuntimeInstalled: "DataNexa Runtime installed.",
     jdbcRuntimeRemoved: "DataNexa Runtime removed.",
     jdbcRuntimeUpdateAvailable: "A new DataNexa Runtime version is available: {version}.",
@@ -726,7 +737,9 @@ const en: I18nMessages = {
     delete: "Delete connection",
     enabled: "Enabled",
     paused: "Paused",
-    noDatabaseFile: "No database file selected"
+    noDatabaseFile: "No database file selected",
+    copyName: "Click to copy",
+    nameCopied: "Connection name copied."
   },
   tools: {
     summary: "{enabled} / {total} tools enabled",
@@ -925,6 +938,12 @@ const en: I18nMessages = {
     noJdbcDrivers: "No JDBC drivers installed.",
     driverClassNotDetected: "Driver Class was not detected; enter it manually when configuring a connection",
     deleteDriver: "Delete driver",
+    driverCapLabel: "Driver-native support",
+    driverCapReadOnly: "Read-only mode",
+    driverCapQueryTimeout: "Query timeout",
+    driverCapNotProbed: "Test a connection to detect",
+    driverCapNotProbedHint: "Run Test Connection on a connection using this driver, or issue an MCP query; results are recorded here automatically.",
+    jdbcAssuranceSummary: "Regardless of native driver capabilities, DataNexa's read-only protection and timeout backstop always apply.",
     jdbcRiskSummary: "JDBC drivers and SQL dialects may be incompatible, causing connection failures, SQL errors, timeouts, or unavailable features. Read-only protection is limited for unknown dialects and cannot guarantee detection of every side effect; use trusted drivers and a read-only database account.",
     jdbcRiskDetails: "View details",
     jdbcRiskDetailsTitle: "JDBC compatibility and risk details",
@@ -948,6 +967,7 @@ const en: I18nMessages = {
     display: "Display",
     startup: "Startup & background",
     language: "Interface language",
+    languageSwitch: "Language / 语言",
     interfaceEffects: "Interface effects",
     mcpActivityEffects: "Show Energy Pulse effect on MCP calls",
     theme: "Theme",
@@ -985,8 +1005,9 @@ const en: I18nMessages = {
     denied: "Denied",
     security: "Security",
     securityWarning: "DataNexa data protection serves only as a risk mitigation measure and cannot guarantee every risky operation is blocked. Constrain agents and avoid asking or allowing them to perform dangerous actions.",
-    securityBlockedLabel: "Blocked in last 24h",
-    securityBlockedUnit: "times",
+    securityBlockedLabel: "Suspicious database operations blocked in last 24h",
+    securityBlockedUnit: "time(s)",
+    securityBlockedDetailHint: "Every database operation denied by the read-only policy, token permissions, or the auto circuit breaker counts here. Open the audit log for details.",
     securityBlockedTruncatedHint: "Audit log display reached its cap; the actual blocked count may be higher",
     securityViewAudit: "View audit log",
     securityDefenseActive: "Full-chain data protection enabled",
@@ -1016,6 +1037,7 @@ const en: I18nMessages = {
     circuitBreakerRequiresBearer: "The circuit breaker requires bearer token authentication. Enable it first under General → Service Policy.",
     aboutText: "A local read-only database MCP gateway that gives agents one unified, safe, and auditable way to access your data sources.",
     officialHomepage: "Official homepage",
+    changelog: "Changelog",
     debugLogging: "Enable debug logging",
     debugLoggingTooltip: "Record runtime logs for troubleshooting, with sanitized error messages",
     debugLogConfirmTitle: "Enable debug logging?",
@@ -1153,11 +1175,14 @@ export function detectLocale(): Locale {
 
   if (typeof navigator !== "undefined") {
     const candidates = [navigator.language, ...(navigator.languages ?? [])];
-    const matched = candidates.find((candidate) => candidate.toLowerCase().startsWith("en") || candidate.toLowerCase().startsWith("zh"));
+    // Chinese systems get Chinese; every other system falls back to English so
+    // non-native speakers never land on an interface they cannot read.
+    const matched = candidates.find((candidate) => candidate.toLowerCase().startsWith("zh"));
     if (matched) return normalizeLocale(matched);
+    if (candidates.some((candidate) => candidate.toLowerCase().startsWith("en"))) return "en";
   }
 
-  return DEFAULT_LOCALE;
+  return "en";
 }
 
 export function persistLocale(locale: Locale) {
@@ -1168,4 +1193,10 @@ export function persistLocale(locale: Locale) {
 
 export function formatMessage(template: string, values: Record<string, string | number> = {}) {
   return template.replace(/\{(\w+)\}/g, (match, key) => String(values[key] ?? match));
+}
+
+export function formatList(locale: Locale, items: string[]) {
+  if (items.length <= 1) return items[0] ?? "";
+  if (locale === "zh-CN") return items.join("、");
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }

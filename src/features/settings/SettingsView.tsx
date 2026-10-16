@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   AppWindow,
   Bug,
+  Check,
   CheckCircle2,
   CircleDashed,
   Database,
@@ -28,10 +29,13 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  ScrollText,
   SearchCheck, ShieldAlert,
   ShieldCheck,
   ShieldOff,
+  Sparkle,
   Square,
+  SquareArrowUpRight,
   Trash2,
   X
 } from "lucide-react";
@@ -40,7 +44,7 @@ import type { FormEvent, ReactNode } from "react";
 import appConfig from "../../../app.config.json";
 import appIconUrl from "../../../resources/icon.png";
 import { formatMessage, languageOptions, normalizeLocale, type I18nMessages, type Locale } from "../../i18n";
-import type { AppSnapshot, AuditEvent, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcDriverRuntimeInfo, JdbcInstallProgress, JdbcRuntimeInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ProcessUsageInfo, ServerConfig, SettingsConfig } from "../../types";
+import type { AppSnapshot, AuditEvent, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcDriverCapabilities, JdbcDriverRuntimeInfo, JdbcInstallProgress, JdbcRuntimeInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ProcessUsageInfo, ServerConfig, SettingsConfig } from "../../types";
 import type { UpdateState } from "../../lib/updater";
 import type { EffectiveTheme, SettingsTab, ThemeMode } from "../../app/types";
 import { updateScrollFade, useScrollFade } from "../../app/utils";
@@ -65,6 +69,8 @@ export function SettingsView({
   settings,
   autoStartStatus,
   busy,
+  jdbcBusy,
+  jreCheckBusy,
   tab,
   auditEvents,
   jdbcStatus,
@@ -102,7 +108,8 @@ export function SettingsView({
   onExportConnections,
   onImportConnections,
   onOpenProjectHomepage,
-  onOpenProjectSite
+  onOpenProjectSite,
+  onOpenProjectChangelog
 }: {
   t: I18nMessages;
   locale: Locale;
@@ -112,6 +119,12 @@ export function SettingsView({
   settings: SettingsConfig;
   autoStartStatus: AppSnapshot["auto_start_status"];
   busy: boolean;
+  /** Kept apart from `busy` so a long JDBC or runtime-update operation only
+   * disables the drivers and storage panel, not the rest of settings. */
+  jdbcBusy: boolean;
+  /** The runtime update check is read-only, so it disables nothing but its own
+   * button. */
+  jreCheckBusy: boolean;
   tab: SettingsTab;
   auditEvents: AuditEvent[];
   jdbcStatus: JdbcStatus | null;
@@ -150,6 +163,9 @@ export function SettingsView({
   onImportConnections: () => void;
   onOpenProjectHomepage: () => void;
   onOpenProjectSite: () => void;
+  /** Without a version the changelog opens at its top, which is what the
+   * update-available card wants; the About footer passes the running version. */
+  onOpenProjectChangelog: (version?: string | null) => void;
 }) {
   const [serverDraft, setServerDraft] = useState(server);
   const [settingsDraft, setSettingsDraft] = useState(settings);
@@ -165,6 +181,9 @@ export function SettingsView({
   const [debugOptionsVisible, setDebugOptionsVisible] = useState(false);
   const [debugLogConfirmOpen, setDebugLogConfirmOpen] = useState(false);
   const scrollFadeRef = useScrollFade();
+  // Mirrors the condition that labels the update card "local build"; such a
+  // build is never published on the changelog site, so it gets no changelog link.
+  const isLocalBuild = !updaterEnabled || updateState.kind === "disabled";
 
   useEffect(() => {
     setServerDraft((current) => {
@@ -253,8 +272,11 @@ export function SettingsView({
         </button>
       </div>
 
+      {/* Key each tab's root by the tab id: without it React keeps the same
+          scroll container when moving between the general/security/about
+          branches, so a freshly opened tab inherits the previous scroll offset. */}
       {tab === "general" ? (
-        <div ref={scrollFadeRef} className="settings-stack" onScroll={updateScrollFade}>
+        <div key={tab} ref={scrollFadeRef} className="settings-stack" onScroll={updateScrollFade}>
           <section className="panel">
             <h2>{t.settings.servicePolicy}</h2>
             <div className="form-grid settings-grid">
@@ -565,13 +587,20 @@ export function SettingsView({
           </Dialog.Root>
         </div>
       ) : tab === "security" ? (
-        <div ref={scrollFadeRef} className="settings-stack" onScroll={updateScrollFade}>
+        <div key={tab} ref={scrollFadeRef} className="settings-stack" onScroll={updateScrollFade}>
           <Dialog.Root open={policyDialogOpen} onOpenChange={setPolicyDialogOpen}>
             <section className={clsx("security-hero", blockedLast24Hours > 0 && "alerted")}>
               <div className="security-hero-core">
                 <span className="security-hero-emblem">{blockedLast24Hours > 0 ? <ShieldAlert size={22} /> : <ShieldCheck size={22} />}</span>
                 <div>
-                  <span>{t.settings.securityBlockedLabel}</span>
+                  <span className="security-hero-label">
+                    {t.settings.securityBlockedLabel}
+                    <IconTooltip label={t.settings.securityBlockedDetailHint}>
+                      <button type="button" className="switch-info" aria-label={t.settings.securityBlockedDetailHint}>
+                        <Info size={13} />
+                      </button>
+                    </IconTooltip>
+                  </span>
                   <strong>
                     {blockedLast24Hours}
                     <small> {t.settings.securityBlockedUnit}</small>
@@ -774,7 +803,8 @@ export function SettingsView({
           installProgress={jdbcInstallProgress}
           runtimeProgress={jdbcRuntimeProgress}
           settings={settings}
-          busy={busy}
+          busy={jdbcBusy || busy}
+          runtimeCheckBusy={jreCheckBusy}
           onRefresh={onRefreshJdbcStatus}
           onInstallRuntime={onInstallJdbcRuntime}
           onRemoveRuntime={onRemoveJdbcRuntime}
@@ -785,25 +815,43 @@ export function SettingsView({
           onSaveSettings={onSaveSettings}
         />
       ) : tab === "storage" ? (
-        <StorageManagement status={jdbcStorageStatus} busy={busy} onRefresh={onRefreshJdbcStorageStatus} onClearJdbcCache={onClearJdbcCache} onOpenDataDirectory={onOpenDataDirectory} onStopJdbcDriverRuntime={onStopJdbcDriverRuntime} debugLoggingEnabled={settingsDraft.debug_logging_enabled} t={t} />
+        <StorageManagement status={jdbcStorageStatus} busy={jdbcBusy} onRefresh={onRefreshJdbcStorageStatus} onClearJdbcCache={onClearJdbcCache} onOpenDataDirectory={onOpenDataDirectory} onStopJdbcDriverRuntime={onStopJdbcDriverRuntime} debugLoggingEnabled={settingsDraft.debug_logging_enabled} t={t} />
       ) : (
-        <div ref={scrollFadeRef} className="settings-stack" onScroll={updateScrollFade}>
+        <div key={tab} ref={scrollFadeRef} className="settings-stack" onScroll={updateScrollFade}>
           <section className="panel about-panel">
             <div className="about-hero">
               <img src={appIconUrl} alt="DataNexa" />
               <div>
-                <h2>DataNexa <span
-                  className="version-badge"
-                  onClick={() => {
-                    const next = versionTaps + 1;
-                    if (next >= DEBUG_OPTIONS_UNLOCK_TAPS) {
-                      setVersionTaps(0);
-                      setDebugOptionsVisible(true);
-                    } else {
-                      setVersionTaps(next);
-                    }
-                  }}
-                >v{APP_VERSION}</span></h2>
+                <h2>DataNexa <span className="version-badge">
+                  <span
+                    className="version-badge-taps"
+                    onClick={() => {
+                      const next = versionTaps + 1;
+                      if (next >= DEBUG_OPTIONS_UNLOCK_TAPS) {
+                        setVersionTaps(0);
+                        setDebugOptionsVisible(true);
+                      } else {
+                        setVersionTaps(next);
+                      }
+                    }}
+                  >v{APP_VERSION}</span>
+                  {!isLocalBuild && (
+                    <IconTooltip label={t.settings.changelog}>
+                      <a
+                        className="version-badge-changelog"
+                        href={`https://mingozacwu.github.io/datanexa-site/changelog.html#v${APP_VERSION}`}
+                        aria-label={t.settings.changelog}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          onOpenProjectChangelog(APP_VERSION);
+                        }}
+                      >
+                        <SquareArrowUpRight size={13} />
+                      </a>
+                    </IconTooltip>
+                  )}
+                </span>
+                </h2>
                 <p>{t.settings.aboutText}</p>
               </div>
             </div>
@@ -821,6 +869,7 @@ export function SettingsView({
               onCheck={onCheckUpdate}
               onUpdate={onUpdate}
               onOpenProjectReleases={onOpenProjectReleases}
+              onOpenChangelog={onOpenProjectChangelog}
             >
               {debugOptionsVisible && (
                 <>
@@ -956,6 +1005,7 @@ function DriverManagement({
   runtimeProgress,
   settings,
   busy,
+  runtimeCheckBusy,
   onRefresh,
   onInstallRuntime,
   onRemoveRuntime,
@@ -971,6 +1021,7 @@ function DriverManagement({
   runtimeProgress: JdbcRuntimeInstallProgress | null;
   settings: SettingsConfig;
   busy: boolean;
+  runtimeCheckBusy: boolean;
   onRefresh: () => void;
   onInstallRuntime: () => Promise<boolean>;
   onRemoveRuntime: () => Promise<boolean>;
@@ -1078,7 +1129,7 @@ function DriverManagement({
             </IconTooltip>
             {!settings.jdbc_java_home && runtime?.source === "managed" && (
               <IconTooltip label={t.settings.checkJdbcRuntimeUpdate}>
-                <button type="button" className="icon-button" onClick={() => void checkManagedRuntimeUpdate()} disabled={busy} aria-label={t.settings.checkJdbcRuntimeUpdate}>
+                <button type="button" className="icon-button" onClick={() => void checkManagedRuntimeUpdate()} disabled={busy || runtimeCheckBusy} aria-label={t.settings.checkJdbcRuntimeUpdate}>
                   <Download size={17} />
                 </button>
               </IconTooltip>
@@ -1186,6 +1237,10 @@ function DriverManagement({
                   {driver.driver_classes[0] ?? t.settings.driverClassNotDetected}
                   {" · "}{formatBytes(driver.total_size)}
                 </span>
+                <div className="driver-capability-row">
+                  <span className="driver-capability-label">{t.settings.driverCapLabel}</span>
+                  <DriverCapabilities t={t} capabilities={driver.capabilities} />
+                </div>
               </div>
               <IconTooltip label={t.settings.deleteDriver}>
                 <button type="button" className="icon-button danger" onClick={() => onDelete(driver.bundle_id)} disabled={busy}>
@@ -1197,15 +1252,23 @@ function DriverManagement({
         </div>
       </section>
 
-      <section className="jdbc-risk-panel">
-        <div className="jdbc-risk-summary">
-          <div className="jdbc-risk-summary-icon" aria-hidden="true">
-            <ShieldAlert size={18} />
+      <section className="jdbc-assurance-panel">
+        <div className="jdbc-assurance-summary">
+          <div className="jdbc-assurance-row">
+            <div className="jdbc-assurance-icon" aria-hidden="true">
+              <ShieldCheck size={16} />
+            </div>
+            <p>{t.settings.jdbcAssuranceSummary}</p>
           </div>
-          <p>{t.settings.jdbcRiskSummary}</p>
-          <button type="button" className="button ghost jdbc-risk-details-button" onClick={() => setDetailsOpen(true)}>
-            {t.settings.jdbcRiskDetails}
-          </button>
+          <div className="jdbc-assurance-row risk">
+            <div className="jdbc-assurance-icon risk" aria-hidden="true">
+              <ShieldAlert size={16} />
+            </div>
+            <p>{t.settings.jdbcRiskSummary}</p>
+            <button type="button" className="button ghost jdbc-risk-details-button" onClick={() => setDetailsOpen(true)}>
+              {t.settings.jdbcRiskDetails}
+            </button>
+          </div>
         </div>
       </section>
 
@@ -1719,6 +1782,39 @@ function StatusBadge({ available, label }: { available: boolean; label: string }
   return <span className={clsx("runtime-status-badge", available ? "available" : "unavailable")}>{label}</span>;
 }
 
+/** Native capability badges for one driver bundle. Unprobed drivers show a
+ * single grey badge whose label is itself the call to action. Only the
+ * undetected state carries a hint; probed badges stay plain because a
+ * detected capability needs no explanation. */
+function DriverCapabilities({ t, capabilities }: { t: I18nMessages; capabilities?: JdbcDriverCapabilities | null }) {
+  if (!capabilities || (capabilities.read_only == null && capabilities.query_timeout == null)) {
+    return (
+      <IconTooltip label={t.settings.driverCapNotProbedHint}>
+        <span className="driver-capability-badge undetected">
+          <Sparkle size={12} />
+          {t.settings.driverCapNotProbed}
+        </span>
+      </IconTooltip>
+    );
+  }
+  return (
+    <>
+      {capabilities.read_only == null ? null : (
+        <span className={clsx("driver-capability-badge", capabilities.read_only ? "supported" : "unsupported")}>
+          {capabilities.read_only ? <Check size={12} /> : <X size={12} />}
+          {t.settings.driverCapReadOnly}
+        </span>
+      )}
+      {capabilities.query_timeout == null ? null : (
+        <span className={clsx("driver-capability-badge", capabilities.query_timeout ? "supported" : "unsupported")}>
+          {capabilities.query_timeout ? <Check size={12} /> : <X size={12} />}
+          {t.settings.driverCapQueryTimeout}
+        </span>
+      )}
+    </>
+  );
+}
+
 function runtimeSourceLabel(t: I18nMessages, source: string) {
   if (source === "managed") return t.settings.runtimeSourceManaged;
   if (source === "embedded") return t.settings.runtimeSourceEmbedded;
@@ -1768,6 +1864,7 @@ export function AboutUpdateSection({
   onCheck,
   onUpdate,
   onOpenProjectReleases,
+  onOpenChangelog,
   children
 }: {
   t: I18nMessages;
@@ -1778,6 +1875,9 @@ export function AboutUpdateSection({
   onCheck: () => void;
   onUpdate: () => void;
   onOpenProjectReleases: () => void;
+  /** Opens the site changelog at its top; the released version is the newest
+   * card there, so no version anchor is needed. */
+  onOpenChangelog: () => void;
   children?: ReactNode;
 }) {
   let icon: ReactNode = <RefreshCw size={19} />;
@@ -1866,8 +1966,8 @@ export function AboutUpdateSection({
         )}
         {state.kind === "available" && (
           <>
-            <button type="button" className="button soft" onClick={onOpenProjectReleases}>
-              <ExternalLink size={16} />
+            <button type="button" className="button soft" onClick={() => onOpenChangelog()}>
+              <ScrollText size={16} />
               {t.updates.viewReleaseNotes}
             </button>
             <button type="button" className="button primary" onClick={onUpdate}>

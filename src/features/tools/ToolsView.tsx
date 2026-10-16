@@ -3,7 +3,7 @@ import clsx from "clsx";
 import { Database, ShieldCheck, Wrench } from "lucide-react";
 import { formatMessage, type I18nMessages } from "../../i18n";
 import type { McpToolInfo } from "../../types";
-import { toolDisplayName, toolIntro } from "../../app/utils";
+import { toolDisplayName, toolIcon, toolIntro } from "../../app/utils";
 
 export function ToolsView({
   t,
@@ -35,9 +35,11 @@ export function ToolsView({
         {groups.map((group) => (
           <section className="tool-group" key={group.key}>
             <header><span>{t.tools.groups[group.key]}</span><small>{group.tools.filter((tool) => tool.enabled).length} / {group.tools.length}</small></header>
-            {group.tools.map((tool) => (
+            {group.tools.map((tool) => {
+              const ToolIcon = toolIcon(tool.name);
+              return (
               <article className={clsx("tool-card", !tool.enabled && "disabled")} key={tool.name}>
-                <span className="tool-signal" />
+                <span className="tool-icon"><ToolIcon size={16} aria-hidden="true" /></span>
                 <div className="tool-body">
                   <div className="tool-title-row">
                     <div>
@@ -51,7 +53,8 @@ export function ToolsView({
                   <Switch.Thumb className="switch-thumb" />
                 </Switch.Root>
               </article>
-            ))}
+              );
+            })}
           </section>
         ))}
       </div>

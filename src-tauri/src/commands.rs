@@ -13,8 +13,8 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::audit::AuditStatus;
 use crate::config::{
-    default_max_result_bytes, default_port, is_known_tool, AppConfig, ConnectionConfig, DbKind,
-    ServerConfig, SettingsConfig,
+    clamp_with_log, default_max_result_bytes, default_port, is_known_tool, AppConfig,
+    ConnectionConfig, DbKind, ServerConfig, SettingsConfig,
 };
 use crate::db::ConnectionDiagnostics;
 use crate::debug_log;
@@ -37,6 +37,7 @@ use crate::{hide_main_window_to_tray, refresh_tray_menu};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AppSnapshot {
+    pub version: u64,
     pub config: AppConfig,
     pub server_status: ServerStatus,
     pub emergency_disconnect: bool,
@@ -260,11 +261,12 @@ pub async fn delete_jdbc_driver(
 ) -> Result<JdbcStatus, String> {
     let _lifecycle = state.jdbc_lifecycle.lock().await;
     let text = text_for_state(state.inner()).await;
+    let _transaction = state.config_transaction.write().await;
     let connections = state.config.read().await.connections.clone();
-    state.jdbc.shutdown_sessions().await;
     state
         .jdbc
         .delete_driver(&bundle_id, &connections)
+        .await
         .map_err(|error| to_jdbc_client_error(error, &text))?;
     state
         .jdbc
@@ -412,9 +414,17 @@ pub async fn save_server_config(
         return Err(text.local_host_only().to_string());
     }
 
+    // `server` is moved into reconfigure, and the entry should only appear
+    // once the new configuration actually took effect.
+    let host = server.host.clone();
+    let port = server.port;
     mcp::reconfigure(state.inner().clone(), server)
         .await
         .map_err(to_client_error)?;
+    crate::debug_log::info(
+        "settings",
+        format_args!("server configuration saved (host={host}, port={port})"),
+    );
 
     snapshot(state.inner()).await.map_err(to_client_error)
 }
@@ -876,6 +886,11 @@ pub async fn set_mcp_tool_enabled(
     .await
     .map_err(to_client_error)?;
 
+    crate::debug_log::info(
+        "settings",
+        format_args!("MCP tool enabled state changed (tool={name}, enabled={enabled})"),
+    );
+
     snapshot(state.inner()).await.map_err(to_client_error)
 }
 
@@ -887,24 +902,24 @@ pub async fn upsert_connection(
     validate_password_input(input.clear_password, input.password.as_deref())?;
     let text = text_for_state(state.inner()).await;
     validate_connection(&input.connection, &text).map_err(to_client_error)?;
-    if input.connection.kind == DbKind::Jdbc {
-        state
-            .jdbc
-            .ensure_bundle_exists(
-                input
-                    .connection
-                    .jdbc_bundle_id
-                    .as_deref()
-                    .ok_or_else(|| text.jdbc_driver_required().to_string())?,
-            )
-            .map_err(|error| to_jdbc_client_error(error, &text))?;
-    }
     let clear_password = input.clear_password;
     let mut connection = normalize_connection(input.connection);
     let password = input.password.filter(|value| !value.is_empty());
     let updates_credential = password.is_some();
     {
         let _transaction = state.config_transaction.write().await;
+        if connection.kind == DbKind::Jdbc {
+            state
+                .jdbc
+                .ensure_bundle_exists(
+                    connection
+                        .jdbc_bundle_id
+                        .as_deref()
+                        .ok_or_else(|| text.jdbc_driver_required().to_string())?,
+                )
+                .map_err(|error| to_jdbc_client_error(error, &text))?;
+        }
+
         let mut candidate = state.config.read().await.clone();
         let existing = candidate
             .connections
@@ -972,6 +987,7 @@ pub async fn upsert_connection(
             &state.store,
             &state.config,
             &state.db,
+            &state.jdbc,
             candidate,
             std::slice::from_ref(&connection.id),
         )
@@ -1048,6 +1064,7 @@ pub async fn delete_connection(
         &state.store,
         &state.config,
         &state.db,
+        &state.jdbc,
         candidate,
         std::slice::from_ref(&id),
     )
@@ -1099,6 +1116,11 @@ pub async fn set_connection_enabled(
     .await
     .map_err(to_client_error)?;
 
+    crate::debug_log::info(
+        "connection",
+        format_args!("connection enabled state changed (id={id}, enabled={enabled})"),
+    );
+
     snapshot(state.inner()).await.map_err(to_client_error)
 }
 
@@ -1109,16 +1131,29 @@ pub async fn disable_all_connections(
     let _lifecycle = state.mcp_lifecycle.lock().await;
     if state.is_emergency_disabled() {
         state.exit_emergency_mode().await;
+        crate::debug_log::warn("connection", format_args!("emergency disconnect released"));
         return snapshot(state.inner()).await.map_err(to_client_error);
     }
     if !state.mcp.read().await.running {
+        // The request is rejected before anything changes, so the debug log
+        // records why the button had no effect.
+        crate::debug_log::warn(
+            "connection",
+            format_args!("emergency disconnect rejected: the MCP server is not running"),
+        );
         return Err(
             "MCP server must be running before emergency disconnect can be enabled".to_string(),
         );
     }
 
     state.enter_emergency_mode().await;
-    state.db.close_all().await;
+    state.close_database_sessions().await;
+    crate::debug_log::warn(
+        "connection",
+        format_args!(
+            "emergency disconnect engaged, in-flight requests cancelled and all native/JDBC sessions closed"
+        ),
+    );
 
     snapshot(state.inner()).await.map_err(to_client_error)
 }
@@ -1186,13 +1221,28 @@ pub async fn test_connection(
             .test_connection(&connection, &state.vault, None)
             .await
         {
-            Ok(duration) => Ok(text.connection_test_ok(duration.as_millis())),
+            Ok(report) => {
+                debug_log::info(
+                    "connection_test",
+                    format_args!(
+                        "JDBC connection test passed (id={}, elapsed_ms={}, database={} {}, driver={} {})",
+                        connection.id,
+                        report.elapsed.as_millis(),
+                        report.database_product,
+                        report.database_version,
+                        report.driver_name,
+                        report.driver_version,
+                    ),
+                );
+                Ok(text.connection_test_ok(report.elapsed.as_millis()))
+            }
             Err(error) => {
                 debug_log::error(
                     "connection_test",
                     format_args!(
-                        "JDBC connection test failed (id={}, name={}, error={error})",
-                        connection.id, connection.name
+                        "JDBC connection test failed (id={}, error={})",
+                        connection.id,
+                        database_error_summary(&error, true)
                     ),
                 );
                 Err(to_jdbc_client_error(error, &text))
@@ -1210,8 +1260,9 @@ pub async fn test_connection(
             debug_log::error(
                 "connection_test",
                 format_args!(
-                    "connection test failed (id={}, name={}, error={error})",
-                    connection.id, connection.name
+                    "connection test failed (id={}, error={})",
+                    connection.id,
+                    database_error_summary(&error, true)
                 ),
             );
             let diagnostics = state.db.diagnostics(&connection, &state.vault, &text);
@@ -1252,13 +1303,26 @@ pub async fn test_connection_input(
             .test_connection(&connection, &state.vault, password_override)
             .await
         {
-            Ok(duration) => Ok(text.connection_test_ok(duration.as_millis())),
+            Ok(report) => {
+                debug_log::info(
+                    "connection_test",
+                    format_args!(
+                        "JDBC connection test passed (elapsed_ms={}, database={} {}, driver={} {})",
+                        report.elapsed.as_millis(),
+                        report.database_product,
+                        report.database_version,
+                        report.driver_name,
+                        report.driver_version,
+                    ),
+                );
+                Ok(text.connection_test_ok(report.elapsed.as_millis()))
+            }
             Err(error) => {
                 debug_log::error(
                     "connection_test",
                     format_args!(
-                        "JDBC connection test failed (name={}, error={error})",
-                        connection.name
+                        "JDBC connection test failed (error={})",
+                        database_error_summary(&error, true)
                     ),
                 );
                 Err(to_jdbc_client_error(error, &text))
@@ -1276,8 +1340,8 @@ pub async fn test_connection_input(
             debug_log::error(
                 "connection_test",
                 format_args!(
-                    "connection test failed (name={}, error={error})",
-                    connection.name
+                    "connection test failed (error={})",
+                    database_error_summary(&error, true)
                 ),
             );
             Err(to_client_error(&error))
@@ -1398,6 +1462,32 @@ pub async fn open_project_site() -> Result<(), String> {
         .map_err(to_client_error)
 }
 
+/// Open the changelog page on the project site. The base URL is fixed here so
+/// the front end cannot open arbitrary locations; the version only selects the
+/// in-page anchor (`#v<version>`) and is reduced to the characters a version
+/// tag can contain.
+#[tauri::command]
+pub fn open_project_changelog(version: Option<String>) -> Result<(), String> {
+    const CHANGELOG_URL: &str = "https://mingozacwu.github.io/datanexa-site/changelog.html";
+
+    let tag: String = version
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .trim_start_matches(['v', 'V'])
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '+'))
+        .collect();
+
+    let url = if tag.is_empty() {
+        CHANGELOG_URL.to_string()
+    } else {
+        format!("{CHANGELOG_URL}#v{tag}")
+    };
+
+    tauri_plugin_opener::open_url(url, None::<&str>).map_err(to_client_error)
+}
+
 /// Triggered by the front-end when the main window becomes visible.
 /// Performs an update check only if the 24h interval has elapsed since
 /// the last attempt. Returns `Some(version)` when an update is available.
@@ -1483,6 +1573,9 @@ pub async fn open_debug_log_directory(app: AppHandle) -> Result<(), String> {
 }
 
 async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
+    // Serialize collection so a slow older read can never receive a newer version.
+    let mut sequence = state.snapshot_sequence.lock().await;
+    *sequence += 1;
     let emergency_disconnect = state.is_emergency_disabled();
     let mut config = state.config.read().await.clone();
     if emergency_disconnect {
@@ -1517,6 +1610,7 @@ async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
     }
     let access_tokens = state.access.list().await?;
     Ok(AppSnapshot {
+        version: *sequence,
         server_status: mcp::status(state).await,
         emergency_disconnect,
         audit_events,
@@ -1604,6 +1698,7 @@ async fn commit_config_invalidating<T>(
         &state.store,
         &state.config,
         &state.db,
+        &state.jdbc,
         candidate,
         connection_ids,
     )
@@ -1615,12 +1710,16 @@ async fn persist_invalidating_candidate(
     store: &crate::config::ConfigStore,
     current: &tokio::sync::RwLock<AppConfig>,
     db: &crate::db::DatabaseManager,
+    jdbc: &crate::jdbc::JdbcManager,
     candidate: AppConfig,
     connection_ids: &[String],
 ) -> anyhow::Result<()> {
     store.save(&candidate)?;
     for connection_id in connection_ids {
-        db.close(connection_id).await;
+        tokio::join!(
+            db.close(connection_id),
+            jdbc.close_connection(connection_id)
+        );
     }
     *current.write().await = candidate;
     Ok(())
@@ -1828,17 +1927,30 @@ fn normalize_settings(mut settings: SettingsConfig) -> SettingsConfig {
     settings.audit_retention_days =
         crate::audit::normalize_retention_days(settings.audit_retention_days);
     settings.language = settings.language.trim().to_string();
-    if settings.language.is_empty() {
-        settings.language = "zh-CN".to_string();
+    // Keep the setting empty when it is not an explicit choice so the frontend
+    // can fall back to the system locale.
+    if settings.language != "zh-CN" && settings.language != "en" {
+        settings.language.clear();
     }
     settings.jdbc_java_home = settings
         .jdbc_java_home
         .take()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    settings.auto_circuit_breaker_window_minutes =
-        settings.auto_circuit_breaker_window_minutes.clamp(1, 60);
-    settings.auto_circuit_breaker_threshold = settings.auto_circuit_breaker_threshold.clamp(1, 50);
+    settings.auto_circuit_breaker_window_minutes = clamp_with_log(
+        "settings",
+        "auto_circuit_breaker_window_minutes",
+        settings.auto_circuit_breaker_window_minutes,
+        1,
+        60,
+    );
+    settings.auto_circuit_breaker_threshold = clamp_with_log(
+        "settings",
+        "auto_circuit_breaker_threshold",
+        settings.auto_circuit_breaker_threshold,
+        1,
+        50,
+    );
     settings
 }
 
@@ -1864,6 +1976,71 @@ pub(crate) fn sanitize_text(text: &str) -> String {
         .replace_all(&text, "$1=REDACTED")
         .to_string();
     text.replace('\n', " ")
+}
+
+/// Upper bound for sanitized error strings. They are copied into MCP responses
+/// and the audit store, where an unbounded driver message is only noise.
+const SANITIZED_ERROR_MAX_CHARS: usize = 600;
+
+/// Credential sanitizer for messages leaving the Rust side as errors. It applies
+/// the same rules as [`sanitize_text`] so a driver error cannot be redacted on
+/// one path and leak on another, and bounds the length on top of that.
+pub(crate) fn sanitize_error(value: impl std::fmt::Display) -> String {
+    let text = value.to_string();
+    let text = Regex::new(r"(?i)((?:[A-Za-z][A-Za-z0-9+.-]*:)+//)([^/@\s:]+):([^/@\s]+)@")
+        .expect("valid JDBC URL sanitizer regex")
+        .replace_all(&text, "$1$2:REDACTED@");
+    let text = Regex::new(r"(?i)(password|passwd|pwd|token|secret)=([^&;\s]+)")
+        .expect("valid secret sanitizer regex")
+        .replace_all(&text, "$1=REDACTED")
+        .chars()
+        .filter(|value| !matches!(value, '\r' | '\n' | '\t'))
+        .take(SANITIZED_ERROR_MAX_CHARS)
+        .collect::<String>();
+    text.trim().to_string()
+}
+
+/// Driver messages can echo SQL literals without quotes. In redaction mode
+/// retain only structured error codes and application-owned summaries.
+pub(crate) fn database_error_summary(error: &anyhow::Error, redact: bool) -> String {
+    if !redact {
+        return sanitize_error(error);
+    }
+    for source in error.chain() {
+        if let Some(missing) = source.downcast_ref::<crate::db::TableNotFoundError>() {
+            return missing.to_string();
+        }
+        if let Some(sqlx::Error::Database(database)) = source.downcast_ref::<sqlx::Error>() {
+            if let Some(code) = database.code().filter(|code| {
+                !code.is_empty()
+                    && code.len() <= 8
+                    && code.bytes().all(|byte| byte.is_ascii_alphanumeric())
+            }) {
+                return format!("Database operation failed (code={code}); details redacted");
+            }
+        }
+        if let Some(jdbc) = source.downcast_ref::<crate::jdbc::SidecarError>() {
+            let code = match jdbc.code.as_str() {
+                "authentication_failed" => "authentication_failed",
+                "connection_lost" => "connection_lost",
+                "jdbc_error" => "jdbc_error",
+                "table_not_found" => "table_not_found",
+                "ambiguous_table" => "ambiguous_table",
+                _ => "sidecar_error",
+            };
+            return format!("JDBC operation failed (code={code}); details redacted");
+        }
+        if source.is::<tokio::time::error::Elapsed>() {
+            return "Database operation timed out".to_string();
+        }
+    }
+    match error.to_string().as_str() {
+        "MCP request cancelled; database session closed" | "JDBC session cancelled" => {
+            "MCP request cancelled; database session closed".to_string()
+        }
+        "JDBC operation timed out" => "Database operation timed out".to_string(),
+        _ => "Database operation failed; details redacted".to_string(),
+    }
 }
 
 fn format_diagnostics_for_client(
@@ -1960,11 +2137,16 @@ mod tests {
             .map(str::to_string)
             .to_vec();
 
-        assert!(
-            persist_invalidating_candidate(&store, &current, &db, AppConfig::default(), &ids,)
-                .await
-                .is_err()
-        );
+        assert!(persist_invalidating_candidate(
+            &store,
+            &current,
+            &db,
+            &crate::jdbc::JdbcManager::for_test(),
+            AppConfig::default(),
+            &ids,
+        )
+        .await
+        .is_err());
         for id in ids {
             assert_eq!(db.generation_for_test(&id).await, 0);
         }

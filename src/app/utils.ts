@@ -1,3 +1,4 @@
+import { Columns3, Database, ListTree, Rows3, ShieldCheck, Terminal, Workflow, Wrench, type LucideIcon } from "lucide-react";
 import { useCallback, useLayoutEffect, useRef, type UIEvent as ReactUIEvent } from "react";
 import { formatMessage, type I18nMessages } from "../i18n";
 import type { AuditEvent, ConnectionDiagnostics, DatabaseType, McpToolInfo } from "../types";
@@ -61,6 +62,22 @@ export function toolDisplayName(t: I18nMessages, name: string) {
 export function toolIntro(t: I18nMessages, tool: McpToolInfo) {
   const intros: Record<string, string> = t.tools.intros;
   return intros[tool.name] ?? tool.description;
+}
+
+// One glyph per MCP tool, chosen for what the tool does; unknown names fall back
+// to the generic tool icon.
+const TOOL_ICONS: Record<string, LucideIcon> = {
+  datanexa_list_connections: Database,
+  datanexa_get_schema: ListTree,
+  datanexa_describe_table: Columns3,
+  datanexa_sample_rows: Rows3,
+  datanexa_execute_readonly_sql: Terminal,
+  datanexa_explain_sql: Workflow,
+  datanexa_policy_check: ShieldCheck
+};
+
+export function toolIcon(name: string): LucideIcon {
+  return TOOL_ICONS[name] ?? Wrench;
 }
 
 export function dbTypeLabel(type: DatabaseType) {
