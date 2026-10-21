@@ -39,6 +39,11 @@ pub struct SettingsConfig {
     pub auto_check_updates: bool,
     #[serde(default)]
     pub auto_start_mcp: bool,
+    // Start the MCP server on every application launch, including manual
+    // launches. Launch-at-login implies this behavior regardless of the stored
+    // value, which the startup path and the UI derive with a logical OR.
+    #[serde(default)]
+    pub auto_run_mcp: bool,
     #[serde(default)]
     pub auto_lightweight_mode: bool,
     #[serde(default = "default_true")]
@@ -225,6 +230,7 @@ impl Default for SettingsConfig {
             audit_redact_sql_literals: false,
             auto_check_updates: true,
             auto_start_mcp: false,
+            auto_run_mcp: false,
             auto_lightweight_mode: false,
             mcp_activity_effects: true,
             language: default_language(),

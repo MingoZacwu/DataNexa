@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Activity, AlertTriangle, ChevronRight, Play, Plus, Power, Square } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, ChevronRight, Info, Play, Plus, Power, Square } from "lucide-react";
 import quickStep1Url from "../../../resources/quickguide/step1.png";
 import quickStep2Url from "../../../resources/quickguide/step2.png";
 import quickStep3Url from "../../../resources/quickguide/step3.png";
@@ -26,7 +26,12 @@ export function OverviewView({
   busy,
   startDisabled,
   mcpActivitySequence,
-  mcpActivityTone
+  mcpActivityTone,
+  showBackgroundTip,
+  backgroundTipLeaving,
+  backgroundTipSuccess,
+  onEnableAutoStart,
+  onDismissBackgroundTip
 }: {
   t: I18nMessages;
   snapshot: AppSnapshot;
@@ -43,6 +48,11 @@ export function OverviewView({
   startDisabled: boolean;
   mcpActivitySequence: number;
   mcpActivityTone: "success" | "error";
+  showBackgroundTip: boolean;
+  backgroundTipLeaving: boolean;
+  backgroundTipSuccess: boolean;
+  onEnableAutoStart: () => void;
+  onDismissBackgroundTip: () => void;
 }) {
   const totalConnections = snapshot.config.connections.length;
   const enabledTools = snapshot.tools.filter((tool) => tool.enabled).length;
@@ -65,7 +75,8 @@ export function OverviewView({
 
   return (
     <section className="overview-page">
-      <section className={clsx("status-command", startupFailed ? "error" : emergencyDisconnect ? "emergency" : snapshot.server_status.running && "running")} title={snapshot.startup_error ?? undefined}>
+      <div className="hero-stack">
+        <section className={clsx("status-command", startupFailed ? "error" : emergencyDisconnect ? "emergency" : snapshot.server_status.running && "running", showBackgroundTip && !backgroundTipLeaving && "tipped")} title={snapshot.startup_error ?? undefined}>
         {mcpActivitySequence > 0 && (
           <div className={clsx("mcp-activity-effect", mcpActivityTone)} key={mcpActivitySequence} aria-hidden="true">
             <i className="mcp-activity-ripple first" />
@@ -107,7 +118,34 @@ export function OverviewView({
           {emergencyDisconnect ? <Power size={16} /> : snapshot.server_status.running ? <Square size={15} /> : <Play size={16} />}
           {emergencyDisconnect ? t.connections.restoreConnections : snapshot.server_status.running ? t.server.stop : t.server.start}
         </button>
-      </section>
+        </section>
+
+        {showBackgroundTip && (
+          <div className={clsx("hero-tip", backgroundTipSuccess && "success", backgroundTipLeaving && "leaving")} role="status">
+            <span className="hero-tip-icon">
+              {backgroundTipSuccess ? <CheckCircle2 size={21} /> : <Info size={21} />}
+            </span>
+            <div className="hero-tip-copy">
+              <strong className="hero-tip-title">
+                {backgroundTipSuccess ? t.overview.backgroundRunSuccessTitle : t.overview.backgroundRunTipTitle}
+              </strong>
+              <p className="hero-tip-text">
+                {backgroundTipSuccess ? t.overview.backgroundRunSuccessBody : t.overview.backgroundRunTip}
+              </p>
+            </div>
+            {!backgroundTipSuccess && (
+              <div className="hero-tip-actions">
+                <button type="button" className="button soft" onClick={onEnableAutoStart}>
+                  {t.overview.backgroundRunEnable}
+                </button>
+                <button type="button" className="button ghost" onClick={onDismissBackgroundTip}>
+                  {t.overview.backgroundRunDismiss}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="overview-grid">
         <section className="panel connections-panel">

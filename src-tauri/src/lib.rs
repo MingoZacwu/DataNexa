@@ -556,16 +556,17 @@ pub fn run() {
             let state = app.state::<Arc<AppState>>().inner().clone();
             let autostart = std::env::args().any(|arg| arg == "--autostart");
             let login_launch = autostart || startup::launched_at_login();
-            let (configured, auto_lightweight_mode) = state
+            let (configured, auto_run_mcp, auto_lightweight_mode) = state
                 .config
                 .try_read()
                 .map(|config| {
                     (
                         config.settings.auto_start_mcp,
+                        config.settings.auto_run_mcp,
                         config.settings.auto_lightweight_mode,
                     )
                 })
-                .unwrap_or((false, false));
+                .unwrap_or((false, false, false));
             // Reconcile the Run registry value with the persistent preference so
             // that manual reinstalls (which force uninstall-then-install on
             // Windows NSIS) do not leave the auto-start entry missing after
@@ -605,7 +606,7 @@ pub fn run() {
                         format_args!("audit log initialization failed: {error}"),
                     );
                 }
-                if migration_result.is_ok() && configured && login_launch {
+                if migration_result.is_ok() && (configured || auto_run_mcp) {
                     let started = std::time::Instant::now();
                     if let Err(error) = mcp::start(state_for_task.clone()).await {
                         let reason = error.to_string();

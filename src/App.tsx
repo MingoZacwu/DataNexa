@@ -11,6 +11,7 @@ import { api, WRONG_PASSWORD_ERROR } from "./lib/tauri";
 import { useAppUpdater } from "./lib/updater";
 import type { AppSnapshot, AuditEvent, ConnectionConfig, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcInstallProgress, JdbcRuntimeInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "./types";
 import { detectThemeMode, persistThemeMode, resolveTheme, systemTheme } from "./app/theme";
+import { hasSeenBackgroundRunTip, markBackgroundRunTip } from "./app/tips";
 import type { AuditFilters, EffectiveTheme, SettingsTab, ThemeMode, ToastMessage, ToastTone, View } from "./app/types";
 import { buildAgentPrompt, compactConnectionError, formatConnectionTest, formatDiagnostics, toolDisplayName, updateScrollFade, useScrollFade, viewTitle } from "./app/utils";
 import { AuditMigrationDialog, AuditMigrationReminder, LanguageSwitcher, NavButton, SidebarFooter, SidebarUpdateReminder, WindowControls, WindowDragRegion } from "./components/chrome";
@@ -26,6 +27,12 @@ import { EncryptionPasswordDialog } from "./features/settings/EncryptionPassword
 type McpActivityTone = "success" | "error";
 type McpToolCallCompletedPayload = { failed: boolean };
 type JreUpdateAvailablePayload = { version: string };
+
+// Let a start/stop transition settle before the tip covers the hero, so the
+// status card does not change the moment the user clicks the toggle.
+const BACKGROUND_TIP_DELAY_MS = 900;
+const BACKGROUND_TIP_LEAVE_MS = 280;
+const BACKGROUND_TIP_SUCCESS_MS = 1800;
 
 // A scope names the controls that must be disabled while a request runs. Choose
 // the scope that owns the buttons being acted on, not the command being called:
@@ -93,11 +100,18 @@ function App() {
   const [migrationRecoveryBusy, setMigrationRecoveryBusy] = useState(false);
   const [mcpActivitySequence, setMcpActivitySequence] = useState(0);
   const [mcpActivityTone, setMcpActivityTone] = useState<McpActivityTone>("success");
+  const [backgroundTipVisible, setBackgroundTipVisible] = useState(false);
+  const [backgroundTipLeaving, setBackgroundTipLeaving] = useState(false);
+  const [backgroundTipSuccess, setBackgroundTipSuccess] = useState(false);
+  const [windowVisible, setWindowVisible] = useState(() => document.visibilityState === "visible");
   const [confirmClearLegacy, setConfirmClearLegacy] = useState(false);
   const effectiveTheme = resolveTheme(theme, systemThemeMode);
   const t = messages[locale];
   const hasAuditFilters = Object.values(auditFilters).some(Boolean);
   const activeViewRef = useRef(activeView);
+  const backgroundTipShownRef = useRef(false);
+  const serverRunning = snapshot?.server_status.running ?? false;
+  const autoStartStatus = snapshot?.auto_start_status;
   const mcpActivityEffectsEnabled = snapshot?.config.settings.mcp_activity_effects ?? true;
   const mcpActivityEffectsEnabledRef = useRef(mcpActivityEffectsEnabled);
   const mcpActivityPlayingRef = useRef(false);
@@ -123,6 +137,30 @@ function App() {
       setMcpActivitySequence(0);
     }
   }, [mcpActivityEffectsEnabled]);
+
+  useEffect(() => {
+    const handleVisibility = () => setWindowVisible(document.visibilityState === "visible");
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, []);
+
+  useEffect(() => {
+    // Tell users once, when keeping the MCP service available becomes relevant:
+    // the server is running on the Overview and launch-at-login is not set yet.
+    // The window check matters on login launches, where the webview keeps
+    // running while hidden in the tray.
+    if (activeView !== "overview" || !windowVisible) return;
+    if (!serverRunning) return;
+    if (autoStartStatus === "enabled" || autoStartStatus === "requires_approval") return;
+    if (backgroundTipShownRef.current || hasSeenBackgroundRunTip()) return;
+    const timer = window.setTimeout(() => {
+      backgroundTipShownRef.current = true;
+      markBackgroundRunTip("shown");
+      setBackgroundTipSuccess(false);
+      setBackgroundTipVisible(true);
+    }, BACKGROUND_TIP_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [serverRunning, autoStartStatus, activeView, windowVisible]);
 
   const updater = useAppUpdater(
     snapshot?.updater_enabled ?? null,
@@ -901,6 +939,36 @@ function App() {
     }
   }
 
+  function hideBackgroundTip() {
+    setBackgroundTipLeaving(true);
+    window.setTimeout(() => {
+      setBackgroundTipVisible(false);
+      setBackgroundTipLeaving(false);
+      setBackgroundTipSuccess(false);
+    }, BACKGROUND_TIP_LEAVE_MS);
+  }
+
+  function dismissBackgroundTip() {
+    hideBackgroundTip();
+  }
+
+  async function enableAutoStartFromTip() {
+    if (!snapshot || backgroundTipSuccess) return;
+    setBackgroundTipSuccess(true);
+    try {
+      const nextSnapshot = await api.saveSettingsConfig({ ...snapshot.config.settings, auto_start_mcp: true }, true);
+      applySnapshot(nextSnapshot);
+      markBackgroundRunTip("enabled");
+      if (nextSnapshot.auto_start_status === "requires_approval") {
+        pushToast(messages[locale].toast.autoStartRequiresApproval, "error");
+      }
+      window.setTimeout(() => hideBackgroundTip(), BACKGROUND_TIP_SUCCESS_MS);
+    } catch (error) {
+      setBackgroundTipSuccess(false);
+      showError(error);
+    }
+  }
+
   async function exportConnections(password: string | null) {
     // Pick the destination before taking the scope: the native save dialog stays
     // open until the user decides, and holding the scope across it would leave
@@ -1196,6 +1264,11 @@ function App() {
                     startDisabled={!snapshot.server_status.running && !migrationReady}
                     mcpActivitySequence={mcpActivitySequence}
                     mcpActivityTone={mcpActivityTone}
+                    showBackgroundTip={backgroundTipVisible}
+                    backgroundTipLeaving={backgroundTipLeaving}
+                    backgroundTipSuccess={backgroundTipSuccess}
+                    onEnableAutoStart={enableAutoStartFromTip}
+                    onDismissBackgroundTip={dismissBackgroundTip}
                   />
                 )}
                 {activeView === "connections" && (

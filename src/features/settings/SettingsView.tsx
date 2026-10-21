@@ -204,6 +204,7 @@ export function SettingsView({
         && current.audit_redact_sql_literals === settings.audit_redact_sql_literals
         && current.auto_check_updates === settings.auto_check_updates
         && current.auto_start_mcp === settings.auto_start_mcp
+        && current.auto_run_mcp === settings.auto_run_mcp
         && current.auto_lightweight_mode === settings.auto_lightweight_mode
         && current.mcp_activity_effects === settings.mcp_activity_effects
         && current.language === settings.language
@@ -391,6 +392,21 @@ export function SettingsView({
                   setSettingsDraft(next);
                   onSaveSettings(next, true);
                 }} />
+              </div>
+              <div className="field">
+                <span>{t.settings.mcpService}</span>
+                <SwitchField
+                  label={t.settings.autoRunMcp}
+                  tooltip={settingsDraft.auto_start_mcp ? t.settings.autoRunMcpLockedHint : undefined}
+                  checked={settingsDraft.auto_run_mcp || settingsDraft.auto_start_mcp}
+                  disabled={busy || settingsDraft.auto_start_mcp}
+                  onCheckedChange={(checked) => {
+                    const next = { ...settingsDraft, auto_run_mcp: checked };
+                    settingsDraftDirty.current = true;
+                    setSettingsDraft(next);
+                    onSaveSettings(next);
+                  }}
+                />
               </div>
               <div className="field">
                 <span>{t.settings.lightweightMode}</span>

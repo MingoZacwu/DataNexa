@@ -22,7 +22,7 @@ import type {
 import { formatMessage, messages, type Locale } from "../i18n";
 import { systemTheme } from "../app/theme";
 
-const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const previewText = messages["zh-CN"].api;
 
 const mockTools: McpToolInfo[] = [
@@ -84,6 +84,7 @@ const mockSnapshot: AppSnapshot = {
       audit_redact_sql_literals: false,
       auto_check_updates: true,
       auto_start_mcp: false,
+      auto_run_mcp: false,
       auto_lightweight_mode: false,
       mcp_activity_effects: true,
       language: "zh-CN",
@@ -429,8 +430,15 @@ export const api = {
   setTokenToolAllowed: (tokenId: string, toolName: string, allowed: boolean) => command<AppSnapshot>("set_token_tool_allowed", { tokenId, toolName, allowed }, mockSnapshot),
   saveServerConfig: (server: ServerConfig) =>
     command<AppSnapshot>("save_server_config", { server }, mockSnapshot),
-  saveSettingsConfig: (settings: SettingsConfig, applyAutoStart = false) =>
-    command<AppSnapshot>("save_settings_config", { settings, applyAutoStart }, withSettings(settings, applyAutoStart)),
+  saveSettingsConfig: (settings: SettingsConfig, applyAutoStart = false) => {
+    // Keep the mock snapshot in sync so the 15-second background refresh does
+    // not revert a saved choice while previewing.
+    if (applyAutoStart) {
+      mockSnapshot.auto_start_status = settings.auto_start_mcp ? "enabled" : "disabled";
+    }
+    mockSnapshot.config.settings = settings;
+    return command<AppSnapshot>("save_settings_config", { settings, applyAutoStart }, withSettings(settings, applyAutoStart));
+  },
   logFrontendEvent: (kind: string, message: string) => {
     // Silently dropped in browser preview mode; there is nothing to persist.
     if (!isTauri) return Promise.resolve();
@@ -510,12 +518,17 @@ export const api = {
       max_connections: 1,
       hint: previewText.previewDiagnostics
     }),
-  startServer: () => command<AppSnapshot>("start_mcp_server", undefined, {
-    ...mockSnapshot,
-    server_status: { ...mockSnapshot.server_status, running: true, started_at: new Date().toISOString() }
-  }),
+  startServer: () => {
+    mockSnapshot.server_status = {
+      ...mockSnapshot.server_status,
+      running: true,
+      started_at: new Date().toISOString()
+    };
+    return command<AppSnapshot>("start_mcp_server", undefined, mockSnapshot);
+  },
   stopServer: () => {
     mockEmergencyDisconnect = false;
+    mockSnapshot.server_status = { ...mockSnapshot.server_status, running: false, started_at: null };
     return command<AppSnapshot>("stop_mcp_server", undefined, mockSnapshot);
   },
   policyCheck: (kind: DatabaseType, sql: string, maxRows = 500) =>

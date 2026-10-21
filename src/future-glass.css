@@ -678,6 +678,134 @@ textarea:focus-visible,
   padding-bottom: 24px;
 }
 
+.hero-stack {
+  position: relative;
+}
+
+.hero-tip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: calc(100% - 4px);
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 17px;
+  border: 1px solid var(--line-strong, var(--line));
+  border-radius: 8px;
+  background-color: color-mix(in srgb, var(--surface-strong) 64%, transparent);
+  background-image:
+    radial-gradient(
+      120% 100% at 50% 0%,
+      color-mix(in srgb, var(--glass-edge) 65%, transparent),
+      transparent 58%
+    ),
+    linear-gradient(
+      112deg,
+      color-mix(in srgb, var(--glass-edge) 35%, transparent),
+      transparent 60%
+    );
+  box-shadow:
+    inset 0 1px 0 var(--glass-edge, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--glass-edge, transparent) 50%, transparent),
+    inset 0 -20px 34px color-mix(in srgb, var(--cyan) 5%, transparent),
+    var(--shadow);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  animation: hero-tip-in 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Dark mode needs its own denser surface plus a broad specular reflection and
+   lit rim; without them the green hero dominates the card and the stacked
+   glass collapses into one green slab. */
+:root.dark .hero-tip {
+  border-color: rgba(191, 219, 254, 0.28);
+  background-color: color-mix(in srgb, var(--surface-strong) 68%, transparent);
+  background-image:
+    radial-gradient(120% 90% at 50% 0%, rgba(255, 255, 255, 0.20), transparent 58%),
+    linear-gradient(112deg, rgba(255, 255, 255, 0.07), transparent 62%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.34),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.09),
+    inset 0 -22px 36px rgba(56, 189, 248, 0.06),
+    var(--shadow);
+}
+
+.hero-tip.leaving {
+  pointer-events: none;
+  animation: hero-tip-out 280ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.hero-tip-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid color-mix(in srgb, var(--cyan) 30%, var(--line));
+  border-radius: 9px;
+  color: var(--cyan);
+  background: color-mix(in srgb, var(--cyan) 10%, var(--surface-strong));
+  box-shadow: inset 0 1px 0 var(--glass-edge);
+}
+
+.hero-tip.success .hero-tip-icon {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 30%, var(--line));
+  background: color-mix(in srgb, var(--green) 10%, var(--surface-strong));
+}
+
+.hero-tip-copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hero-tip-title {
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.hero-tip-text {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.hero-tip-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+@keyframes hero-tip-in {
+  0% { opacity: 0; transform: translateY(-16px) scale(0.985); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes hero-tip-out {
+  0% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-22px) scale(0.985); }
+}
+
+.hero-tip.success .hero-tip-icon,
+.hero-tip.success .hero-tip-copy {
+  animation: hero-tip-copy-in 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes hero-tip-copy-in {
+  0% { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
 .status-command {
   position: relative;
   display: grid;
@@ -687,6 +815,7 @@ textarea:focus-visible,
   min-height: 104px;
   padding: 16px 17px;
   overflow: hidden;
+  transition: transform 380ms cubic-bezier(0.22, 1, 0.36, 1);
   border: 1px solid color-mix(in srgb, var(--blue) 19%, var(--line));
   border-radius: 8px;
   background:
@@ -815,11 +944,30 @@ textarea:focus-visible,
   background: linear-gradient(90deg, var(--red), var(--amber), transparent 75%);
 }
 
+/* The hero moves back and down while the tip sits on top, and the card is
+   slightly shorter so its bottom edge stays exposed. Its text is blurred at
+   the source so the glass reads as frosted. The hero frame stays intact; a
+   faint edge may show through the translucent card, which is accepted over
+   dropping the sinking effect. */
+.status-command.tipped {
+  transform: scale(0.97) translateY(5px);
+}
+
+.status-command.tipped > .status-command-core,
+.status-command.tipped > .command-metrics,
+.status-command.tipped > .command-button {
+  filter: blur(12px);
+}
+
 .status-command-core,
 .server-identity {
   display: flex;
   align-items: center;
   gap: 11px;
+}
+
+.status-command-core {
+  transition: filter 260ms ease;
 }
 
 .status-command-core > div,
@@ -915,6 +1063,7 @@ textarea:focus-visible,
   display: grid;
   grid-template-columns: repeat(3, minmax(76px, 1fr));
   gap: 8px;
+  transition: filter 260ms ease;
 }
 
 .command-metrics > div {
@@ -976,6 +1125,7 @@ textarea:focus-visible,
 
 .command-button {
   min-width: 104px;
+  transition: filter 260ms ease, color 160ms ease, background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 .overview-grid {
