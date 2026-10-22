@@ -4178,6 +4178,42 @@ pre {
   font-weight: 400;
 }
 
+.about-update-acceleration-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.switch-label label {
+  cursor: pointer;
+}
+
+.about-update-provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.about-update-provider:hover,
+.about-update-provider:focus-visible {
+  color: var(--brand);
+}
+
+.about-update-hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 
 
 

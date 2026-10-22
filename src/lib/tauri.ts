@@ -3,6 +3,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import type {
   AccessTokenSecretResult,
   AppSnapshot,
+  AppUpdateInfo,
   ConnectionDiagnostics,
   ConnectionFileInspection,
   ConnectionInput,
@@ -83,6 +84,7 @@ const mockSnapshot: AppSnapshot = {
       audit_retention_days: 7,
       audit_redact_sql_literals: false,
       auto_check_updates: true,
+      github_acceleration: false,
       auto_start_mcp: false,
       auto_run_mcp: false,
       auto_lightweight_mode: false,
@@ -388,6 +390,10 @@ export const api = {
   removeJdbcRuntime: () => command<void>("remove_jdbc_runtime", undefined, undefined),
   checkJdbcRuntimeUpdate: () => command<string | null>("check_jdbc_runtime_update", undefined, null),
   checkJdbcRuntimeUpdateIfDue: () => command<string | null>("check_jdbc_runtime_update_if_due", undefined, null),
+  checkAppUpdate: () => command<AppUpdateInfo | null>("check_app_update", undefined, null),
+  checkUpdatesIfDue: () => command<string | null>("check_updates_if_due", undefined, null),
+  installAppUpdate: (version: string) =>
+    command<void>("install_app_update", { version }, undefined),
   jdbcStorageStatus: () => command<JdbcStorageStatus>("get_jdbc_storage_status", undefined, getMockJdbcStorageStatus()),
   clearJdbcCache: (selection: JdbcCacheSelection) => command<boolean>("clear_jdbc_cache", { selection }, true),
   stopJdbcDriverRuntime: (bundleId: string) => command<void>("stop_jdbc_driver_runtime", { bundleId }, undefined),
@@ -559,6 +565,13 @@ export const api = {
       return Promise.resolve();
     }
     return command<void>("open_project_releases", undefined, undefined);
+  },
+  openGithubAccelerationProvider: () => {
+    if (!isTauri) {
+      window.open("https://gh-proxy.com", "_blank", "noopener,noreferrer");
+      return Promise.resolve();
+    }
+    return command<void>("open_github_acceleration_provider", undefined, undefined);
   },
   openProjectSite: () => {
     if (!isTauri) {

@@ -36,6 +36,14 @@ use crate::vault::CredentialVault;
 use crate::{hide_main_window_to_tray, refresh_tray_menu};
 
 #[derive(Debug, Clone, Serialize)]
+pub struct AppUpdateInfo {
+    pub version: String,
+    pub current_version: String,
+    pub date: Option<String>,
+    pub body: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct AppSnapshot {
     pub version: u64,
     pub config: AppConfig,
@@ -449,6 +457,27 @@ pub async fn save_settings_config(
     })
     .await
     .map_err(to_client_error)?;
+    #[cfg(feature = "updater")]
+    {
+        let acceleration_enabled = state.config.read().await.settings.github_acceleration;
+        let acceleration_changed = previous_settings.github_acceleration != acceleration_enabled;
+        if acceleration_changed {
+            debug_log::info(
+                "settings",
+                format_args!(
+                    "GitHub acceleration setting changed (enabled={acceleration_enabled})"
+                ),
+            );
+            // Switching routes should take effect on the next check instead of
+            // waiting out the 24-hour window.
+            if let Err(error) = crate::updater::reset_check_schedule(&app) {
+                debug_log::warn(
+                    "settings",
+                    format_args!("failed to reset the update check schedule: {error}"),
+                );
+            }
+        }
+    }
     if debug_log::is_enabled() {
         // Record which setting keys changed, never the values, so the log
         // stays useful as a timeline without capturing sensitive state.
@@ -1507,6 +1536,36 @@ pub async fn check_updates_if_due(app: AppHandle) -> Result<Option<String>, Stri
     }
 }
 
+#[tauri::command]
+pub async fn check_app_update(app: AppHandle) -> Result<Option<AppUpdateInfo>, String> {
+    #[cfg(feature = "updater")]
+    {
+        crate::updater::check_now(app)
+            .await
+            .map_err(to_client_error)
+    }
+    #[cfg(not(feature = "updater"))]
+    {
+        let _ = app;
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+pub async fn install_app_update(app: AppHandle, version: String) -> Result<(), String> {
+    #[cfg(feature = "updater")]
+    {
+        crate::updater::install_now(app, version)
+            .await
+            .map_err(to_client_error)
+    }
+    #[cfg(not(feature = "updater"))]
+    {
+        let _ = (app, version);
+        Ok(())
+    }
+}
+
 /// Return the cached JRE update result, refreshing it only when its 24-hour
 /// check window has elapsed.
 #[tauri::command]
@@ -1531,6 +1590,13 @@ pub fn open_project_releases() -> Result<(), String> {
         None::<&str>,
     )
     .map_err(to_client_error)
+}
+
+/// Open the accelerator provider's site. The URL is fixed here so the front
+/// end cannot use this command to open arbitrary locations.
+#[tauri::command]
+pub async fn open_github_acceleration_provider() -> Result<(), String> {
+    tauri_plugin_opener::open_url("https://gh-proxy.com", None::<&str>).map_err(to_client_error)
 }
 
 /// Open the DataNexa application data directory in the system file manager.

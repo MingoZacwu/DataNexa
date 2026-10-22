@@ -85,6 +85,7 @@ export function SettingsView({
   onCheckUpdate,
   onUpdate,
   onOpenProjectReleases,
+  onOpenGithubAccelerationProvider,
   onOpenAudit,
   onTabChange,
   onRefreshJdbcStatus,
@@ -139,6 +140,7 @@ export function SettingsView({
   onCheckUpdate: () => void;
   onUpdate: () => void;
   onOpenProjectReleases: () => void;
+  onOpenGithubAccelerationProvider: () => void;
   onOpenAudit: () => void;
   onTabChange: (tab: SettingsTab) => void;
   onRefreshJdbcStatus: () => void;
@@ -203,6 +205,7 @@ export function SettingsView({
       const saved = current.audit_retention_days === settings.audit_retention_days
         && current.audit_redact_sql_literals === settings.audit_redact_sql_literals
         && current.auto_check_updates === settings.auto_check_updates
+        && current.github_acceleration === settings.github_acceleration
         && current.auto_start_mcp === settings.auto_start_mcp
         && current.auto_run_mcp === settings.auto_run_mcp
         && current.auto_lightweight_mode === settings.auto_lightweight_mode
@@ -885,6 +888,14 @@ export function SettingsView({
               onCheck={onCheckUpdate}
               onUpdate={onUpdate}
               onOpenProjectReleases={onOpenProjectReleases}
+              githubAcceleration={settingsDraft.github_acceleration}
+              onGithubAccelerationChange={(checked) => {
+                const next = { ...settingsDraft, github_acceleration: checked };
+                settingsDraftDirty.current = true;
+                setSettingsDraft(next);
+                onSaveSettings(next);
+              }}
+              onOpenAccelerationProvider={onOpenGithubAccelerationProvider}
               onOpenChangelog={onOpenProjectChangelog}
             >
               {debugOptionsVisible && (
@@ -1880,6 +1891,9 @@ export function AboutUpdateSection({
   onCheck,
   onUpdate,
   onOpenProjectReleases,
+  githubAcceleration,
+  onGithubAccelerationChange,
+  onOpenAccelerationProvider,
   onOpenChangelog,
   children
 }: {
@@ -1891,6 +1905,9 @@ export function AboutUpdateSection({
   onCheck: () => void;
   onUpdate: () => void;
   onOpenProjectReleases: () => void;
+  githubAcceleration: boolean;
+  onGithubAccelerationChange: (checked: boolean) => void;
+  onOpenAccelerationProvider: () => void;
   /** Opens the site changelog at its top; the released version is the newest
    * card there, so no version anchor is needed. */
   onOpenChangelog: () => void;
@@ -1954,6 +1971,11 @@ export function AboutUpdateSection({
       <div className="about-update-content">
         <strong>{title}</strong>
         <p>{description}</p>
+        {state.kind === "error"
+          && (state.phase === "check" || state.phase === "download")
+          && !githubAcceleration && (
+            <p className="about-update-hint">{t.updates.accelerationHint}</p>
+          )}
       </div>
       <div className="about-update-actions">
         {state.kind === "downloading" && (
@@ -2018,6 +2040,31 @@ export function AboutUpdateSection({
             <Switch.Thumb className="switch-thumb" />
           </Switch.Root>
         </label>
+        <div className="about-update-switch-row">
+          <span className="switch-label">
+            <label htmlFor="github-acceleration-switch">{t.settings.updateAcceleration}</label>
+            <IconTooltip label={t.settings.updateAccelerationTooltip}>
+              <button type="button" className="switch-info" aria-label={t.settings.updateAccelerationTooltip}>
+                <Info size={13} />
+              </button>
+            </IconTooltip>
+          </span>
+          <span className="about-update-acceleration-control">
+            <button type="button" className="about-update-provider" onClick={onOpenAccelerationProvider}>
+              {t.settings.updateAccelerationProvider}
+              <SquareArrowUpRight size={12} />
+            </button>
+            <Switch.Root
+              id="github-acceleration-switch"
+              className="switch"
+              checked={githubAcceleration}
+              aria-label={t.settings.updateAcceleration}
+              onCheckedChange={onGithubAccelerationChange}
+            >
+              <Switch.Thumb className="switch-thumb" />
+            </Switch.Root>
+          </span>
+        </div>
         {children}
       </div>
     </section>

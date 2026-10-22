@@ -1314,6 +1314,7 @@ function App() {
                     onCheckUpdate={() => void checkAllUpdates()}
                     onUpdate={() => void updater.installUpdate()}
                     onOpenProjectReleases={() => void api.openProjectReleases().catch(showError)}
+                    onOpenGithubAccelerationProvider={() => void api.openGithubAccelerationProvider().catch(showError)}
                     onOpenAudit={() => setActiveView("audit")}
                     onTabChange={setSettingsTab}
                     onRefreshJdbcStatus={() => void refreshJdbcStatus()}

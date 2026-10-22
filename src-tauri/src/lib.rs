@@ -5,6 +5,7 @@ mod commands;
 mod config;
 mod db;
 mod debug_log;
+mod github_accel;
 mod i18n;
 mod jdbc;
 mod jdbc_runtime;
@@ -23,13 +24,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use commands::{
-    check_jdbc_runtime_update, check_jdbc_runtime_update_if_due, check_updates_if_due,
-    clear_audit_events, clear_jdbc_cache, clear_legacy_audit_log, create_access_token,
-    delete_access_token, delete_connection, delete_jdbc_driver, diagnose_connection,
-    disable_all_connections, export_connections, get_access_token_secret, get_app_snapshot,
-    get_jdbc_status, get_jdbc_storage_status, hide_main_window, import_connections,
-    import_jdbc_driver, inspect_connection_file, install_jdbc_driver, install_jdbc_runtime,
-    log_frontend_event, minimize_main_window, open_data_directory, open_debug_log_directory,
+    check_app_update, check_jdbc_runtime_update, check_jdbc_runtime_update_if_due,
+    check_updates_if_due, clear_audit_events, clear_jdbc_cache, clear_legacy_audit_log,
+    create_access_token, delete_access_token, delete_connection, delete_jdbc_driver,
+    diagnose_connection, disable_all_connections, export_connections, get_access_token_secret,
+    get_app_snapshot, get_jdbc_status, get_jdbc_storage_status, hide_main_window,
+    import_connections, import_jdbc_driver, inspect_connection_file, install_app_update,
+    install_jdbc_driver, install_jdbc_runtime, log_frontend_event, minimize_main_window,
+    open_data_directory, open_debug_log_directory, open_github_acceleration_provider,
     open_project_changelog, open_project_homepage, open_project_releases, open_project_site,
     policy_check, remove_jdbc_runtime, rename_access_token, retry_audit_migration,
     rotate_access_token, save_server_config, save_settings_config, set_access_token_enabled,
@@ -772,8 +774,11 @@ pub fn run() {
             open_project_releases,
             open_project_site,
             open_project_changelog,
+            open_github_acceleration_provider,
             policy_check,
-            check_updates_if_due
+            check_updates_if_due,
+            check_app_update,
+            install_app_update
         ])
         .build(tauri::generate_context!())
         .expect("failed to build DataNexa")

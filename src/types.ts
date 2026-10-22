@@ -31,6 +31,7 @@ export interface SettingsConfig {
   audit_retention_days: number;
   audit_redact_sql_literals: boolean;
   auto_check_updates: boolean;
+  github_acceleration: boolean;
   auto_start_mcp: boolean;
   auto_run_mcp: boolean;
   auto_lightweight_mode: boolean;
@@ -96,6 +97,13 @@ export interface AccessTokenInfo {
 export interface AccessTokenSecretResult {
   token_id: string;
   secret: string;
+}
+
+export interface AppUpdateInfo {
+  version: string;
+  current_version: string;
+  date?: string | null;
+  body?: string | null;
 }
 
 export interface AppSnapshot {
