@@ -4185,10 +4185,6 @@ pre {
   min-width: 0;
 }
 
-.switch-label label {
-  cursor: pointer;
-}
-
 .about-update-provider {
   display: inline-flex;
   align-items: center;

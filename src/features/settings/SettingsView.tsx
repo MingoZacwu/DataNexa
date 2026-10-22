@@ -2034,15 +2034,21 @@ export function AboutUpdateSection({
         )}
       </div>
       <div className="about-update-preferences">
-        <label className="about-update-switch-row">
+        <div className="about-update-switch-row">
           <span>{t.settings.autoCheckUpdates}</span>
-          <Switch.Root className="switch" checked={enabled && autoCheckUpdates} disabled={!enabled} onCheckedChange={onAutoCheckUpdatesChange}>
+          <Switch.Root
+            className="switch"
+            checked={enabled && autoCheckUpdates}
+            disabled={!enabled}
+            aria-label={t.settings.autoCheckUpdates}
+            onCheckedChange={onAutoCheckUpdatesChange}
+          >
             <Switch.Thumb className="switch-thumb" />
           </Switch.Root>
-        </label>
+        </div>
         <div className="about-update-switch-row">
           <span className="switch-label">
-            <label htmlFor="github-acceleration-switch">{t.settings.updateAcceleration}</label>
+            {t.settings.updateAcceleration}
             <IconTooltip label={t.settings.updateAccelerationTooltip}>
               <button type="button" className="switch-info" aria-label={t.settings.updateAccelerationTooltip}>
                 <Info size={13} />
@@ -2055,7 +2061,6 @@ export function AboutUpdateSection({
               <SquareArrowUpRight size={12} />
             </button>
             <Switch.Root
-              id="github-acceleration-switch"
               className="switch"
               checked={githubAcceleration}
               aria-label={t.settings.updateAcceleration}
