@@ -525,6 +525,24 @@ pub async fn save_settings_config(
         .await
         .map_err(to_client_error)?;
 
+    // The macOS menu bar is native UI: its labels are baked in when the menu is
+    // built, so switching the in-app language has to rebuild it as well.
+    #[cfg(target_os = "macos")]
+    {
+        let language_changed = {
+            let config = state.config.read().await;
+            config.settings.language != previous_settings.language
+        };
+        if language_changed {
+            if let Err(error) = crate::app_menu::install(&app, text) {
+                debug_log::error(
+                    "menu",
+                    format_args!("failed to reinstall the application menu: {error}"),
+                );
+            }
+        }
+    }
+
     let mcp_running = mcp::status(state.inner()).await.running;
     refresh_tray_menu(
         &app,
@@ -1489,6 +1507,35 @@ pub async fn open_project_homepage() -> Result<(), String> {
 pub async fn open_project_site() -> Result<(), String> {
     tauri_plugin_opener::open_url("https://mingozacwu.github.io/datanexa-site/", None::<&str>)
         .map_err(to_client_error)
+}
+
+/// Public documentation entry point. The base URL lives here (not in the front
+/// end) so neither a command nor a menu item can ask the opener to visit
+/// arbitrary locations; callers may only select an in-page chapter anchor.
+pub(crate) const HELP_DOCS_URL: &str = "https://mingozacwu.github.io/datanexa-site/help.html";
+
+/// Open the online help documentation, optionally deep-linked to a chapter
+/// anchor (`#jdbc`, `#faq`, …). The anchor is reduced to the characters the
+/// documentation pages emit, so it can never escape the fixed URL.
+#[tauri::command]
+pub fn open_project_help(anchor: Option<String>) -> Result<(), String> {
+    let section: String = anchor
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .trim_start_matches('#')
+        .chars()
+        .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-')
+        .take(64)
+        .collect();
+
+    let url = if section.is_empty() {
+        HELP_DOCS_URL.to_string()
+    } else {
+        format!("{HELP_DOCS_URL}#{section}")
+    };
+
+    tauri_plugin_opener::open_url(url, None::<&str>).map_err(to_client_error)
 }
 
 /// Open the changelog page on the project site. The base URL is fixed here so

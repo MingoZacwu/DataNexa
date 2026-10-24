@@ -1,4 +1,5 @@
 mod access_control;
+mod app_menu;
 mod audit;
 mod circuit_breaker;
 mod commands;
@@ -32,7 +33,8 @@ use commands::{
     import_connections, import_jdbc_driver, inspect_connection_file, install_app_update,
     install_jdbc_driver, install_jdbc_runtime, log_frontend_event, minimize_main_window,
     open_data_directory, open_debug_log_directory, open_github_acceleration_provider,
-    open_project_changelog, open_project_homepage, open_project_releases, open_project_site,
+    open_project_changelog, open_project_help, open_project_homepage, open_project_releases,
+    open_project_site,
     policy_check, remove_jdbc_runtime, rename_access_token, retry_audit_migration,
     rotate_access_token, save_server_config, save_settings_config, set_access_token_enabled,
     set_connection_enabled, set_mcp_tool_enabled, set_token_connection_allowed,
@@ -512,6 +514,16 @@ pub fn run() {
 
             let mut state = tauri::async_runtime::block_on(AppState::new(app.handle().clone()))?;
             let tray_text = backend_text(&state.config.get_mut().settings.language);
+            // Tauri's default macOS menu is English-only and has no help entry;
+            // replace it with one built from the app language at startup. It is
+            // rebuilt from `save_settings_config` when the language changes.
+            #[cfg(target_os = "macos")]
+            if let Err(error) = app_menu::install(app.handle(), tray_text) {
+                debug_log::error(
+                    "menu",
+                    format_args!("failed to install the application menu: {error}"),
+                );
+            }
             let state = Arc::new(state);
             // Honor the persisted debug logging preference from the very
             // beginning of the session.
@@ -648,6 +660,16 @@ pub fn run() {
             "show" => {
                 show_main_window(app);
             }
+            app_menu::HELP_DOCS_MENU_ID => {
+                if let Err(error) =
+                    tauri_plugin_opener::open_url(commands::HELP_DOCS_URL, None::<&str>)
+                {
+                    debug_log::error(
+                        "menu",
+                        format_args!("failed to open the help documentation: {error}"),
+                    );
+                }
+            }
             "toggle_lightweight" => {
                 let state = app.state::<Arc<MainWindowState>>();
                 if state.lightweight_active.load(Ordering::Acquire) {
@@ -774,6 +796,7 @@ pub fn run() {
             open_project_releases,
             open_project_site,
             open_project_changelog,
+            open_project_help,
             open_github_acceleration_provider,
             policy_check,
             check_updates_if_due,

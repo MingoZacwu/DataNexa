@@ -69,9 +69,9 @@ const zhCN = {
     settings: "设置"
   },
   sidebar: {
-    serverRunning: "服务运行中 · {port}",
-    serverStopped: "服务已停止",
-    serverFailed: "服务启动失败",
+    serverRunning: "运行中",
+    serverStopped: "已停止",
+    serverFailed: "启动失败",
     systemTheme: "跟随系统",
     darkMode: "深色模式",
     lightMode: "浅色模式",
@@ -473,6 +473,7 @@ const zhCN = {
     circuitBreakerRequiresBearer: "自动熔断依赖 Bearer 访问令牌鉴权，请先在“通用 → 服务策略”中启用。",
     aboutText: "本地只读数据库 MCP 网关，让 Agent 通过统一、安全、可审计的入口访问你的数据源。",
     officialHomepage: "官方主页",
+    helpDocs: "帮助文档",
     changelog: "更新日志",
     debugLogging: "启用调试日志",
     debugLoggingTooltip: "记录运行日志用于问题排查，包含脱敏后的错误信息",
@@ -658,9 +659,9 @@ const en: I18nMessages = {
     settings: "Settings"
   },
   sidebar: {
-    serverRunning: "Server running · {port}",
-    serverStopped: "Server stopped",
-    serverFailed: "Server failed to start",
+    serverRunning: "Running",
+    serverStopped: "Stopped",
+    serverFailed: "Start failed",
     systemTheme: "Use system theme",
     darkMode: "Dark mode",
     lightMode: "Light mode",
@@ -1062,6 +1063,7 @@ const en: I18nMessages = {
     circuitBreakerRequiresBearer: "The circuit breaker requires bearer token authentication. Enable it first under General → Service Policy.",
     aboutText: "A local read-only database MCP gateway that gives agents one unified, safe, and auditable way to access your data sources.",
     officialHomepage: "Official homepage",
+    helpDocs: "Documentation",
     changelog: "Changelog",
     debugLogging: "Enable debug logging",
     debugLoggingTooltip: "Record runtime logs for troubleshooting, with sanitized error messages",

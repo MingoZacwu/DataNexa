@@ -580,6 +580,17 @@ export const api = {
     }
     return command<void>("open_project_site", undefined, undefined);
   },
+  // The help page lives on the project site; `anchor` deep-links to a chapter
+  // (`#jdbc`, `#faq`, …) so contextual entries can point at the relevant part.
+  openProjectHelp: (anchor?: string | null) => {
+    const section = (anchor ?? "").trim().replace(/^#/, "");
+    if (!isTauri) {
+      const hash = section ? `#${section}` : "";
+      window.open(`https://mingozacwu.github.io/datanexa-site/help.html${hash}`, "_blank", "noopener,noreferrer");
+      return Promise.resolve();
+    }
+    return command<void>("open_project_help", { anchor: section || null }, undefined);
+  },
   // Passing no version opens the changelog top; passing one deep-links to that
   // version's card (`#v<version>`), matching the anchors the site generates.
   openProjectChangelog: (version?: string | null) => {

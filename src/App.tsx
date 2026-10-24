@@ -337,6 +337,23 @@ function App() {
     pushToast(error, "error");
   }, [snapshot?.startup_error]);
 
+  // macOS convention: Cmd+? (Cmd+Shift+/) opens the documentation. The native
+  // menu only carries the physical ⇧⌘/ combination — Tauri accelerators are key
+  // codes and cannot express "?" — so the conventional "?" spelling is handled
+  // here as well while the window has focus.
+  useEffect(() => {
+    if (!isMacos) return;
+    function handleHelpShortcut(event: KeyboardEvent) {
+      if (event.repeat || event.altKey || event.ctrlKey) return;
+      if (!event.metaKey || !event.shiftKey) return;
+      if (event.key !== "?" && event.code !== "Slash") return;
+      event.preventDefault();
+      void api.openProjectHelp().catch(showError);
+    }
+    window.addEventListener("keydown", handleHelpShortcut);
+    return () => window.removeEventListener("keydown", handleHelpShortcut);
+  }, [isMacos]);
+
   useEffect(() => {
     if (snapshot?.audit_migration.status === "ready") {
       setMigrationDialogOpen(false);
@@ -1339,6 +1356,7 @@ function App() {
                     onImportConnections={() => void importConnections()}
                     onOpenProjectHomepage={() => void api.openProjectHomepage().catch(showError)}
                     onOpenProjectSite={() => void api.openProjectSite().catch(showError)}
+                    onOpenProjectHelp={() => void api.openProjectHelp().catch(showError)}
                     onOpenProjectChangelog={(version) => void api.openProjectChangelog(version).catch(showError)}
                   />
                 )}

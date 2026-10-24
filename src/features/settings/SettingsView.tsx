@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   AppWindow,
   Bug,
+  BookOpen,
   Check,
   CheckCircle2,
   CircleDashed,
@@ -110,6 +111,7 @@ export function SettingsView({
   onImportConnections,
   onOpenProjectHomepage,
   onOpenProjectSite,
+  onOpenProjectHelp,
   onOpenProjectChangelog
 }: {
   t: I18nMessages;
@@ -165,6 +167,7 @@ export function SettingsView({
   onImportConnections: () => void;
   onOpenProjectHomepage: () => void;
   onOpenProjectSite: () => void;
+  onOpenProjectHelp: () => void;
   /** Without a version the changelog opens at its top, which is what the
    * update-available card wants; the About footer passes the running version. */
   onOpenProjectChangelog: (version?: string | null) => void;
@@ -1003,6 +1006,17 @@ export function SettingsView({
                 >
                   <Home size={16} />
                   {t.settings.officialHomepage}
+                </a>
+                <a
+                  className="github-link"
+                  href="https://mingozacwu.github.io/datanexa-site/help.html"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    onOpenProjectHelp();
+                  }}
+                >
+                  <BookOpen size={16} />
+                  {t.settings.helpDocs}
                 </a>
                 <a
                   className="github-link"

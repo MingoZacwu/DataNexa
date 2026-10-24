@@ -286,12 +286,19 @@ p {
   font-weight: 700;
 }
 
-.sidebar-status-line span:last-child {
+.sidebar-status-label {
   display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The port keeps its own width: the footer is only 192px wide, so when the
+   line ran as a single string the port was the first thing to be ellipsized. */
+.sidebar-status-port {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
 }
 
 .status-orb {
