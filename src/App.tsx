@@ -1,7 +1,7 @@
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import clsx from "clsx";
-import { AlertTriangle, Coffee, Database, Filter, Home, Logs, Plus, RefreshCw, Settings, ShieldCheck, Trash2, Wrench, X } from "lucide-react";
+import { AlertTriangle, Coffee, Database, Filter, Home, LifeBuoy, Logs, Plus, RefreshCw, Settings, ShieldCheck, Trash2, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import brandLogoUrl from "../resources/datanexa.png";
@@ -23,6 +23,7 @@ import { ToolsView } from "./features/tools/ToolsView";
 import { AuditDetailDialog, AuditView } from "./features/audit/AuditView";
 import { SettingsView } from "./features/settings/SettingsView";
 import { EncryptionPasswordDialog } from "./features/settings/EncryptionPasswordDialog";
+import { HelpView } from "./features/help/HelpView";
 
 type McpActivityTone = "success" | "error";
 type McpToolCallCompletedPayload = { failed: boolean };
@@ -1147,6 +1148,8 @@ function App() {
               <NavButton icon={<ShieldCheck />} label={t.access.title} active={activeView === "access"} onClick={() => setActiveView("access")} />
               <NavButton icon={<Logs />} label={t.nav.audit} active={activeView === "audit"} onClick={() => setActiveView("audit")} />
               <NavButton icon={<Settings />} label={t.nav.settings} active={activeView === "settings"} onClick={() => setActiveView("settings")} />
+              <span className="nav-divider" aria-hidden="true" />
+              <NavButton icon={<LifeBuoy />} label={t.nav.help} active={activeView === "help"} onClick={() => setActiveView("help")} />
             </nav>
 
             <div className="sidebar-bottom">
@@ -1222,32 +1225,34 @@ function App() {
                     <LanguageSwitcher t={t} locale={locale} disabled={isBusy("settings")} onChange={(next) => void changeLocale(next)} />
                   </div>
                 )}
-                <div className={clsx("top-icon-actions", activeView === "connections" && emergencyDisconnect && "emergency-active")}>
-                  {snapshot && activeView === "connections" && (
-                    <IconTooltip label={emergencyDisconnect ? t.connections.emergencyRestore : t.connections.emergencyDisable}>
-                      <button
-                        type="button"
-                        className={clsx("icon-button danger", emergencyDisconnect && "emergency-toggle-active")}
-                        onClick={disableAllConnections}
-                        disabled={isBusy("connections") || !snapshot.server_status.running}
-                        aria-pressed={emergencyDisconnect}
-                        aria-label={emergencyDisconnect ? t.connections.emergencyRestore : t.connections.emergencyDisable}
-                      >
-                        <AlertTriangle size={17} />
-                      </button>
-                    </IconTooltip>
-                  )}
-                  {snapshot && activeView === "audit" && (
-                    <IconTooltip label={t.audit.clear}>
-                      <button type="button" className="icon-button danger" onClick={clearAuditEvents} disabled={isBusy("audit") || snapshot.audit_events.length === 0} aria-label={t.audit.clear}>
-                        <Trash2 size={17} />
-                      </button>
-                    </IconTooltip>
-                  )}
-                  <button type="button" className={clsx("icon-button", isBusy("refresh") && "is-spinning")} onClick={() => refresh()} disabled={isBusy("refresh")} aria-label={t.common.refresh}>
-                    <RefreshCw size={17} />
-                  </button>
-                </div>
+                {activeView !== "help" && (
+                  <div className={clsx("top-icon-actions", activeView === "connections" && emergencyDisconnect && "emergency-active")}>
+                    {snapshot && activeView === "connections" && (
+                      <IconTooltip label={emergencyDisconnect ? t.connections.emergencyRestore : t.connections.emergencyDisable}>
+                        <button
+                          type="button"
+                          className={clsx("icon-button danger", emergencyDisconnect && "emergency-toggle-active")}
+                          onClick={disableAllConnections}
+                          disabled={isBusy("connections") || !snapshot.server_status.running}
+                          aria-pressed={emergencyDisconnect}
+                          aria-label={emergencyDisconnect ? t.connections.emergencyRestore : t.connections.emergencyDisable}
+                        >
+                          <AlertTriangle size={17} />
+                        </button>
+                      </IconTooltip>
+                    )}
+                    {snapshot && activeView === "audit" && (
+                      <IconTooltip label={t.audit.clear}>
+                        <button type="button" className="icon-button danger" onClick={clearAuditEvents} disabled={isBusy("audit") || snapshot.audit_events.length === 0} aria-label={t.audit.clear}>
+                          <Trash2 size={17} />
+                        </button>
+                      </IconTooltip>
+                    )}
+                    <button type="button" className={clsx("icon-button", isBusy("refresh") && "is-spinning")} onClick={() => refresh()} disabled={isBusy("refresh")} aria-label={t.common.refresh}>
+                      <RefreshCw size={17} />
+                    </button>
+                  </div>
+                )}
                 {snapshot && activeView === "connections" && (
                   <button type="button" className="button primary" onClick={openNewConnection} disabled={isBusy("connections") || emergencyDisconnect}>
                     <Plus size={16} />
@@ -1260,7 +1265,15 @@ function App() {
               </div>
             </header>
 
-            {!snapshot ? (
+            {activeView === "help" ? (
+              <div className="view-stage view-help" key={activeView} ref={stageScrollFadeRef} onScroll={updateScrollFade}>
+                <HelpView
+                  t={t}
+                  onOpenHelp={() => void api.openProjectHelp().catch(showError)}
+                  onOpenIssues={() => void api.openProjectIssues().catch(showError)}
+                />
+              </div>
+            ) : !snapshot ? (
               <div className="loading-panel">{t.overview.loading}</div>
             ) : (
               <div className={clsx("view-stage", `view-${activeView}`)} key={activeView} ref={stageScrollFadeRef} onScroll={updateScrollFade}>
@@ -1356,7 +1369,6 @@ function App() {
                     onImportConnections={() => void importConnections()}
                     onOpenProjectHomepage={() => void api.openProjectHomepage().catch(showError)}
                     onOpenProjectSite={() => void api.openProjectSite().catch(showError)}
-                    onOpenProjectHelp={() => void api.openProjectHelp().catch(showError)}
                     onOpenProjectChangelog={(version) => void api.openProjectChangelog(version).catch(showError)}
                   />
                 )}

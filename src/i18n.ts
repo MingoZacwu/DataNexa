@@ -66,7 +66,20 @@ const zhCN = {
     server: "MCP 服务",
     tools: "工具",
     audit: "审计日志",
-    settings: "设置"
+    settings: "设置",
+    help: "帮助与反馈"
+  },
+  help: {
+    headline: "遇到问题，",
+    headlineAccent: "从这里开始",
+    headlineEnd: "。",
+    intro: "使用说明与排查步骤都整理在帮助手册中；手册没有覆盖到的情况，欢迎到 GitHub 提交 Issue。",
+    manualTitle: "翻阅帮助手册",
+    manualText: "安装、连接数据库、接入 Agent 与常见报错排查。",
+    manualAction: "打开帮助手册",
+    issuesTitle: "提交 GitHub Issue",
+    issuesText: "报告缺陷、补充手册遗漏，或提出功能建议。",
+    issuesAction: "前往 GitHub Issues"
   },
   sidebar: {
     serverRunning: "运行中",
@@ -473,7 +486,6 @@ const zhCN = {
     circuitBreakerRequiresBearer: "自动熔断依赖 Bearer 访问令牌鉴权，请先在“通用 → 服务策略”中启用。",
     aboutText: "本地只读数据库 MCP 网关，让 Agent 通过统一、安全、可审计的入口访问你的数据源。",
     officialHomepage: "官方主页",
-    helpDocs: "帮助文档",
     changelog: "更新日志",
     debugLogging: "启用调试日志",
     debugLoggingTooltip: "记录运行日志用于问题排查，包含脱敏后的错误信息",
@@ -656,7 +668,20 @@ const en: I18nMessages = {
     server: "MCP Server",
     tools: "Tools",
     audit: "Audit Log",
-    settings: "Settings"
+    settings: "Settings",
+    help: "Help & Feedback"
+  },
+  help: {
+    headline: "When something",
+    headlineAccent: "gets in the way",
+    headlineEnd: ".",
+    intro: "Setup notes and troubleshooting steps live in the help manual. If it doesn't cover your case, open an issue on GitHub.",
+    manualTitle: "Read the help manual",
+    manualText: "Installing DataNexa, connecting databases, wiring up an agent, and troubleshooting common errors.",
+    manualAction: "Open the manual",
+    issuesTitle: "Open a GitHub issue",
+    issuesText: "Report a bug, flag a gap in the manual, or suggest a feature.",
+    issuesAction: "Go to GitHub Issues"
   },
   sidebar: {
     serverRunning: "Running",
@@ -1063,7 +1088,6 @@ const en: I18nMessages = {
     circuitBreakerRequiresBearer: "The circuit breaker requires bearer token authentication. Enable it first under General → Service Policy.",
     aboutText: "A local read-only database MCP gateway that gives agents one unified, safe, and auditable way to access your data sources.",
     officialHomepage: "Official homepage",
-    helpDocs: "Documentation",
     changelog: "Changelog",
     debugLogging: "Enable debug logging",
     debugLoggingTooltip: "Record runtime logs for troubleshooting, with sanitized error messages",

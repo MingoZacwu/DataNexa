@@ -1,4 +1,4 @@
-export type View = "overview" | "connections" | "access" | "tools" | "audit" | "settings";
+export type View = "overview" | "connections" | "access" | "tools" | "audit" | "settings" | "help";
 export type SettingsTab = "general" | "security" | "drivers" | "storage" | "about";
 export type ThemeMode = "system" | "light" | "dark";
 export type EffectiveTheme = "light" | "dark";

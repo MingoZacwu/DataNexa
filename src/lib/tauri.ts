@@ -559,6 +559,13 @@ export const api = {
     }
     return command<void>("open_project_homepage", undefined, undefined);
   },
+  openProjectIssues: () => {
+    if (!isTauri) {
+      window.open("https://github.com/MingoZacwu/DataNexa/issues/new/choose", "_blank", "noopener,noreferrer");
+      return Promise.resolve();
+    }
+    return command<void>("open_project_issues", undefined, undefined);
+  },
   openProjectReleases: () => {
     if (!isTauri) {
       window.open("https://github.com/MingoZacwu/DataNexa/releases", "_blank", "noopener,noreferrer");

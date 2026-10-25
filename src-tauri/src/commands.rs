@@ -1509,6 +1509,17 @@ pub async fn open_project_site() -> Result<(), String> {
         .map_err(to_client_error)
 }
 
+/// Open the repository issue chooser. The URL is kept here so the front end can
+/// only ask for the project's own issue tracker, never an arbitrary location.
+#[tauri::command]
+pub async fn open_project_issues() -> Result<(), String> {
+    tauri_plugin_opener::open_url(
+        "https://github.com/MingoZacwu/DataNexa/issues/new/choose",
+        None::<&str>,
+    )
+    .map_err(to_client_error)
+}
+
 /// Public documentation entry point. The base URL lives here (not in the front
 /// end) so neither a command nor a menu item can ask the opener to visit
 /// arbitrary locations; callers may only select an in-page chapter anchor.

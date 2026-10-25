@@ -48,6 +48,8 @@ export function viewTitle(t: I18nMessages, view: View) {
       return t.nav.audit;
     case "settings":
       return t.nav.settings;
+    case "help":
+      return t.nav.help;
   }
 }
 

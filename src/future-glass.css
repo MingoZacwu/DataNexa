@@ -3011,3 +3011,520 @@ textarea:focus {
   background: rgba(8, 11, 16, 0.96);
   box-shadow: -6px 0 18px rgba(0, 0, 0, 0.16);
 }
+
+/* --------------------------------------------------------------------------
+   Help & feedback
+   A static signpost page: one masthead and two equal exits.
+   -------------------------------------------------------------------------- */
+
+.nav-divider {
+  height: 1px;
+  margin: 10px 8px;
+  border-radius: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--muted) 46%, transparent) 14%,
+    color-mix(in srgb, var(--muted) 46%, transparent) 86%,
+    transparent
+  );
+}
+
+.view-stage.view-help {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.help-page {
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 8px 0 24px;
+  display: grid;
+  gap: 16px;
+}
+
+.help-masthead {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 264px;
+  align-items: center;
+  min-height: 292px;
+  padding: 38px 40px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--blue) 14%, var(--line));
+  border-radius: 12px;
+  background:
+    radial-gradient(115% 150% at 2% -12%, color-mix(in srgb, var(--blue) 11%, transparent), transparent 54%),
+    radial-gradient(80% 110% at 100% 0%, color-mix(in srgb, var(--cyan) 7%, transparent), transparent 58%),
+    linear-gradient(112deg, color-mix(in srgb, var(--surface-strong) 88%, transparent), color-mix(in srgb, var(--surface) 74%, transparent));
+  box-shadow: inset 0 1px 0 var(--glass-edge), var(--soft-shadow);
+  backdrop-filter: blur(26px) saturate(145%);
+  -webkit-backdrop-filter: blur(26px) saturate(145%);
+}
+
+:root.dark .help-masthead {
+  background:
+    radial-gradient(115% 150% at 2% -12%, color-mix(in srgb, var(--blue) 15%, transparent), transparent 54%),
+    radial-gradient(80% 110% at 100% 0%, color-mix(in srgb, var(--cyan) 9%, transparent), transparent 58%),
+    linear-gradient(112deg, color-mix(in srgb, var(--surface-strong) 92%, transparent), color-mix(in srgb, var(--surface) 80%, transparent));
+}
+
+.help-masthead-copy {
+  position: relative;
+  z-index: 1;
+  align-self: center;
+  min-width: 0;
+  max-width: 600px;
+}
+
+.help-headline {
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(34px, 3.4vw, 42px);
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+}
+
+.help-headline-line {
+  display: block;
+}
+
+.help-headline-accent {
+  color: color-mix(in srgb, var(--ink) 84%, var(--blue));
+}
+
+.help-headline-end {
+  color: var(--blue);
+}
+
+.help-lead {
+  max-width: 52ch;
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.8;
+  text-wrap: pretty;
+}
+
+.help-masthead-visual {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  padding-left: 26px;
+  border-left: 1px solid var(--line);
+}
+
+.help-halo {
+  position: relative;
+  width: 220px;
+  height: 220px;
+  display: grid;
+  place-items: center;
+}
+
+.help-halo-glow {
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 36% 30%, color-mix(in srgb, var(--blue) 22%, transparent), transparent 62%),
+    radial-gradient(circle at 68% 74%, color-mix(in srgb, var(--cyan) 18%, transparent), transparent 58%);
+  filter: blur(14px);
+  animation: help-halo-glow-pulse 5.6s ease-in-out infinite alternate;
+  transform-origin: center;
+}
+
+.help-halo-glow-2 {
+  position: absolute;
+  top: -6%;
+  right: -4%;
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--violet) 14%, transparent), transparent 68%);
+  filter: blur(12px);
+  animation: help-halo-glow-pulse-2 7s ease-in-out -2s infinite alternate;
+  transform-origin: center;
+}
+
+.help-halo-ring {
+  position: absolute;
+  inset: 18px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--ink) 7%, transparent);
+  -webkit-mask-image: linear-gradient(125deg, transparent 18%, #000 60%);
+  mask-image: linear-gradient(125deg, transparent 18%, #000 60%);
+  animation: help-halo-ring-rotate 64s linear infinite;
+}
+
+.help-halo-ring-2 {
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--ink) 5%, transparent);
+  -webkit-mask-image: linear-gradient(-52deg, transparent 24%, #000 72%);
+  mask-image: linear-gradient(-52deg, transparent 24%, #000 72%);
+  animation: help-halo-ring-rotate-rev 82s linear infinite;
+}
+
+.help-halo-disc {
+  position: relative;
+  z-index: 1;
+  width: 112px;
+  height: 112px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--glass-edge);
+  border-radius: 50%;
+  background:
+    radial-gradient(120% 120% at 28% 18%, color-mix(in srgb, var(--surface-strong) 96%, transparent), color-mix(in srgb, var(--surface) 72%, transparent));
+  box-shadow:
+    inset 0 1px 0 var(--glass-edge),
+    inset 0 -14px 26px color-mix(in srgb, var(--blue) 5%, transparent),
+    0 26px 52px color-mix(in srgb, var(--blue) 14%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: help-halo-float 4.2s ease-in-out infinite alternate;
+}
+
+.help-halo-disc img {
+  width: 62px;
+  height: 62px;
+  object-fit: contain;
+  filter: drop-shadow(0 10px 18px color-mix(in srgb, var(--blue) 22%, transparent));
+}
+
+.help-halo-spark {
+  position: absolute;
+  top: 22%;
+  right: 12%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--cyan) 85%, white);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--cyan) 55%, transparent);
+  offset-path: circle(46% at 50% 50%);
+  offset-rotate: 0deg;
+  animation: help-halo-spark-orbit 14s linear infinite;
+}
+
+.help-halo-spark-2 {
+  position: absolute;
+  bottom: 18%;
+  left: 14%;
+  width: 3.5px;
+  height: 3.5px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--violet) 75%, white);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--violet) 45%, transparent);
+  offset-path: circle(48.5% at 50% 50%);
+  offset-rotate: 0deg;
+  animation: help-halo-spark-orbit 19s linear infinite reverse;
+}
+
+@keyframes help-halo-float {
+  from {
+    transform: translateY(2px);
+  }
+  to {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes help-halo-glow-pulse {
+  from {
+    transform: scale(0.96);
+    opacity: 0.85;
+  }
+  to {
+    transform: scale(1.04);
+    opacity: 1;
+  }
+}
+
+@keyframes help-halo-glow-pulse-2 {
+  from {
+    transform: scale(1.03) translate(-1px, 1px);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(0.97) translate(1px, -1px);
+    opacity: 1;
+  }
+}
+
+@keyframes help-halo-ring-rotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes help-halo-ring-rotate-rev {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
+@keyframes help-halo-spark-orbit {
+  from {
+    offset-distance: 0%;
+  }
+  to {
+    offset-distance: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .help-halo-disc,
+  .help-halo-glow,
+  .help-halo-glow-2,
+  .help-halo-ring,
+  .help-halo-ring-2,
+  .help-halo-spark,
+  .help-halo-spark-2 {
+    animation: none;
+  }
+}
+
+.help-routes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.help-route {
+  --route-accent: var(--blue);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  min-height: 196px;
+  padding: 22px 24px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+  text-decoration: none;
+  background: linear-gradient(120deg, color-mix(in srgb, var(--surface-strong) 86%, transparent), color-mix(in srgb, var(--surface) 72%, transparent));
+  box-shadow: inset 0 1px 0 var(--glass-edge), var(--soft-shadow);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  transition:
+    transform 240ms cubic-bezier(0.2, 0.72, 0.2, 1),
+    border-color 240ms ease,
+    box-shadow 240ms ease;
+}
+
+.help-route:last-child {
+  --route-accent: var(--violet);
+}
+
+.help-route::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(85% 130% at 100% 0%, color-mix(in srgb, var(--route-accent) 9%, transparent), transparent 58%);
+  opacity: 0.65;
+  transition: opacity 240ms ease;
+}
+
+.help-route:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--route-accent) 70%, white);
+  outline-offset: 3px;
+}
+
+@media (hover: hover) {
+  .help-route:hover {
+    transform: translateY(-3px);
+    border-color: color-mix(in srgb, var(--route-accent) 32%, var(--line));
+    box-shadow:
+      inset 0 1px 0 var(--glass-edge),
+      0 16px 36px color-mix(in srgb, var(--blue) 12%, transparent);
+  }
+
+  .help-route:hover::before {
+    opacity: 1;
+  }
+
+  .help-route:hover .help-route-action {
+    color: var(--ink);
+  }
+
+  .help-route:hover .help-route-arrow {
+    color: white;
+    border-color: var(--route-accent);
+    background: var(--route-accent);
+    transform: translate(1px, -1px);
+  }
+}
+
+.help-route-top {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.help-route-icon {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border: 1px solid color-mix(in srgb, var(--route-accent) 22%, var(--line));
+  border-radius: 8px;
+  color: var(--route-accent);
+  background: color-mix(in srgb, var(--route-accent) 7%, transparent);
+}
+
+.help-route-title {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.012em;
+  line-height: 1.35;
+}
+
+.help-route-action {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 13px;
+  border-top: 1px solid var(--line);
+  color: color-mix(in srgb, var(--ink) 84%, var(--route-accent));
+  font-size: 12px;
+  font-weight: 650;
+  transition: color 240ms ease;
+}
+
+.help-route-arrow {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border: 1px solid color-mix(in srgb, var(--route-accent) 26%, var(--line));
+  border-radius: 50%;
+  color: var(--route-accent);
+  background: color-mix(in srgb, var(--route-accent) 7%, transparent);
+  transition:
+    color 220ms ease,
+    background 220ms ease,
+    border-color 220ms ease,
+    transform 220ms cubic-bezier(0.2, 0.72, 0.2, 1);
+}
+
+.help-route-text {
+  position: relative;
+  z-index: 1;
+  max-width: 40ch;
+  margin: 13px 0 0 44px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.75;
+  text-wrap: pretty;
+}
+
+.help-masthead,
+.help-route {
+  animation: help-rise 520ms cubic-bezier(0.2, 0.72, 0.2, 1) both;
+}
+
+.help-route:first-child {
+  animation-delay: 70ms;
+}
+
+.help-route:last-child {
+  animation-delay: 120ms;
+}
+
+@keyframes help-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 1180px) {
+  .help-masthead {
+    grid-template-columns: minmax(0, 1fr) 232px;
+    padding: 32px;
+  }
+
+  .help-halo {
+    width: 194px;
+    height: 194px;
+  }
+
+  .help-halo-disc {
+    width: 98px;
+    height: 98px;
+  }
+
+  .help-halo-disc img {
+    width: 54px;
+    height: 54px;
+  }
+}
+
+@media (max-width: 900px) {
+  .help-masthead {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .help-masthead-visual {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .help-page {
+    gap: 12px;
+  }
+
+  .help-masthead {
+    padding: 26px 22px;
+  }
+
+  .help-headline {
+    font-size: 31px;
+  }
+
+  .help-routes {
+    grid-template-columns: 1fr;
+  }
+
+  .help-route {
+    min-height: 164px;
+    padding: 18px;
+  }
+
+  .help-route-text {
+    margin-left: 0;
+    margin-top: 12px;
+  }
+}
