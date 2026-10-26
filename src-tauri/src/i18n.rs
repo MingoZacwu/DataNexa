@@ -42,7 +42,9 @@ pub fn backend_text(language: &str) -> BackendText {
 
 impl BackendText {
     /// Exposes the resolved locale to modules that build native UI with their
-    /// own copy (the macOS application menu, for example).
+    /// own copy (the macOS application menu, for example). Only macOS builds
+    /// render a native menu; gating the accessor keeps Windows free of dead code.
+    #[cfg(target_os = "macos")]
     pub fn locale(self) -> Locale {
         self.locale
     }
