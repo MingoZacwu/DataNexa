@@ -17,118 +17,62 @@
 发版时若尚未补上对应小节，官网会先用 GitHub Release 正文兜底，并在 CI 中给出提醒。
 -->
 
-## [0.8.2] - 2026-10-17
+## [0.8.3] - 2026-10-30
 
 ### 中文
 
 #### 版本亮点
 
-- 概览页顶部新增语言切换入口，避免用户找不到语言设置入口，方便用户快速切换语言。
-- JDBC 驱动的原生能力检测结果显示在驱动列表中，可以直接看到驱动是否支持只读限制与查询超时。
-- 新增快速复制连接名功能，可在连接列表 → 连接详情中点击连接名复制。
-- 本次更新还包含诸多问题修复与细节改进。
+- MCP 服务现在可在启动 DataNexa 时自动运行，并新增后台运行提示，方便了解关闭窗口后服务仍可继续运行。
+- 新增可选的 GitHub 下载加速，帮助网络连接不稳定的用户检查更新、下载应用安装包和 Java 运行时。
+- 新增“帮助与反馈”页面，可直接打开在线使用手册或前往 GitHub 提交问题与建议。
 
 #### 新增功能
 
-##### 语言切换入口
+##### MCP 自动启动与后台运行
 
-- 概览页顶部新增语言按钮，各语言以其自身名称显示，选择后立即生效。“设置 → 常规”中的语言选项保持不变。
-- 中文系统使用中文，其他语言默认使用英文。默认语言不再在首次启动时写入，只有主动选择后才会保存。
+- 新增“启动 DataNexa 时自动开启 MCP 服务”设置。启用后，每次启动应用都会自动启动 MCP 服务；开启“登录时启动 DataNexa”后，MCP 服务也会始终随应用自动启动。
+- 首次启动 MCP 服务后，概览页会提示 DataNexa 可以在关闭窗口后继续于后台运行，并提供开启开机自启动的快捷操作。提示只显示一次。
 
-##### 连接名快速复制
+##### GitHub 下载加速
 
-- 连接列表 → 连接详情中的连接名可以直接点击复制。
+- 设置中新增可选的 GH-Proxy 加速开关，用于应用更新检查、安装包下载和托管 Java 运行时下载。
+- 加速请求失败时会自动改用 GitHub 直连。下载的应用安装包和 Java 运行时仍会执行签名或 SHA-256 校验。
 
-##### JDBC 驱动能力标识
+##### 帮助与反馈
 
-- 驱动列表显示每个驱动的原生支持情况，包括只读限制与查询超时。
-- 对使用该驱动的连接执行一次“测试连接”，或通过 MCP 发起一次查询，检测结果会自动记录。
-- 驱动本身不支持时，DataNexa 仍会为查询应用只读保护与超时限制。
+- 侧边栏新增“帮助与反馈”页面，可打开在线使用手册或 GitHub 问题反馈入口。
+- macOS 菜单栏菜单现已本地化，并增加打开帮助文档的入口。
 
-#### 调整与改进
+#### 调整与问题修复
 
-- 英文与数字改用内置的 Geist 字体，中文继续使用系统字体；字号与字重也已统一，中文粗体显示更清晰。
-- 统一了弹层、提示与 Toast 的毛玻璃质感，以及资源列表图标与禁用状态的显示方式，并补充了启用/停用的过渡动画。
-- 改进了与 MCP 客户端的兼容性，减少客户端误读查询结果字段的情况。
-
-#### 问题修复
-
-##### MySQL 连接
-
-- 修复 MySQL 时间类型字段无法读取的问题，时间值统一按 UTC 返回。
-- 修复查询超时后连接长时间不可用的问题，超时的查询会及时释放连接，不再影响后续操作。
-- 修复查询结果为空时不返回字段信息、部分字符串内容显示为 base64 编码的问题。
-
-##### JDBC 查询
-
-- 无法解析的 JDBC 语句会被拒绝执行，避免绕过只读限制。
-- 修复取消查询后数据库会话未正确终止的问题。
-- 修复字符串内容被错误转换、单元格内容被截断却没有任何提示的问题。
-- 审计记录与调试日志中的数据库错误信息统一脱敏。
-
-##### 界面与资源监控
-
-- 修复一次请求进行中时，界面上大量无关功能都会变为不可用的问题，现在只有相关功能会受影响。
-- 修复设置页切换标签后滚动位置错乱的问题。
-- 修复资源监控中 JDBC 驱动 CPU 占用显示超过 100% 的问题，统计方式现在与系统任务管理器一致。
-
-##### MCP 工具
-
-- 修复查询表字段时表不存在会返回空字段列表的问题，现在会明确返回“表不存在”，不再与真正无字段的结果混淆。
+- 修复更新设置中的开关会响应到其他开关状态的问题；现在每个开关只控制自身选项。
 
 ### English
 
 #### Highlights
 
-- Added a language switcher to the top bar of the overview page, so the language setting is easier to find and switching languages is quicker.
-- The driver list shows what each JDBC driver supports natively, so you can see whether read-only mode and query timeouts are available.
-- Added quick copying of connection names: click the name in the connection list or the connection details to copy it.
-- This update also includes a number of bug fixes and smaller improvements.
+- MCP can now start automatically with DataNexa, with a new background-running tip explaining that the service can continue after the window is closed.
+- Added optional GitHub download acceleration for users with unreliable connections when checking for updates or downloading the app and Java runtime.
+- Added a Help & Feedback page with direct links to the online manual and GitHub issue reporting.
 
 #### Added
 
-##### Language Switcher
+##### Automatic MCP Startup and Background Running
 
-- A language button now sits in the top bar of the overview page. Each language is listed under its own name and switching takes effect immediately. The language option under Settings > General is unchanged.
-- Chinese systems use Chinese; every other language defaults to English. A default language is no longer written on first launch — only a choice you make yourself is saved.
+- Added a setting to start the MCP server whenever DataNexa launches. When “Launch DataNexa at login” is enabled, the MCP server starts automatically as well.
+- After the MCP server starts for the first time, the Overview page shows a one-time tip explaining that DataNexa can keep running in the background after the window closes, with a shortcut to enable launch at login.
 
-##### Quick Copy for Connection Names
+##### GitHub Download Acceleration
 
-- The connection name in the connection list or the connection details can be clicked to copy.
+- Added an optional GH-Proxy setting for app update checks, installer downloads, and managed Java runtime downloads.
+- If an accelerated request fails, DataNexa automatically retries directly with GitHub. App installers and Java runtimes remain subject to signature or SHA-256 verification.
 
-##### JDBC Driver Capabilities
+##### Help & Feedback
 
-- The driver list reports what each driver supports natively, including read-only mode and query timeouts.
-- Run Test Connection on a connection that uses the driver, or issue a query over MCP, and the result is recorded automatically.
-- When a driver does not support them, DataNexa still applies read-only protection and a timeout to every query.
+- Added a Help & Feedback page in the sidebar, with links to the online manual and GitHub issue reporting.
+- Localized the macOS menu bar and added an entry to open the help documentation.
 
-#### Changes and Improvements
+#### Changes and Fixes
 
-- English text and numbers now use the bundled Geist font, while Chinese keeps using the system font. Font sizes and weights have also been unified, so bold Chinese text renders more cleanly.
-- Popovers, tooltips, and toasts share one frosted-glass treatment, icons and disabled states in resource lists follow a consistent style, and enabling or disabling a resource is now animated.
-- Improved compatibility with MCP clients, so results are less likely to be misread.
-
-#### Fixed
-
-##### MySQL Connections
-
-- MySQL time columns could not be read; they now return their values, in UTC.
-- A query that timed out left its connection unusable for a long time. The connection is now released as soon as the query times out, so later operations are unaffected.
-- Empty results no longer lose their field information, and some string values no longer appear as base64 text.
-
-##### JDBC Queries
-
-- JDBC statements that cannot be parsed are now rejected, so they cannot bypass read-only protection.
-- Cancelling a query now terminates the database session correctly.
-- Fixed string values being converted incorrectly, and cells being truncated without any indication.
-- Database errors are redacted consistently in audit records and debug logs.
-
-##### Interface and Resource Monitoring
-
-- A single request in progress no longer makes a large part of the interface unavailable; only the features involved are affected.
-- Switching settings tabs no longer leaves the new tab at the previous tab's scroll position.
-- JDBC driver CPU usage no longer reports more than 100%; it is now measured the same way Task Manager measures it.
-
-##### MCP Tools
-
-- Describing the columns of a table that does not exist no longer returns an empty column list; it now reports that the table was not found, so the result cannot be confused with a table that has no columns.
+- Fixed update settings switches affecting the state of other switches. Each switch now controls only its own setting.
