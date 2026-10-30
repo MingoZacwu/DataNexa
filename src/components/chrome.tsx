@@ -149,11 +149,24 @@ export function SidebarFooter({
   onToggle: () => void;
 }) {
   const toggleLabel = running ? t.server.stop : t.server.start;
+  const statusLabel = startupFailed
+    ? t.sidebar.serverFailed
+    : running
+      ? t.sidebar.serverRunning
+      : t.sidebar.serverStopped;
+  // The port gets its own non-shrinking span: this footer is only 192px wide,
+  // and one flexed line used to ellipsize the port in English.
+  const showPort = running && !startupFailed;
+  const statusTitle = showPort ? `${statusLabel} · ${port}` : statusLabel;
   return (
     <div className="sidebar-footer">
-      <div className={clsx("sidebar-status-line", startupFailed ? "error" : running && "running")}>
+      <div
+        className={clsx("sidebar-status-line", startupFailed ? "error" : running && "running")}
+        title={statusTitle}
+      >
         <span className="status-orb" />
-        <span>{startupFailed ? t.sidebar.serverFailed : running ? formatMessage(t.sidebar.serverRunning, { port }) : t.sidebar.serverStopped}</span>
+        <span className="sidebar-status-label">{statusLabel}</span>
+        {showPort && <span className="sidebar-status-port">· {port}</span>}
       </div>
       <span className="footer-divider" aria-hidden="true" />
       <IconTooltip label={toggleLabel}>

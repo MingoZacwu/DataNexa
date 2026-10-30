@@ -3,6 +3,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import type {
   AccessTokenSecretResult,
   AppSnapshot,
+  AppUpdateInfo,
   ConnectionDiagnostics,
   ConnectionFileInspection,
   ConnectionInput,
@@ -22,7 +23,7 @@ import type {
 import { formatMessage, messages, type Locale } from "../i18n";
 import { systemTheme } from "../app/theme";
 
-const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const previewText = messages["zh-CN"].api;
 
 const mockTools: McpToolInfo[] = [
@@ -83,7 +84,9 @@ const mockSnapshot: AppSnapshot = {
       audit_retention_days: 7,
       audit_redact_sql_literals: false,
       auto_check_updates: true,
+      github_acceleration: false,
       auto_start_mcp: false,
+      auto_run_mcp: false,
       auto_lightweight_mode: false,
       mcp_activity_effects: true,
       language: "zh-CN",
@@ -387,6 +390,10 @@ export const api = {
   removeJdbcRuntime: () => command<void>("remove_jdbc_runtime", undefined, undefined),
   checkJdbcRuntimeUpdate: () => command<string | null>("check_jdbc_runtime_update", undefined, null),
   checkJdbcRuntimeUpdateIfDue: () => command<string | null>("check_jdbc_runtime_update_if_due", undefined, null),
+  checkAppUpdate: () => command<AppUpdateInfo | null>("check_app_update", undefined, null),
+  checkUpdatesIfDue: () => command<string | null>("check_updates_if_due", undefined, null),
+  installAppUpdate: (version: string) =>
+    command<void>("install_app_update", { version }, undefined),
   jdbcStorageStatus: () => command<JdbcStorageStatus>("get_jdbc_storage_status", undefined, getMockJdbcStorageStatus()),
   clearJdbcCache: (selection: JdbcCacheSelection) => command<boolean>("clear_jdbc_cache", { selection }, true),
   stopJdbcDriverRuntime: (bundleId: string) => command<void>("stop_jdbc_driver_runtime", { bundleId }, undefined),
@@ -429,8 +436,15 @@ export const api = {
   setTokenToolAllowed: (tokenId: string, toolName: string, allowed: boolean) => command<AppSnapshot>("set_token_tool_allowed", { tokenId, toolName, allowed }, mockSnapshot),
   saveServerConfig: (server: ServerConfig) =>
     command<AppSnapshot>("save_server_config", { server }, mockSnapshot),
-  saveSettingsConfig: (settings: SettingsConfig, applyAutoStart = false) =>
-    command<AppSnapshot>("save_settings_config", { settings, applyAutoStart }, withSettings(settings, applyAutoStart)),
+  saveSettingsConfig: (settings: SettingsConfig, applyAutoStart = false) => {
+    // Keep the mock snapshot in sync so the 15-second background refresh does
+    // not revert a saved choice while previewing.
+    if (applyAutoStart) {
+      mockSnapshot.auto_start_status = settings.auto_start_mcp ? "enabled" : "disabled";
+    }
+    mockSnapshot.config.settings = settings;
+    return command<AppSnapshot>("save_settings_config", { settings, applyAutoStart }, withSettings(settings, applyAutoStart));
+  },
   logFrontendEvent: (kind: string, message: string) => {
     // Silently dropped in browser preview mode; there is nothing to persist.
     if (!isTauri) return Promise.resolve();
@@ -510,12 +524,17 @@ export const api = {
       max_connections: 1,
       hint: previewText.previewDiagnostics
     }),
-  startServer: () => command<AppSnapshot>("start_mcp_server", undefined, {
-    ...mockSnapshot,
-    server_status: { ...mockSnapshot.server_status, running: true, started_at: new Date().toISOString() }
-  }),
+  startServer: () => {
+    mockSnapshot.server_status = {
+      ...mockSnapshot.server_status,
+      running: true,
+      started_at: new Date().toISOString()
+    };
+    return command<AppSnapshot>("start_mcp_server", undefined, mockSnapshot);
+  },
   stopServer: () => {
     mockEmergencyDisconnect = false;
+    mockSnapshot.server_status = { ...mockSnapshot.server_status, running: false, started_at: null };
     return command<AppSnapshot>("stop_mcp_server", undefined, mockSnapshot);
   },
   policyCheck: (kind: DatabaseType, sql: string, maxRows = 500) =>
@@ -540,6 +559,13 @@ export const api = {
     }
     return command<void>("open_project_homepage", undefined, undefined);
   },
+  openProjectIssues: () => {
+    if (!isTauri) {
+      window.open("https://github.com/MingoZacwu/DataNexa/issues/new/choose", "_blank", "noopener,noreferrer");
+      return Promise.resolve();
+    }
+    return command<void>("open_project_issues", undefined, undefined);
+  },
   openProjectReleases: () => {
     if (!isTauri) {
       window.open("https://github.com/MingoZacwu/DataNexa/releases", "_blank", "noopener,noreferrer");
@@ -547,12 +573,30 @@ export const api = {
     }
     return command<void>("open_project_releases", undefined, undefined);
   },
+  openGithubAccelerationProvider: () => {
+    if (!isTauri) {
+      window.open("https://gh-proxy.com", "_blank", "noopener,noreferrer");
+      return Promise.resolve();
+    }
+    return command<void>("open_github_acceleration_provider", undefined, undefined);
+  },
   openProjectSite: () => {
     if (!isTauri) {
       window.open("https://mingozacwu.github.io/datanexa-site/", "_blank", "noopener,noreferrer");
       return Promise.resolve();
     }
     return command<void>("open_project_site", undefined, undefined);
+  },
+  // The help page lives on the project site; `anchor` deep-links to a chapter
+  // (`#jdbc`, `#faq`, …) so contextual entries can point at the relevant part.
+  openProjectHelp: (anchor?: string | null) => {
+    const section = (anchor ?? "").trim().replace(/^#/, "");
+    if (!isTauri) {
+      const hash = section ? `#${section}` : "";
+      window.open(`https://mingozacwu.github.io/datanexa-site/help.html${hash}`, "_blank", "noopener,noreferrer");
+      return Promise.resolve();
+    }
+    return command<void>("open_project_help", { anchor: section || null }, undefined);
   },
   // Passing no version opens the changelog top; passing one deep-links to that
   // version's card (`#v<version>`), matching the anchors the site generates.

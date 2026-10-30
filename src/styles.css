@@ -286,12 +286,19 @@ p {
   font-weight: 700;
 }
 
-.sidebar-status-line span:last-child {
+.sidebar-status-label {
   display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The port keeps its own width: the footer is only 192px wide, so when the
+   line ran as a single string the port was the first thing to be ellipsized. */
+.sidebar-status-port {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
 }
 
 .status-orb {
@@ -4176,6 +4183,38 @@ pre {
   color: var(--ink);
   font-size: 14px;
   font-weight: 400;
+}
+
+.about-update-acceleration-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.about-update-provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.about-update-provider:hover,
+.about-update-provider:focus-visible {
+  color: var(--brand);
+}
+
+.about-update-hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 

@@ -1,10 +1,12 @@
 mod access_control;
+mod app_menu;
 mod audit;
 mod circuit_breaker;
 mod commands;
 mod config;
 mod db;
 mod debug_log;
+mod github_accel;
 mod i18n;
 mod jdbc;
 mod jdbc_runtime;
@@ -23,20 +25,21 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use commands::{
-    check_jdbc_runtime_update, check_jdbc_runtime_update_if_due, check_updates_if_due,
-    clear_audit_events, clear_jdbc_cache, clear_legacy_audit_log, create_access_token,
-    delete_access_token, delete_connection, delete_jdbc_driver, diagnose_connection,
-    disable_all_connections, export_connections, get_access_token_secret, get_app_snapshot,
-    get_jdbc_status, get_jdbc_storage_status, hide_main_window, import_connections,
-    import_jdbc_driver, inspect_connection_file, install_jdbc_driver, install_jdbc_runtime,
-    log_frontend_event, minimize_main_window, open_data_directory, open_debug_log_directory,
-    open_project_changelog, open_project_homepage, open_project_releases, open_project_site,
-    policy_check, remove_jdbc_runtime, rename_access_token, retry_audit_migration,
-    rotate_access_token, save_server_config, save_settings_config, set_access_token_enabled,
-    set_connection_enabled, set_mcp_tool_enabled, set_token_connection_allowed,
-    set_token_tool_allowed, set_window_material_theme, start_mcp_server, start_window_drag,
-    stop_jdbc_driver_runtime, stop_mcp_server, test_connection, test_connection_input,
-    upsert_connection,
+    check_app_update, check_jdbc_runtime_update, check_jdbc_runtime_update_if_due,
+    check_updates_if_due, clear_audit_events, clear_jdbc_cache, clear_legacy_audit_log,
+    create_access_token, delete_access_token, delete_connection, delete_jdbc_driver,
+    diagnose_connection, disable_all_connections, export_connections, get_access_token_secret,
+    get_app_snapshot, get_jdbc_status, get_jdbc_storage_status, hide_main_window,
+    import_connections, import_jdbc_driver, inspect_connection_file, install_app_update,
+    install_jdbc_driver, install_jdbc_runtime, log_frontend_event, minimize_main_window,
+    open_data_directory, open_debug_log_directory, open_github_acceleration_provider,
+    open_project_changelog, open_project_help, open_project_homepage, open_project_issues,
+    open_project_releases, open_project_site, policy_check, remove_jdbc_runtime,
+    rename_access_token, retry_audit_migration, rotate_access_token, save_server_config,
+    save_settings_config, set_access_token_enabled, set_connection_enabled, set_mcp_tool_enabled,
+    set_token_connection_allowed, set_token_tool_allowed, set_window_material_theme,
+    start_mcp_server, start_window_drag, stop_jdbc_driver_runtime, stop_mcp_server,
+    test_connection, test_connection_input, upsert_connection,
 };
 use i18n::{backend_text, BackendText};
 use state::AppState;
@@ -510,6 +513,16 @@ pub fn run() {
 
             let mut state = tauri::async_runtime::block_on(AppState::new(app.handle().clone()))?;
             let tray_text = backend_text(&state.config.get_mut().settings.language);
+            // Tauri's default macOS menu is English-only and has no help entry;
+            // replace it with one built from the app language at startup. It is
+            // rebuilt from `save_settings_config` when the language changes.
+            #[cfg(target_os = "macos")]
+            if let Err(error) = app_menu::install(app.handle(), tray_text) {
+                debug_log::error(
+                    "menu",
+                    format_args!("failed to install the application menu: {error}"),
+                );
+            }
             let state = Arc::new(state);
             // Honor the persisted debug logging preference from the very
             // beginning of the session.
@@ -556,16 +569,17 @@ pub fn run() {
             let state = app.state::<Arc<AppState>>().inner().clone();
             let autostart = std::env::args().any(|arg| arg == "--autostart");
             let login_launch = autostart || startup::launched_at_login();
-            let (configured, auto_lightweight_mode) = state
+            let (configured, auto_run_mcp, auto_lightweight_mode) = state
                 .config
                 .try_read()
                 .map(|config| {
                     (
                         config.settings.auto_start_mcp,
+                        config.settings.auto_run_mcp,
                         config.settings.auto_lightweight_mode,
                     )
                 })
-                .unwrap_or((false, false));
+                .unwrap_or((false, false, false));
             // Reconcile the Run registry value with the persistent preference so
             // that manual reinstalls (which force uninstall-then-install on
             // Windows NSIS) do not leave the auto-start entry missing after
@@ -605,7 +619,7 @@ pub fn run() {
                         format_args!("audit log initialization failed: {error}"),
                     );
                 }
-                if migration_result.is_ok() && configured && login_launch {
+                if migration_result.is_ok() && (configured || auto_run_mcp) {
                     let started = std::time::Instant::now();
                     if let Err(error) = mcp::start(state_for_task.clone()).await {
                         let reason = error.to_string();
@@ -644,6 +658,16 @@ pub fn run() {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => {
                 show_main_window(app);
+            }
+            app_menu::HELP_DOCS_MENU_ID => {
+                if let Err(error) =
+                    tauri_plugin_opener::open_url(commands::HELP_DOCS_URL, None::<&str>)
+                {
+                    debug_log::error(
+                        "menu",
+                        format_args!("failed to open the help documentation: {error}"),
+                    );
+                }
             }
             "toggle_lightweight" => {
                 let state = app.state::<Arc<MainWindowState>>();
@@ -770,9 +794,14 @@ pub fn run() {
             open_project_homepage,
             open_project_releases,
             open_project_site,
+            open_project_issues,
             open_project_changelog,
+            open_project_help,
+            open_github_acceleration_provider,
             policy_check,
-            check_updates_if_due
+            check_updates_if_due,
+            check_app_update,
+            install_app_update
         ])
         .build(tauri::generate_context!())
         .expect("failed to build DataNexa")

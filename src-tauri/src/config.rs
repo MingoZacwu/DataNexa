@@ -37,8 +37,18 @@ pub struct SettingsConfig {
     pub audit_redact_sql_literals: bool,
     #[serde(default = "default_true")]
     pub auto_check_updates: bool,
+    // Route update checks plus installer and Java runtime downloads through
+    // the fixed gh-proxy.com accelerator. Off by default so existing installs
+    // keep their direct connection behavior.
+    #[serde(default)]
+    pub github_acceleration: bool,
     #[serde(default)]
     pub auto_start_mcp: bool,
+    // Start the MCP server on every application launch, including manual
+    // launches. Launch-at-login implies this behavior regardless of the stored
+    // value, which the startup path and the UI derive with a logical OR.
+    #[serde(default)]
+    pub auto_run_mcp: bool,
     #[serde(default)]
     pub auto_lightweight_mode: bool,
     #[serde(default = "default_true")]
@@ -224,7 +234,9 @@ impl Default for SettingsConfig {
             audit_retention_days: default_audit_retention_days(),
             audit_redact_sql_literals: false,
             auto_check_updates: true,
+            github_acceleration: false,
             auto_start_mcp: false,
+            auto_run_mcp: false,
             auto_lightweight_mode: false,
             mcp_activity_effects: true,
             language: default_language(),

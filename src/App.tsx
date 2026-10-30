@@ -1,7 +1,7 @@
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import clsx from "clsx";
-import { AlertTriangle, Coffee, Database, Filter, Home, Logs, Plus, RefreshCw, Settings, ShieldCheck, Trash2, Wrench, X } from "lucide-react";
+import { AlertTriangle, Coffee, Database, Filter, Home, LifeBuoy, Logs, Plus, RefreshCw, Settings, ShieldCheck, Trash2, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import brandLogoUrl from "../resources/datanexa.png";
@@ -11,6 +11,7 @@ import { api, WRONG_PASSWORD_ERROR } from "./lib/tauri";
 import { useAppUpdater } from "./lib/updater";
 import type { AppSnapshot, AuditEvent, ConnectionConfig, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcInstallProgress, JdbcRuntimeInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "./types";
 import { detectThemeMode, persistThemeMode, resolveTheme, systemTheme } from "./app/theme";
+import { hasSeenBackgroundRunTip, markBackgroundRunTip } from "./app/tips";
 import type { AuditFilters, EffectiveTheme, SettingsTab, ThemeMode, ToastMessage, ToastTone, View } from "./app/types";
 import { buildAgentPrompt, compactConnectionError, formatConnectionTest, formatDiagnostics, toolDisplayName, updateScrollFade, useScrollFade, viewTitle } from "./app/utils";
 import { AuditMigrationDialog, AuditMigrationReminder, LanguageSwitcher, NavButton, SidebarFooter, SidebarUpdateReminder, WindowControls, WindowDragRegion } from "./components/chrome";
@@ -22,10 +23,17 @@ import { ToolsView } from "./features/tools/ToolsView";
 import { AuditDetailDialog, AuditView } from "./features/audit/AuditView";
 import { SettingsView } from "./features/settings/SettingsView";
 import { EncryptionPasswordDialog } from "./features/settings/EncryptionPasswordDialog";
+import { HelpView } from "./features/help/HelpView";
 
 type McpActivityTone = "success" | "error";
 type McpToolCallCompletedPayload = { failed: boolean };
 type JreUpdateAvailablePayload = { version: string };
+
+// Let a start/stop transition settle before the tip covers the hero, so the
+// status card does not change the moment the user clicks the toggle.
+const BACKGROUND_TIP_DELAY_MS = 900;
+const BACKGROUND_TIP_LEAVE_MS = 280;
+const BACKGROUND_TIP_SUCCESS_MS = 1800;
 
 // A scope names the controls that must be disabled while a request runs. Choose
 // the scope that owns the buttons being acted on, not the command being called:
@@ -93,11 +101,18 @@ function App() {
   const [migrationRecoveryBusy, setMigrationRecoveryBusy] = useState(false);
   const [mcpActivitySequence, setMcpActivitySequence] = useState(0);
   const [mcpActivityTone, setMcpActivityTone] = useState<McpActivityTone>("success");
+  const [backgroundTipVisible, setBackgroundTipVisible] = useState(false);
+  const [backgroundTipLeaving, setBackgroundTipLeaving] = useState(false);
+  const [backgroundTipSuccess, setBackgroundTipSuccess] = useState(false);
+  const [windowVisible, setWindowVisible] = useState(() => document.visibilityState === "visible");
   const [confirmClearLegacy, setConfirmClearLegacy] = useState(false);
   const effectiveTheme = resolveTheme(theme, systemThemeMode);
   const t = messages[locale];
   const hasAuditFilters = Object.values(auditFilters).some(Boolean);
   const activeViewRef = useRef(activeView);
+  const backgroundTipShownRef = useRef(false);
+  const serverRunning = snapshot?.server_status.running ?? false;
+  const autoStartStatus = snapshot?.auto_start_status;
   const mcpActivityEffectsEnabled = snapshot?.config.settings.mcp_activity_effects ?? true;
   const mcpActivityEffectsEnabledRef = useRef(mcpActivityEffectsEnabled);
   const mcpActivityPlayingRef = useRef(false);
@@ -123,6 +138,30 @@ function App() {
       setMcpActivitySequence(0);
     }
   }, [mcpActivityEffectsEnabled]);
+
+  useEffect(() => {
+    const handleVisibility = () => setWindowVisible(document.visibilityState === "visible");
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, []);
+
+  useEffect(() => {
+    // Tell users once, when keeping the MCP service available becomes relevant:
+    // the server is running on the Overview and launch-at-login is not set yet.
+    // The window check matters on login launches, where the webview keeps
+    // running while hidden in the tray.
+    if (activeView !== "overview" || !windowVisible) return;
+    if (!serverRunning) return;
+    if (autoStartStatus === "enabled" || autoStartStatus === "requires_approval") return;
+    if (backgroundTipShownRef.current || hasSeenBackgroundRunTip()) return;
+    const timer = window.setTimeout(() => {
+      backgroundTipShownRef.current = true;
+      markBackgroundRunTip("shown");
+      setBackgroundTipSuccess(false);
+      setBackgroundTipVisible(true);
+    }, BACKGROUND_TIP_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [serverRunning, autoStartStatus, activeView, windowVisible]);
 
   const updater = useAppUpdater(
     snapshot?.updater_enabled ?? null,
@@ -298,6 +337,23 @@ function App() {
     shownStartupError.current = error;
     pushToast(error, "error");
   }, [snapshot?.startup_error]);
+
+  // macOS convention: Cmd+? (Cmd+Shift+/) opens the documentation. The native
+  // menu only carries the physical ⇧⌘/ combination — Tauri accelerators are key
+  // codes and cannot express "?" — so the conventional "?" spelling is handled
+  // here as well while the window has focus.
+  useEffect(() => {
+    if (!isMacos) return;
+    function handleHelpShortcut(event: KeyboardEvent) {
+      if (event.repeat || event.altKey || event.ctrlKey) return;
+      if (!event.metaKey || !event.shiftKey) return;
+      if (event.key !== "?" && event.code !== "Slash") return;
+      event.preventDefault();
+      void api.openProjectHelp().catch(showError);
+    }
+    window.addEventListener("keydown", handleHelpShortcut);
+    return () => window.removeEventListener("keydown", handleHelpShortcut);
+  }, [isMacos]);
 
   useEffect(() => {
     if (snapshot?.audit_migration.status === "ready") {
@@ -901,6 +957,36 @@ function App() {
     }
   }
 
+  function hideBackgroundTip() {
+    setBackgroundTipLeaving(true);
+    window.setTimeout(() => {
+      setBackgroundTipVisible(false);
+      setBackgroundTipLeaving(false);
+      setBackgroundTipSuccess(false);
+    }, BACKGROUND_TIP_LEAVE_MS);
+  }
+
+  function dismissBackgroundTip() {
+    hideBackgroundTip();
+  }
+
+  async function enableAutoStartFromTip() {
+    if (!snapshot || backgroundTipSuccess) return;
+    setBackgroundTipSuccess(true);
+    try {
+      const nextSnapshot = await api.saveSettingsConfig({ ...snapshot.config.settings, auto_start_mcp: true }, true);
+      applySnapshot(nextSnapshot);
+      markBackgroundRunTip("enabled");
+      if (nextSnapshot.auto_start_status === "requires_approval") {
+        pushToast(messages[locale].toast.autoStartRequiresApproval, "error");
+      }
+      window.setTimeout(() => hideBackgroundTip(), BACKGROUND_TIP_SUCCESS_MS);
+    } catch (error) {
+      setBackgroundTipSuccess(false);
+      showError(error);
+    }
+  }
+
   async function exportConnections(password: string | null) {
     // Pick the destination before taking the scope: the native save dialog stays
     // open until the user decides, and holding the scope across it would leave
@@ -1062,6 +1148,8 @@ function App() {
               <NavButton icon={<ShieldCheck />} label={t.access.title} active={activeView === "access"} onClick={() => setActiveView("access")} />
               <NavButton icon={<Logs />} label={t.nav.audit} active={activeView === "audit"} onClick={() => setActiveView("audit")} />
               <NavButton icon={<Settings />} label={t.nav.settings} active={activeView === "settings"} onClick={() => setActiveView("settings")} />
+              <span className="nav-divider" aria-hidden="true" />
+              <NavButton icon={<LifeBuoy />} label={t.nav.help} active={activeView === "help"} onClick={() => setActiveView("help")} />
             </nav>
 
             <div className="sidebar-bottom">
@@ -1137,32 +1225,34 @@ function App() {
                     <LanguageSwitcher t={t} locale={locale} disabled={isBusy("settings")} onChange={(next) => void changeLocale(next)} />
                   </div>
                 )}
-                <div className={clsx("top-icon-actions", activeView === "connections" && emergencyDisconnect && "emergency-active")}>
-                  {snapshot && activeView === "connections" && (
-                    <IconTooltip label={emergencyDisconnect ? t.connections.emergencyRestore : t.connections.emergencyDisable}>
-                      <button
-                        type="button"
-                        className={clsx("icon-button danger", emergencyDisconnect && "emergency-toggle-active")}
-                        onClick={disableAllConnections}
-                        disabled={isBusy("connections") || !snapshot.server_status.running}
-                        aria-pressed={emergencyDisconnect}
-                        aria-label={emergencyDisconnect ? t.connections.emergencyRestore : t.connections.emergencyDisable}
-                      >
-                        <AlertTriangle size={17} />
-                      </button>
-                    </IconTooltip>
-                  )}
-                  {snapshot && activeView === "audit" && (
-                    <IconTooltip label={t.audit.clear}>
-                      <button type="button" className="icon-button danger" onClick={clearAuditEvents} disabled={isBusy("audit") || snapshot.audit_events.length === 0} aria-label={t.audit.clear}>
-                        <Trash2 size={17} />
-                      </button>
-                    </IconTooltip>
-                  )}
-                  <button type="button" className={clsx("icon-button", isBusy("refresh") && "is-spinning")} onClick={() => refresh()} disabled={isBusy("refresh")} aria-label={t.common.refresh}>
-                    <RefreshCw size={17} />
-                  </button>
-                </div>
+                {activeView !== "help" && (
+                  <div className={clsx("top-icon-actions", activeView === "connections" && emergencyDisconnect && "emergency-active")}>
+                    {snapshot && activeView === "connections" && (
+                      <IconTooltip label={emergencyDisconnect ? t.connections.emergencyRestore : t.connections.emergencyDisable}>
+                        <button
+                          type="button"
+                          className={clsx("icon-button danger", emergencyDisconnect && "emergency-toggle-active")}
+                          onClick={disableAllConnections}
+                          disabled={isBusy("connections") || !snapshot.server_status.running}
+                          aria-pressed={emergencyDisconnect}
+                          aria-label={emergencyDisconnect ? t.connections.emergencyRestore : t.connections.emergencyDisable}
+                        >
+                          <AlertTriangle size={17} />
+                        </button>
+                      </IconTooltip>
+                    )}
+                    {snapshot && activeView === "audit" && (
+                      <IconTooltip label={t.audit.clear}>
+                        <button type="button" className="icon-button danger" onClick={clearAuditEvents} disabled={isBusy("audit") || snapshot.audit_events.length === 0} aria-label={t.audit.clear}>
+                          <Trash2 size={17} />
+                        </button>
+                      </IconTooltip>
+                    )}
+                    <button type="button" className={clsx("icon-button", isBusy("refresh") && "is-spinning")} onClick={() => refresh()} disabled={isBusy("refresh")} aria-label={t.common.refresh}>
+                      <RefreshCw size={17} />
+                    </button>
+                  </div>
+                )}
                 {snapshot && activeView === "connections" && (
                   <button type="button" className="button primary" onClick={openNewConnection} disabled={isBusy("connections") || emergencyDisconnect}>
                     <Plus size={16} />
@@ -1175,7 +1265,15 @@ function App() {
               </div>
             </header>
 
-            {!snapshot ? (
+            {activeView === "help" ? (
+              <div className="view-stage view-help" key={activeView} ref={stageScrollFadeRef} onScroll={updateScrollFade}>
+                <HelpView
+                  t={t}
+                  onOpenHelp={() => void api.openProjectHelp().catch(showError)}
+                  onOpenIssues={() => void api.openProjectIssues().catch(showError)}
+                />
+              </div>
+            ) : !snapshot ? (
               <div className="loading-panel">{t.overview.loading}</div>
             ) : (
               <div className={clsx("view-stage", `view-${activeView}`)} key={activeView} ref={stageScrollFadeRef} onScroll={updateScrollFade}>
@@ -1196,6 +1294,11 @@ function App() {
                     startDisabled={!snapshot.server_status.running && !migrationReady}
                     mcpActivitySequence={mcpActivitySequence}
                     mcpActivityTone={mcpActivityTone}
+                    showBackgroundTip={backgroundTipVisible}
+                    backgroundTipLeaving={backgroundTipLeaving}
+                    backgroundTipSuccess={backgroundTipSuccess}
+                    onEnableAutoStart={enableAutoStartFromTip}
+                    onDismissBackgroundTip={dismissBackgroundTip}
                   />
                 )}
                 {activeView === "connections" && (
@@ -1241,6 +1344,7 @@ function App() {
                     onCheckUpdate={() => void checkAllUpdates()}
                     onUpdate={() => void updater.installUpdate()}
                     onOpenProjectReleases={() => void api.openProjectReleases().catch(showError)}
+                    onOpenGithubAccelerationProvider={() => void api.openGithubAccelerationProvider().catch(showError)}
                     onOpenAudit={() => setActiveView("audit")}
                     onTabChange={setSettingsTab}
                     onRefreshJdbcStatus={() => void refreshJdbcStatus()}

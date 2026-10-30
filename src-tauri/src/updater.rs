@@ -4,16 +4,20 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager};
-use tauri_plugin_updater::UpdaterExt;
+use tauri::{AppHandle, Emitter, Manager, Url};
+use tauri_plugin_updater::{Update, Updater, UpdaterExt};
 use tokio::sync::Mutex;
 
+use crate::commands::AppUpdateInfo;
+use crate::github_accel;
 use crate::state::AppState;
 
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+const UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(45);
 const DISABLED_CHECK_POLL_INTERVAL: Duration = Duration::from_secs(60);
 const STATE_FILE_NAME: &str = "updater-state.json";
 const UPDATE_AVAILABLE_EVENT: &str = "updater://available";
+const UPDATE_DOWNLOAD_PROGRESS_EVENT: &str = "updater://download-progress";
 const JRE_UPDATE_AVAILABLE_EVENT: &str = "jdbc://runtime-update-available";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -43,9 +47,218 @@ struct JreUpdateAvailablePayload {
     version: String,
 }
 
+#[derive(Clone, Serialize)]
+struct UpdateDownloadProgress {
+    downloaded: u64,
+    total: Option<u64>,
+}
+
+impl AppUpdateInfo {
+    fn from_update(update: &Update) -> Self {
+        Self {
+            version: update.version.clone(),
+            current_version: update.current_version.clone(),
+            date: update.date.map(|date| date.to_string()),
+            body: update.body.clone(),
+        }
+    }
+}
+
 fn check_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
+}
+
+/// Read the updater endpoint from the Tauri plugin configuration so the
+/// release config remains the single source of truth.
+fn update_endpoint(app: &AppHandle) -> anyhow::Result<Url> {
+    let raw = app
+        .config()
+        .plugins
+        .0
+        .get("updater")
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("updater plugin configuration is missing"))?;
+    let config = serde_json::from_value::<tauri_plugin_updater::Config>(raw)?;
+    config
+        .endpoints
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("updater endpoint is not configured"))
+}
+
+fn build_updater(app: &AppHandle, endpoint: Url) -> anyhow::Result<Updater> {
+    Ok(app
+        .updater_builder()
+        .endpoints(vec![endpoint])?
+        .timeout(UPDATE_CHECK_TIMEOUT)
+        .build()?)
+}
+
+fn route_label(accelerated: bool) -> &'static str {
+    if accelerated {
+        "accelerator"
+    } else {
+        "direct"
+    }
+}
+
+async fn check_via(app: &AppHandle, accelerated: bool) -> anyhow::Result<Option<Update>> {
+    let endpoint = update_endpoint(app)?;
+    let endpoint = github_accel::accelerate_url(&endpoint, accelerated)?;
+    crate::debug_log::info(
+        "updater",
+        format_args!(
+            "app update check request (route={}, url={endpoint})",
+            route_label(accelerated)
+        ),
+    );
+    let updater = build_updater(app, endpoint)?;
+    match updater.check().await {
+        Ok(update) => {
+            crate::debug_log::info(
+                "updater",
+                format_args!(
+                    "app update check response (route={}, available={})",
+                    route_label(accelerated),
+                    update
+                        .as_ref()
+                        .map(|update| update.version.as_str())
+                        .unwrap_or("-")
+                ),
+            );
+            Ok(update)
+        }
+        Err(error) => {
+            crate::debug_log::warn(
+                "updater",
+                format_args!(
+                    "app update check failed (route={}): {error}",
+                    route_label(accelerated)
+                ),
+            );
+            Err(error.into())
+        }
+    }
+}
+
+/// Try the accelerator first when the user enabled it, then fall back to the
+/// direct route. A proxy can return a non-JSON 200, so each route gets its own
+/// full check instead of relying on the plugin's endpoint list fallback.
+async fn check_with_fallback(app: &AppHandle) -> anyhow::Result<Option<Update>> {
+    if !github_accel::enabled(app) {
+        return check_via(app, false).await;
+    }
+    match check_via(app, true).await {
+        Ok(update) => Ok(update),
+        Err(error) => {
+            crate::debug_log::warn(
+                "updater",
+                format_args!("accelerated update check failed, retrying direct: {error}"),
+            );
+            check_via(app, false).await
+        }
+    }
+}
+
+async fn download_and_install(
+    app: &AppHandle,
+    update: &Update,
+    route: &'static str,
+) -> anyhow::Result<()> {
+    let mut downloaded = 0u64;
+    let mut total: Option<u64> = None;
+    let progress_app = app.clone();
+    update
+        .download_and_install(
+            move |chunk_length, content_length| {
+                downloaded = downloaded.saturating_add(chunk_length as u64);
+                if let Some(content_length) = content_length {
+                    total = Some(content_length);
+                }
+                let _ = progress_app.emit(
+                    UPDATE_DOWNLOAD_PROGRESS_EVENT,
+                    UpdateDownloadProgress { downloaded, total },
+                );
+            },
+            move || {
+                crate::debug_log::info(
+                    "updater",
+                    format_args!(
+                        "app update package downloaded, verifying signature (route={route})"
+                    ),
+                );
+            },
+        )
+        .await?;
+    crate::debug_log::info(
+        "updater",
+        format_args!("app update package installed (route={route})"),
+    );
+    Ok(())
+}
+
+/// Check for an application update now, bypassing the 24-hour cache.
+pub async fn check_now(app: AppHandle) -> anyhow::Result<Option<AppUpdateInfo>> {
+    let update = check_with_fallback(&app).await?;
+    Ok(update.as_ref().map(AppUpdateInfo::from_update))
+}
+
+/// Check again, then download and install the requested version. The download
+/// URL is rewritten in memory when acceleration is enabled; the updater still
+/// verifies the package signature after the transfer.
+pub async fn install_now(app: AppHandle, version: String) -> anyhow::Result<()> {
+    let update = check_with_fallback(&app)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("no update is available"))?;
+    if update.version != version {
+        return Err(anyhow::anyhow!(
+            "the available update version changed while preparing the download"
+        ));
+    }
+
+    let mut update = update;
+    if github_accel::enabled(&app) {
+        let direct_url = update.download_url.clone();
+        update.download_url = github_accel::accelerate_url(&direct_url, true)?;
+        crate::debug_log::info(
+            "updater",
+            format_args!(
+                "app update download started (route=accelerator, version={}, url={})",
+                update.version, update.download_url
+            ),
+        );
+        match download_and_install(&app, &update, "accelerator").await {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                crate::debug_log::warn(
+                    "updater",
+                    format_args!("accelerated update download failed, retrying direct: {error}"),
+                );
+                update.download_url = direct_url;
+            }
+        }
+    }
+
+    crate::debug_log::info(
+        "updater",
+        format_args!(
+            "app update download started (route=direct, version={}, url={})",
+            update.version, update.download_url
+        ),
+    );
+    download_and_install(&app, &update, "direct").await
+}
+
+/// Forget the cached check timestamps so switching the acceleration setting
+/// takes effect on the next check instead of after the 24-hour window.
+pub fn reset_check_schedule(app: &AppHandle) -> anyhow::Result<()> {
+    let path =
+        state_path(app).ok_or_else(|| anyhow::anyhow!("failed to resolve updater state path"))?;
+    let mut state = load_state(&path);
+    state.last_check_at = None;
+    state.jre_last_check_at = None;
+    save_state(&path, &state)
 }
 
 fn jre_check_is_due(state: &UpdaterState, installed_version: Option<&str>) -> bool {
@@ -214,8 +427,7 @@ pub fn spawn_updater_task(app: AppHandle) {
             let outcome = if app_due {
                 Some(
                     async {
-                        let updater = app.updater()?;
-                        let update = updater.check().await?;
+                        let update = check_with_fallback(&app).await?;
                         Ok::<_, anyhow::Error>(update.map(|update| update.version))
                     }
                     .await,
@@ -305,7 +517,7 @@ pub async fn check_if_due(app: AppHandle) -> anyhow::Result<Option<String>> {
     }
 
     let app_result = if is_due(&state) {
-        let result = app.updater()?.check().await;
+        let result = check_with_fallback(&app).await;
         state.last_check_at = Some(Utc::now());
         match result {
             Ok(update) => {

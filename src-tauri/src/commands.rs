@@ -36,6 +36,14 @@ use crate::vault::CredentialVault;
 use crate::{hide_main_window_to_tray, refresh_tray_menu};
 
 #[derive(Debug, Clone, Serialize)]
+pub struct AppUpdateInfo {
+    pub version: String,
+    pub current_version: String,
+    pub date: Option<String>,
+    pub body: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct AppSnapshot {
     pub version: u64,
     pub config: AppConfig,
@@ -449,6 +457,27 @@ pub async fn save_settings_config(
     })
     .await
     .map_err(to_client_error)?;
+    #[cfg(feature = "updater")]
+    {
+        let acceleration_enabled = state.config.read().await.settings.github_acceleration;
+        let acceleration_changed = previous_settings.github_acceleration != acceleration_enabled;
+        if acceleration_changed {
+            debug_log::info(
+                "settings",
+                format_args!(
+                    "GitHub acceleration setting changed (enabled={acceleration_enabled})"
+                ),
+            );
+            // Switching routes should take effect on the next check instead of
+            // waiting out the 24-hour window.
+            if let Err(error) = crate::updater::reset_check_schedule(&app) {
+                debug_log::warn(
+                    "settings",
+                    format_args!("failed to reset the update check schedule: {error}"),
+                );
+            }
+        }
+    }
     if debug_log::is_enabled() {
         // Record which setting keys changed, never the values, so the log
         // stays useful as a timeline without capturing sensitive state.
@@ -495,6 +524,24 @@ pub async fn save_settings_config(
         .trim(audit_retention_days)
         .await
         .map_err(to_client_error)?;
+
+    // The macOS menu bar is native UI: its labels are baked in when the menu is
+    // built, so switching the in-app language has to rebuild it as well.
+    #[cfg(target_os = "macos")]
+    {
+        let language_changed = {
+            let config = state.config.read().await;
+            config.settings.language != previous_settings.language
+        };
+        if language_changed {
+            if let Err(error) = crate::app_menu::install(&app, text) {
+                debug_log::error(
+                    "menu",
+                    format_args!("failed to reinstall the application menu: {error}"),
+                );
+            }
+        }
+    }
 
     let mcp_running = mcp::status(state.inner()).await.running;
     refresh_tray_menu(
@@ -1462,6 +1509,46 @@ pub async fn open_project_site() -> Result<(), String> {
         .map_err(to_client_error)
 }
 
+/// Open the repository issue chooser. The URL is kept here so the front end can
+/// only ask for the project's own issue tracker, never an arbitrary location.
+#[tauri::command]
+pub async fn open_project_issues() -> Result<(), String> {
+    tauri_plugin_opener::open_url(
+        "https://github.com/MingoZacwu/DataNexa/issues/new/choose",
+        None::<&str>,
+    )
+    .map_err(to_client_error)
+}
+
+/// Public documentation entry point. The base URL lives here (not in the front
+/// end) so neither a command nor a menu item can ask the opener to visit
+/// arbitrary locations; callers may only select an in-page chapter anchor.
+pub(crate) const HELP_DOCS_URL: &str = "https://mingozacwu.github.io/datanexa-site/help.html";
+
+/// Open the online help documentation, optionally deep-linked to a chapter
+/// anchor (`#jdbc`, `#faq`, …). The anchor is reduced to the characters the
+/// documentation pages emit, so it can never escape the fixed URL.
+#[tauri::command]
+pub fn open_project_help(anchor: Option<String>) -> Result<(), String> {
+    let section: String = anchor
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .trim_start_matches('#')
+        .chars()
+        .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-')
+        .take(64)
+        .collect();
+
+    let url = if section.is_empty() {
+        HELP_DOCS_URL.to_string()
+    } else {
+        format!("{HELP_DOCS_URL}#{section}")
+    };
+
+    tauri_plugin_opener::open_url(url, None::<&str>).map_err(to_client_error)
+}
+
 /// Open the changelog page on the project site. The base URL is fixed here so
 /// the front end cannot open arbitrary locations; the version only selects the
 /// in-page anchor (`#v<version>`) and is reduced to the characters a version
@@ -1507,6 +1594,36 @@ pub async fn check_updates_if_due(app: AppHandle) -> Result<Option<String>, Stri
     }
 }
 
+#[tauri::command]
+pub async fn check_app_update(app: AppHandle) -> Result<Option<AppUpdateInfo>, String> {
+    #[cfg(feature = "updater")]
+    {
+        crate::updater::check_now(app)
+            .await
+            .map_err(to_client_error)
+    }
+    #[cfg(not(feature = "updater"))]
+    {
+        let _ = app;
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+pub async fn install_app_update(app: AppHandle, version: String) -> Result<(), String> {
+    #[cfg(feature = "updater")]
+    {
+        crate::updater::install_now(app, version)
+            .await
+            .map_err(to_client_error)
+    }
+    #[cfg(not(feature = "updater"))]
+    {
+        let _ = (app, version);
+        Ok(())
+    }
+}
+
 /// Return the cached JRE update result, refreshing it only when its 24-hour
 /// check window has elapsed.
 #[tauri::command]
@@ -1531,6 +1648,13 @@ pub fn open_project_releases() -> Result<(), String> {
         None::<&str>,
     )
     .map_err(to_client_error)
+}
+
+/// Open the accelerator provider's site. The URL is fixed here so the front
+/// end cannot use this command to open arbitrary locations.
+#[tauri::command]
+pub async fn open_github_acceleration_provider() -> Result<(), String> {
+    tauri_plugin_opener::open_url("https://gh-proxy.com", None::<&str>).map_err(to_client_error)
 }
 
 /// Open the DataNexa application data directory in the system file manager.

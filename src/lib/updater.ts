@@ -1,6 +1,4 @@
-﻿import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./tauri";
@@ -22,11 +20,17 @@ type UpdateAvailablePayload = {
   current_version: string;
 };
 
+type UpdateDownloadProgress = {
+  downloaded: number;
+  total?: number | null;
+};
+
 const UPDATE_AVAILABLE_EVENT = "updater://available";
+const UPDATE_DOWNLOAD_PROGRESS_EVENT = "updater://download-progress";
 
 export function useAppUpdater(enabled: boolean | null, autoCheck: boolean) {
   const [state, setState] = useState<UpdateState>({ kind: "idle" });
-  const updateRef = useRef<Update | null>(null);
+  const updateVersionRef = useRef<string | null>(null);
   const busyRef = useRef(false);
 
   const checkForUpdates = useCallback(async () => {
@@ -39,12 +43,8 @@ export function useAppUpdater(enabled: boolean | null, autoCheck: boolean) {
     busyRef.current = true;
     setState({ kind: "checking" });
     try {
-      const update = await check();
-      const previousUpdate = updateRef.current;
-      updateRef.current = update;
-      if (previousUpdate && previousUpdate !== update) {
-        await previousUpdate.close().catch(() => undefined);
-      }
+      const update = await api.checkAppUpdate();
+      updateVersionRef.current = update?.version ?? null;
       setState(update ? { kind: "available", version: update.version } : { kind: "up-to-date" });
     } catch (error) {
       api.logFrontendEvent("error", `app update check failed: ${error}`);
@@ -55,44 +55,45 @@ export function useAppUpdater(enabled: boolean | null, autoCheck: boolean) {
   }, [enabled]);
 
   const installUpdate = useCallback(async () => {
-    const update = updateRef.current;
-    if (!enabled || !update || busyRef.current) return;
+    const version = updateVersionRef.current;
+    if (!enabled || !version || busyRef.current) return;
 
     busyRef.current = true;
     let downloaded = 0;
     let total: number | undefined;
-    setState({ kind: "downloading", version: update.version, downloaded });
-    api.logFrontendEvent("info", `app update download started (version=${update.version})`);
+    setState({ kind: "downloading", version, downloaded });
+    api.logFrontendEvent("info", `app update download started (version=${version})`);
+
+    // Register before invoking so the first chunks are not missed.
+    let unlisten: UnlistenFn | undefined;
+    try {
+      unlisten = await listen<UpdateDownloadProgress>(UPDATE_DOWNLOAD_PROGRESS_EVENT, (event) => {
+        downloaded = event.payload.downloaded;
+        total = event.payload.total ?? undefined;
+        setState({ kind: "downloading", version, downloaded, total });
+      });
+    } catch {
+      // Progress is best-effort; the command still reports success or failure.
+    }
 
     try {
-      await update.downloadAndInstall((event) => {
-        if (event.event === "Started") {
-          downloaded = 0;
-          total = event.data.contentLength;
-        } else if (event.event === "Progress") {
-          downloaded += event.data.chunkLength;
-        }
-        setState({
-          kind: "downloading",
-          version: update.version,
-          downloaded,
-          total
-        });
-      });
+      await api.installAppUpdate(version);
     } catch (error) {
-      api.logFrontendEvent("error", `app update download failed (version=${update.version}): ${error}`);
-      setState({ kind: "error", phase: "download", version: update.version });
+      unlisten?.();
+      api.logFrontendEvent("error", `app update download failed (version=${version}): ${error}`);
+      setState({ kind: "error", phase: "download", version });
       busyRef.current = false;
       return;
     }
+    unlisten?.();
 
-    setState({ kind: "relaunching", version: update.version });
-    api.logFrontendEvent("info", `app update downloaded, relaunching (version=${update.version})`);
+    setState({ kind: "relaunching", version });
+    api.logFrontendEvent("info", `app update downloaded, relaunching (version=${version})`);
     try {
       await relaunch();
     } catch (error) {
-      api.logFrontendEvent("error", `app update relaunch failed (version=${update.version}): ${error}`);
-      setState({ kind: "error", phase: "relaunch", version: update.version });
+      api.logFrontendEvent("error", `app update relaunch failed (version=${version}): ${error}`);
+      setState({ kind: "error", phase: "relaunch", version });
       busyRef.current = false;
     }
   }, [enabled]);
@@ -108,8 +109,8 @@ export function useAppUpdater(enabled: boolean | null, autoCheck: boolean) {
   }, [enabled]);
 
   // Background updater notification: the Rust task emits this event when it
-  // detects a newer version. Fetch the Update object so installUpdate can use
-  // it directly without an extra round-trip on user click.
+  // detects a newer version. Fetch the update details so installUpdate can use
+  // them directly without an extra round-trip on user click.
   useEffect(() => {
     if (enabled !== true) return;
     let unlisten: UnlistenFn | undefined;
@@ -143,7 +144,7 @@ export function useAppUpdater(enabled: boolean | null, autoCheck: boolean) {
     if (typeof document === "undefined") return;
 
     const performDueCheck = () => {
-      void invoke<string | null>("check_updates_if_due")
+      void api.checkUpdatesIfDue()
         .then((version) => {
           if (version) {
             void checkForUpdates();

@@ -13,10 +13,13 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::AsyncWriteExt;
 
+use crate::github_accel;
+
 const MANIFEST_URL: &str =
     "https://github.com/MingoZacwu/DataNexa-JRE/releases/download/jre-latest/jre-manifest.json";
 const MANIFEST_SIGNATURE_URL: &str = "https://github.com/MingoZacwu/DataNexa-JRE/releases/download/jre-latest/jre-manifest.json.minisig";
 const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
+const METADATA_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const MANIFEST_PUBLIC_KEY: &str = include_str!("../jre-manifest.pub");
 pub const JDBC_RUNTIME_PROGRESS_EVENT: &str = "jdbc://runtime-install-progress";
@@ -115,7 +118,7 @@ pub async fn check_update(app: &AppHandle) -> anyhow::Result<Option<RuntimeUpdat
     if current.is_none() {
         return Ok(None);
     }
-    let manifest = fetch_manifest().await?;
+    let manifest = fetch_manifest(app).await?;
     if current.as_deref() == Some(manifest.java_version.as_str()) {
         return Ok(None);
     }
@@ -130,7 +133,7 @@ pub async fn install(app: &AppHandle) -> anyhow::Result<InstalledRuntime> {
         "jre_runtime",
         format_args!("JRE runtime install started (target={})", target()),
     );
-    let manifest = match fetch_manifest().await {
+    let manifest = match fetch_manifest(app).await {
         Ok(manifest) => manifest,
         Err(error) => {
             crate::debug_log::error(
@@ -306,24 +309,54 @@ pub fn clear_cache(app: &AppHandle) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn fetch_manifest() -> anyhow::Result<JreManifest> {
+async fn fetch_manifest(app: &AppHandle) -> anyhow::Result<JreManifest> {
     if MANIFEST_PUBLIC_KEY.trim_start().starts_with('#') || MANIFEST_PUBLIC_KEY.lines().count() < 2
     {
         return Err(anyhow::anyhow!("DataNexa JRE public key is not configured"));
     }
     let client = reqwest::Client::builder()
-        .timeout(DOWNLOAD_TIMEOUT)
+        .timeout(METADATA_TIMEOUT)
         .user_agent("DataNexa-JRE-Manager")
         .build()?;
+
+    // Fetch the manifest and its signature from the same route so a stale or
+    // partially cached proxy response cannot mix the two.
+    if github_accel::enabled(app) {
+        match fetch_manifest_via(&client, true).await {
+            Ok(manifest) => return Ok(manifest),
+            Err(error) => crate::debug_log::warn(
+                "jre_runtime",
+                format_args!("accelerated JRE manifest fetch failed, retrying direct: {error}"),
+            ),
+        }
+    }
+    fetch_manifest_via(&client, false).await
+}
+
+async fn fetch_manifest_via(
+    client: &reqwest::Client,
+    accelerated: bool,
+) -> anyhow::Result<JreManifest> {
+    let route = if accelerated { "accelerator" } else { "direct" };
+    let manifest_url = github_accel::accelerate(MANIFEST_URL, accelerated)?;
+    let signature_url = github_accel::accelerate(MANIFEST_SIGNATURE_URL, accelerated)?;
+    crate::debug_log::info(
+        "jre_runtime",
+        format_args!("JRE manifest request (route={route}, url={manifest_url})"),
+    );
     let manifest_response = client
-        .get(MANIFEST_URL)
+        .get(manifest_url)
         .header(CACHE_CONTROL, "no-cache")
         .send()
         .await?
         .error_for_status()?;
     let manifest_bytes = manifest_response.bytes().await?.to_vec();
+    crate::debug_log::info(
+        "jre_runtime",
+        format_args!("JRE manifest signature request (route={route}, url={signature_url})"),
+    );
     let signature = client
-        .get(MANIFEST_SIGNATURE_URL)
+        .get(signature_url)
         .header(CACHE_CONTROL, "no-cache")
         .send()
         .await?
@@ -335,6 +368,13 @@ async fn fetch_manifest() -> anyhow::Result<JreManifest> {
     if manifest.schema_version != 1 || manifest.java_major != 21 {
         return Err(anyhow::anyhow!("Unsupported DataNexa JRE manifest"));
     }
+    crate::debug_log::info(
+        "jre_runtime",
+        format_args!(
+            "JRE manifest fetched (route={route}, version={})",
+            manifest.java_version
+        ),
+    );
     Ok(manifest)
 }
 
@@ -375,6 +415,53 @@ fn validate_artifact(artifact: &JreArtifact) -> anyhow::Result<()> {
 }
 
 async fn download_archive(
+    app: &AppHandle,
+    url: &str,
+    path: &Path,
+    expected_size: u64,
+) -> anyhow::Result<()> {
+    if github_accel::enabled(app) {
+        let proxied = github_accel::accelerate(url, true)?;
+        crate::debug_log::info(
+            "jre_runtime",
+            format_args!("JRE archive download request (route=accelerator, url={proxied})"),
+        );
+        match download_archive_from(app, &proxied, path, expected_size).await {
+            Ok(()) => {
+                crate::debug_log::info(
+                    "jre_runtime",
+                    format_args!(
+                        "JRE archive downloaded (route=accelerator, bytes={expected_size})"
+                    ),
+                );
+                return Ok(());
+            }
+            Err(error) => {
+                crate::debug_log::warn(
+                    "jre_runtime",
+                    format_args!(
+                        "accelerated JRE archive download failed, retrying direct: {error}"
+                    ),
+                );
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
+    crate::debug_log::info(
+        "jre_runtime",
+        format_args!("JRE archive download request (route=direct, url={url})"),
+    );
+    let result = download_archive_from(app, url, path, expected_size).await;
+    if result.is_ok() {
+        crate::debug_log::info(
+            "jre_runtime",
+            format_args!("JRE archive downloaded (route=direct, bytes={expected_size})"),
+        );
+    }
+    result
+}
+
+async fn download_archive_from(
     app: &AppHandle,
     url: &str,
     path: &Path,
