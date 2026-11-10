@@ -4342,3 +4342,503 @@ pre {
     padding-left: 52px;
   }
 }
+
+/* Boot recovery screen. Rendered instead of the app shell when config.toml
+   cannot be parsed, so it owns the full window. Left side carries the story,
+   right side carries the decisions. */
+.config-error-page {
+  position: relative;
+  isolation: isolate;
+  height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 56px 40px 40px;
+  background: var(--bg);
+  overflow: auto;
+}
+
+/* Let the native Mica/vibrancy surface show through, exactly like the sidebar
+   does in the main window. Without a material the grid background stays. */
+:root[data-system-material="enabled"],
+:root[data-system-material="enabled"] body,
+:root[data-system-material="enabled"] #root {
+  background: transparent;
+  background-image: none;
+}
+
+:root[data-system-material="enabled"] .config-error-page {
+  background: transparent;
+}
+
+:root[data-system-material="enabled"] .ambient-grid {
+  display: none;
+}
+
+.config-error-frame {
+  position: relative;
+  width: min(1000px, 100%);
+  /* Sized for the fully expanded state (details open + reset armed), so
+     expanding never resizes the card and never squeezes a block. A pathologically
+     long parser message may exceed it, which is preferable to clipping text. */
+  min-height: 580px;
+  display: grid;
+  grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--blue) 14%, var(--line));
+  border-radius: 14px;
+  background:
+    radial-gradient(115% 150% at 2% -12%, color-mix(in srgb, var(--blue) 11%, transparent), transparent 54%),
+    radial-gradient(80% 110% at 100% 0%, color-mix(in srgb, var(--cyan) 7%, transparent), transparent 58%),
+    linear-gradient(112deg, color-mix(in srgb, var(--surface-strong) 88%, transparent), color-mix(in srgb, var(--surface) 74%, transparent));
+  box-shadow: inset 0 1px 0 var(--glass-edge), var(--soft-shadow);
+  backdrop-filter: blur(26px) saturate(145%);
+  -webkit-backdrop-filter: blur(26px) saturate(145%);
+}
+
+:root.dark .config-error-frame {
+  background:
+    radial-gradient(115% 150% at 2% -12%, color-mix(in srgb, var(--red) 12%, transparent), transparent 54%),
+    radial-gradient(80% 110% at 100% 0%, color-mix(in srgb, var(--violet) 9%, transparent), transparent 58%),
+    linear-gradient(112deg, color-mix(in srgb, var(--surface-strong) 92%, transparent), color-mix(in srgb, var(--surface) 80%, transparent));
+}
+
+/* Over a native material the card keeps only its tint; the working side paints
+   its own opaque surface on top, so the split reads like the main window. */
+:root[data-system-material="enabled"] .config-error-frame {
+  background:
+    radial-gradient(115% 150% at 2% -12%, color-mix(in srgb, var(--blue) 9%, transparent), transparent 54%),
+    linear-gradient(112deg, color-mix(in srgb, var(--surface-strong) 62%, transparent), transparent 68%);
+}
+
+:root.dark[data-system-material="enabled"] .config-error-frame {
+  background:
+    radial-gradient(115% 150% at 2% -12%, color-mix(in srgb, var(--red) 10%, transparent), transparent 54%),
+    linear-gradient(112deg, color-mix(in srgb, var(--surface-strong) 52%, transparent), transparent 68%);
+}
+
+:root[data-system-material="enabled"] .config-error-visual {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--red) 5%, transparent), transparent 62%);
+}
+
+/* ---------- left: the damaged file ---------- */
+
+.config-error-visual {
+  position: relative;
+  display: grid;
+  place-items: center;
+  align-self: stretch;
+  padding: 44px 32px;
+  overflow: hidden;
+  border-right: 1px solid var(--line);
+  background:
+    radial-gradient(120% 100% at 50% 42%, color-mix(in srgb, var(--red) 6%, transparent), transparent 64%),
+    linear-gradient(180deg, color-mix(in srgb, var(--ink) 2%, transparent), transparent 58%);
+}
+
+/* A document, not an abstract shape: folded corner, code rows, and one line
+   that has physically torn apart. */
+.config-error-file {
+  position: relative;
+  width: min(238px, 100%);
+  aspect-ratio: 5 / 6.2;
+  padding: 26px 24px 24px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  border-radius: 6px 16px 6px 6px;
+  background: linear-gradient(164deg, color-mix(in srgb, var(--surface-strong) 94%, transparent), color-mix(in srgb, var(--surface) 76%, transparent));
+  box-shadow:
+    inset 0 1px 0 var(--glass-edge),
+    0 30px 60px color-mix(in srgb, var(--blue) 10%, transparent),
+    0 2px 6px color-mix(in srgb, var(--ink) 5%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  transform: rotate(-1.4deg);
+  animation: config-error-file-breathe 7.5s ease-in-out infinite alternate;
+}
+
+/* Dog-ear on the top-right corner. */
+.config-error-file-fold {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 30px;
+  height: 30px;
+  border-bottom-left-radius: 8px;
+  background: linear-gradient(225deg, color-mix(in srgb, var(--ink) 9%, transparent), color-mix(in srgb, var(--surface) 90%, transparent) 62%);
+  box-shadow: -2px 2px 5px color-mix(in srgb, var(--ink) 6%, transparent);
+}
+
+/* Slow sweep that reads like a parser walking the file, then failing. */
+.config-error-file-scan {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 46px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--red) 11%, transparent) 58%, transparent);
+  animation: config-error-scan 6.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+}
+
+.config-error-file-rows {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.config-error-row {
+  position: relative;
+  height: 5px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+}
+
+.config-error-row.is-title {
+  width: 46%;
+  height: 7px;
+  background: color-mix(in srgb, var(--ink) 22%, transparent);
+}
+
+.config-error-row.is-long { width: 100%; }
+.config-error-row.is-medium { width: 72%; }
+.config-error-row.is-short { width: 38%; }
+.config-error-row.is-indent { width: 82%; margin-left: 14px; }
+
+/* The break: two halves levered apart, plus a shard that fell out of the line.
+   The red halo pulses so the eye lands here first. */
+.config-error-row.is-broken {
+  height: 6px;
+  margin: 4px 0 6px;
+  background: none;
+}
+
+.config-error-row.is-broken::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  right: -6px;
+  top: -12px;
+  height: 30px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--red) 16%, transparent), transparent 72%);
+  animation: config-error-break-pulse 3.4s ease-in-out infinite;
+}
+
+.config-error-break-left,
+.config-error-break-right {
+  position: absolute;
+  top: 0;
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--red) 58%, transparent);
+}
+
+.config-error-break-left {
+  left: 0;
+  width: 40%;
+  transform: translateY(-3px) rotate(-3.4deg);
+  transform-origin: left center;
+}
+
+.config-error-break-right {
+  right: 0;
+  width: 46%;
+  transform: translateY(3px) rotate(2.6deg);
+  transform-origin: right center;
+}
+
+.config-error-fragment {
+  position: absolute;
+  left: 44%;
+  top: -7px;
+  width: 9px;
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--red) 34%, transparent);
+  transform: rotate(24deg);
+  animation: config-error-fragment-drift 4.8s ease-in-out infinite alternate;
+}
+
+@keyframes config-error-file-breathe {
+  from { transform: rotate(-1.4deg) translateY(2px); }
+  to { transform: rotate(-1.4deg) translateY(-5px); }
+}
+
+@keyframes config-error-scan {
+  0% { transform: translateY(-48px); opacity: 0; }
+  12% { opacity: 1; }
+  72% { opacity: 1; }
+  100% { transform: translateY(240px); opacity: 0; }
+}
+
+@keyframes config-error-break-pulse {
+  from { opacity: 0.55; }
+  to { opacity: 1; }
+}
+
+@keyframes config-error-fragment-drift {
+  from { transform: rotate(24deg) translate(0, 0); }
+  to { transform: rotate(16deg) translate(2px, -3px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .config-error-file,
+  .config-error-file-scan,
+  .config-error-row.is-broken::before,
+  .config-error-fragment {
+    animation: none;
+  }
+
+  .config-error-file-scan {
+    opacity: 0;
+  }
+}
+
+/* ---------- right: content ---------- */
+
+.config-error-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 40px 44px 30px;
+  gap: 16px;
+}
+
+/* Mirrors the main window's split: the decorative side lets the native
+   material show through, while the working side paints its own solid surface
+   so text keeps full contrast no matter what is behind the window. */
+:root[data-system-material="enabled"] .config-error-body {
+  background: rgba(247, 249, 252, 0.94);
+}
+
+:root.dark[data-system-material="enabled"] .config-error-body {
+  background: rgba(8, 11, 16, 0.94);
+}
+
+/* Scrolls only as a last resort: the card is already tall enough for the fully
+   expanded state, so normal use never shows a scrollbar here. */
+.config-error-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  padding-right: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.config-error-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.config-error-heading h1 {
+  margin: 0;
+  font-size: clamp(22px, 2.1vw, 27px);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.24;
+}
+
+.config-error-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.75;
+  text-wrap: pretty;
+}
+
+.config-error-path {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
+}
+
+.config-error-path > span {
+  color: var(--muted);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.config-error-path code {
+  font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.config-error-details-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.config-error-details-toggle:hover {
+  color: var(--ink);
+}
+
+.config-error-details-toggle svg {
+  transition: transform 140ms ease;
+}
+
+.config-error-details-toggle svg.is-open {
+  transform: rotate(180deg);
+}
+
+/* No own scrollbar: the content column is the single scroll container, so
+   opening details never produces nested scroll areas. */
+.config-error-details {
+  margin: 0;
+  padding: 11px 13px;
+  border: 1px solid color-mix(in srgb, var(--red) 20%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--red) 5%, transparent);
+  color: var(--ink);
+  font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.config-error-confirm {
+  margin: 0;
+  padding: 11px 13px;
+  border: 1px solid color-mix(in srgb, var(--red) 24%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--red) 7%, transparent);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.config-error-failure {
+  margin: 0;
+  color: var(--red);
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.config-error-notice {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.config-error-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* ---------- actions ---------- */
+
+/* One decision at a time: the destructive reset owns a full-width bar, the two
+   supporting actions sit beneath it as a pair. Nothing competes for weight. */
+.config-error-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.config-error-actions .button {
+  min-height: 38px;
+  font-size: 12.5px;
+}
+
+.config-error-actions > .button:first-child {
+  width: 100%;
+}
+
+.config-error-actions-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.config-error-actions-pair .button {
+  width: 100%;
+}
+
+/* External destinations sit on the far right, away from the in-app actions. */
+.config-error-links {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 20px;
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.config-error-links .link-button {
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.config-error-links .link-button:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+/* Stack the two panes once the window is too narrow for a side-by-side card. */
+@media (max-width: 860px) {
+  .config-error-page {
+    padding: 48px 20px 28px;
+  }
+
+  .config-error-frame {
+    height: min(760px, calc(100vh - 76px));
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 196px minmax(0, 1fr);
+  }
+
+  .config-error-visual {
+    padding: 26px 24px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .config-error-file {
+    width: 118px;
+    padding: 16px 15px;
+    gap: 0;
+  }
+
+  .config-error-file-rows {
+    gap: 8px;
+  }
+
+  .config-error-row {
+    height: 4px;
+  }
+
+  .config-error-file-scan {
+    display: none;
+  }
+
+  .config-error-body {
+    padding: 24px 24px 22px;
+  }
+}
+

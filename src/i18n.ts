@@ -602,6 +602,27 @@ const zhCN = {
     previewTestConnection: "浏览器预览模式仅模拟连接测试。",
     previewDiagnostics: "浏览器预览模式仅显示模拟诊断。",
     previewPolicyReason: "浏览器预览模式策略检查。"
+  },
+  bootError: {
+    title: "配置文件无法读取",
+    description: "DataNexa 无法解析 config.toml，因此没有加载任何连接、令牌或设置。",
+    descriptionSecondary: "你可以修复配置文件后重新启动。如果无法修复，也可以直接备份并重置。",
+    pathLabel: "配置文件位置",
+    detailsToggle: "查看错误详情",
+    detailsHide: "收起错误详情",
+    resetTitle: "备份并重置",
+    resetDescription: "原文件会被复制一份保留，然后用默认配置替换。所有连接、访问令牌和设置都会清空。",
+    resetConfirm: "确认重置",
+    resetCancel: "取消",
+    resetDone: "已重置，正在重新启动…",
+    resetDoneWithBackup: "已重置，原文件备份为 {path}。正在重新启动…",
+    resetFailed: "重置失败：{message}",
+    openFolder: "打开所在文件夹",
+    openFolderFailed: "无法打开配置目录：{message}",
+    quit: "退出应用",
+    help: "帮助文档",
+    issues: "反馈问题",
+    restartHint: "如果应用没有自动重新启动，请手动关闭后重新打开。"
   }
 };
 
@@ -1204,6 +1225,27 @@ const en: I18nMessages = {
     previewTestConnection: "Browser preview mode only simulates connection tests.",
     previewDiagnostics: "Browser preview mode only shows mock diagnostics.",
     previewPolicyReason: "Browser preview mode policy check."
+  },
+  bootError: {
+    title: "The configuration file cannot be read",
+    description: "DataNexa could not parse config.toml, so no connections, tokens, or settings were loaded.",
+    descriptionSecondary: "You can fix the file and start again, or back it up and reset if you cannot repair it.",
+    pathLabel: "Configuration file",
+    detailsToggle: "Show error details",
+    detailsHide: "Hide error details",
+    resetTitle: "Back up and reset",
+    resetDescription: "The original file is copied aside, then replaced with defaults. Every connection, access token, and setting is cleared.",
+    resetConfirm: "Reset configuration",
+    resetCancel: "Cancel",
+    resetDone: "Reset complete, restarting…",
+    resetDoneWithBackup: "Reset complete. The original was saved as {path}. Restarting…",
+    resetFailed: "Reset failed: {message}",
+    openFolder: "Open containing folder",
+    openFolderFailed: "Unable to open the configuration folder: {message}",
+    quit: "Quit application",
+    help: "Documentation",
+    issues: "Report an issue",
+    restartHint: "If the app does not restart on its own, close and reopen it manually."
   }
 };
 

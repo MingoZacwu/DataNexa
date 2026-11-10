@@ -120,6 +120,22 @@ export interface AppSnapshot {
   access_tokens: AccessTokenInfo[];
 }
 
+/** Why the persisted configuration could not be read. Mirrors the Rust
+ * `ConfigLoadFailure`; the workspace is replaced by a recovery screen while
+ * this is present. */
+export interface ConfigLoadFailure {
+  message: string;
+  path: string;
+}
+
+export interface BootStatus {
+  config_error?: ConfigLoadFailure | null;
+}
+
+export interface ResetOutcome {
+  backup_path?: string | null;
+}
+
 export type AuditMigrationPhase = "reading_legacy_file" | "preparing_database" | "importing_events" | "committing" | "finalizing";
 export type AuditMigrationState =
   | { status: "ready" }

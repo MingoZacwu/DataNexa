@@ -4,6 +4,7 @@ import type {
   AccessTokenSecretResult,
   AppSnapshot,
   AppUpdateInfo,
+  BootStatus,
   ConnectionDiagnostics,
   ConnectionFileInspection,
   ConnectionInput,
@@ -17,6 +18,7 @@ import type {
   JdbcStorageStatus,
   McpToolInfo,
   PolicyCheckResult,
+  ResetOutcome,
   ServerConfig,
   SettingsConfig
 } from "../types";
@@ -288,6 +290,22 @@ function getMockJdbcStorageStatus(): JdbcStorageStatus {
 
 let previewSnapshotVersion = 0;
 
+/** Browser preview only: `?boot-error=1` renders the recovery screen without a
+ * corrupt file on disk, so the layout can be inspected during development. */
+const previewBootError = (() => {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("boot-error") === "1";
+})();
+
+const mockBootStatus: BootStatus = previewBootError
+  ? {
+      config_error: {
+        message: "TOML parse error at line 4, column 1: expected `=`, found `is`",
+        path: "Preview/config.toml"
+      }
+    }
+  : { config_error: null };
+
 async function command<T>(name: string, args?: Record<string, unknown>, fallback?: T): Promise<T> {
   if (!isTauri) {
     if (fallback === undefined) {
@@ -384,6 +402,11 @@ function connectionTransferFileName(encrypted: boolean) {
 }
 
 export const api = {
+  bootStatus: () => command<BootStatus>("get_boot_status", undefined, mockBootStatus),
+  resetCorruptConfig: () =>
+    command<ResetOutcome>("reset_corrupt_config", undefined, { backup_path: "Preview/config.toml.corrupt-preview.toml" }),
+  openConfigDirectory: () => command<void>("open_config_directory", undefined, undefined),
+  exitApp: () => command<void>("exit_app", undefined, undefined),
   snapshot: () => command<AppSnapshot>("get_app_snapshot", undefined, mockSnapshot),
   jdbcStatus: () => command<JdbcStatus>("get_jdbc_status", undefined, mockJdbcStatus),
   installJdbcRuntime: () => command<JdbcStatus["runtime"]>("install_jdbc_runtime", undefined, mockJdbcStatus.runtime),

@@ -14,7 +14,7 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::audit::AuditStatus;
 use crate::config::{
     clamp_with_log, default_max_result_bytes, default_port, is_known_tool, AppConfig,
-    ConnectionConfig, DbKind, ServerConfig, SettingsConfig,
+    ConfigLoadFailure, ConnectionConfig, DbKind, ServerConfig, SettingsConfig,
 };
 use crate::db::ConnectionDiagnostics;
 use crate::debug_log;
@@ -56,6 +56,19 @@ pub struct AppSnapshot {
     pub auto_start_status: startup::AutoStartStatus,
     pub audit_migration: crate::audit::AuditMigrationState,
     pub access_tokens: Vec<crate::access_control::AccessTokenInfo>,
+}
+
+/// Boot-time health report. Deliberately separate from [`AppSnapshot`]: it must
+/// stay readable even when the configuration is unusable, so the front end can
+/// gate the workspace behind a recovery screen.
+#[derive(Debug, Clone, Serialize)]
+pub struct BootStatus {
+    pub config_error: Option<ConfigLoadFailure>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ResetOutcome {
+    pub backup_path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -134,6 +147,68 @@ const MAX_CONNECTION_IMPORT_COUNT: usize = 1000;
 #[tauri::command]
 pub async fn get_app_snapshot(state: State<'_, Arc<AppState>>) -> Result<AppSnapshot, String> {
     snapshot(state.inner()).await.map_err(to_client_error)
+}
+
+/// Report whether the persisted configuration could be loaded. Called by the
+/// front end before it mounts the workspace so a corrupt file produces a
+/// recovery screen instead of a half-initialized interface.
+#[tauri::command]
+pub async fn get_boot_status(state: State<'_, Arc<AppState>>) -> Result<BootStatus, String> {
+    Ok(BootStatus {
+        config_error: state.config_error(),
+    })
+}
+
+/// Back the unreadable configuration up and replace it with defaults. Guarded
+/// by the recorded boot failure so a healthy installation can never lose its
+/// settings through this path.
+#[tauri::command]
+pub async fn reset_corrupt_config(state: State<'_, Arc<AppState>>) -> Result<ResetOutcome, String> {
+    if state.config_error().is_none() {
+        return Err("configuration is not in a failed state".to_string());
+    }
+
+    let _transaction = state.config_transaction.write().await;
+    let backup = state.store.backup_corrupt().map_err(to_client_error)?;
+    let config = state.store.reset_to_default().map_err(to_client_error)?;
+    *state.config.write().await = config;
+
+    let backup_path = backup.map(|path| path.display().to_string());
+    debug_log::info(
+        "startup",
+        format_args!(
+            "corrupt configuration reset (backup={})",
+            backup_path.as_deref().unwrap_or("<none>")
+        ),
+    );
+    // The file on disk is valid again, so a second invocation (for example
+    // after a relaunch that failed) must not overwrite a healthy config.
+    state.clear_config_error();
+    Ok(ResetOutcome { backup_path })
+}
+
+/// Open the folder holding config.toml, selecting the file when it exists. The
+/// path is resolved on the Rust side so the front end cannot open arbitrary
+/// locations. Uses the config directory rather than the data directory, which
+/// differ on Linux.
+#[tauri::command]
+pub async fn open_config_directory(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    let path = state.store.path().to_path_buf();
+    if path.exists() {
+        return tauri_plugin_opener::reveal_item_in_dir(&path).map_err(to_client_error);
+    }
+    let directory = path
+        .parent()
+        .map(|value| value.to_path_buf())
+        .ok_or_else(|| "configuration path has no parent directory".to_string())?;
+    fs::create_dir_all(&directory).map_err(to_client_error)?;
+    tauri_plugin_opener::open_path(&directory, None::<&str>).map_err(to_client_error)
+}
+
+/// Quit the application from the boot recovery screen.
+#[tauri::command]
+pub fn exit_app(app: AppHandle) {
+    app.exit(0);
 }
 
 #[tauri::command]

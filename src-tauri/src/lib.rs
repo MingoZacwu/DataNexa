@@ -28,14 +28,15 @@ use commands::{
     check_app_update, check_jdbc_runtime_update, check_jdbc_runtime_update_if_due,
     check_updates_if_due, clear_audit_events, clear_jdbc_cache, clear_legacy_audit_log,
     create_access_token, delete_access_token, delete_connection, delete_jdbc_driver,
-    diagnose_connection, disable_all_connections, export_connections, get_access_token_secret,
-    get_app_snapshot, get_jdbc_status, get_jdbc_storage_status, hide_main_window,
-    import_connections, import_jdbc_driver, inspect_connection_file, install_app_update,
-    install_jdbc_driver, install_jdbc_runtime, log_frontend_event, minimize_main_window,
-    open_data_directory, open_debug_log_directory, open_github_acceleration_provider,
-    open_project_changelog, open_project_help, open_project_homepage, open_project_issues,
-    open_project_releases, open_project_site, policy_check, remove_jdbc_runtime,
-    rename_access_token, retry_audit_migration, rotate_access_token, save_server_config,
+    diagnose_connection, disable_all_connections, exit_app, export_connections,
+    get_access_token_secret, get_app_snapshot, get_boot_status, get_jdbc_status,
+    get_jdbc_storage_status, hide_main_window, import_connections, import_jdbc_driver,
+    inspect_connection_file, install_app_update, install_jdbc_driver, install_jdbc_runtime,
+    log_frontend_event, minimize_main_window, open_config_directory, open_data_directory,
+    open_debug_log_directory, open_github_acceleration_provider, open_project_changelog,
+    open_project_help, open_project_homepage, open_project_issues, open_project_releases,
+    open_project_site, policy_check, remove_jdbc_runtime, rename_access_token,
+    reset_corrupt_config, retry_audit_migration, rotate_access_token, save_server_config,
     save_settings_config, set_access_token_enabled, set_connection_enabled, set_mcp_tool_enabled,
     set_token_connection_allowed, set_token_tool_allowed, set_window_material_theme,
     start_mcp_server, start_window_drag, stop_jdbc_driver_runtime, stop_mcp_server,
@@ -331,8 +332,27 @@ fn reveal_main_window(window: &WebviewWindow) {
 
 fn show_main_window(app: &AppHandle) {
     let _ = startup::set_app_in_dock(true);
-    let app_state = app.state::<Arc<AppState>>().inner().clone();
-    let window_state = app.state::<Arc<MainWindowState>>().inner().clone();
+    // The single-instance callback can fire before `setup` has managed the
+    // application state, so never unwrap here: showing the existing window is
+    // still the right behaviour, the state is only needed to rebuild it.
+    let Some(app_state) = app
+        .try_state::<Arc<AppState>>()
+        .map(|state| state.inner().clone())
+    else {
+        if let Some(window) = app.get_webview_window("main") {
+            reveal_main_window(&window);
+        }
+        return;
+    };
+    let Some(window_state) = app
+        .try_state::<Arc<MainWindowState>>()
+        .map(|state| state.inner().clone())
+    else {
+        if let Some(window) = app.get_webview_window("main") {
+            reveal_main_window(&window);
+        }
+        return;
+    };
     window_state.generation.fetch_add(1, Ordering::AcqRel);
 
     let app = app.clone();
@@ -567,6 +587,7 @@ pub fn run() {
                 .build(app)?;
 
             let state = app.state::<Arc<AppState>>().inner().clone();
+            let config_failed = state.config_error().is_some();
             let autostart = std::env::args().any(|arg| arg == "--autostart");
             let login_launch = autostart || startup::launched_at_login();
             let (configured, auto_run_mcp, auto_lightweight_mode) = state
@@ -585,8 +606,12 @@ pub fn run() {
             // Windows NSIS) do not leave the auto-start entry missing after
             // upgrade. Windows-only: macOS login items are owned by
             // launchd/SMAppService and are not affected by NSIS.
+            //
+            // Skipped while the configuration is unusable: the defaults would
+            // read as "auto-start is off" and delete a preference the user
+            // never touched.
             #[cfg(target_os = "windows")]
-            {
+            if !config_failed {
                 if configured {
                     if let Err(error) = startup::enable() {
                         debug_log::error(
@@ -606,31 +631,36 @@ pub fn run() {
             let app_handle = app.handle().clone();
             let state_for_task = state.clone();
             tauri::async_runtime::spawn(async move {
-                let retention_days = state_for_task
-                    .config
-                    .read()
-                    .await
-                    .settings
-                    .audit_retention_days;
-                let migration_result = state_for_task.audit.initialize(retention_days).await;
-                if let Err(error) = &migration_result {
-                    debug_log::error(
-                        "audit",
-                        format_args!("audit log initialization failed: {error}"),
-                    );
-                }
-                if migration_result.is_ok() && (configured || auto_run_mcp) {
-                    let started = std::time::Instant::now();
-                    if let Err(error) = mcp::start(state_for_task.clone()).await {
-                        let reason = error.to_string();
-                        state_for_task.mcp.write().await.startup_error = Some(reason.clone());
-                        commands::record_startup_event(
-                            &state_for_task,
-                            "system.auto_start_mcp",
-                            reason,
-                            started.elapsed(),
-                        )
-                        .await;
+                // With a broken configuration every setting below is a default,
+                // so audit retention trimming and MCP auto-start would act on
+                // guesses. The recovery screen owns the next step instead.
+                if !config_failed {
+                    let retention_days = state_for_task
+                        .config
+                        .read()
+                        .await
+                        .settings
+                        .audit_retention_days;
+                    let migration_result = state_for_task.audit.initialize(retention_days).await;
+                    if let Err(error) = &migration_result {
+                        debug_log::error(
+                            "audit",
+                            format_args!("audit log initialization failed: {error}"),
+                        );
+                    }
+                    if migration_result.is_ok() && (configured || auto_run_mcp) {
+                        let started = std::time::Instant::now();
+                        if let Err(error) = mcp::start(state_for_task.clone()).await {
+                            let reason = error.to_string();
+                            state_for_task.mcp.write().await.startup_error = Some(reason.clone());
+                            commands::record_startup_event(
+                                &state_for_task,
+                                "system.auto_start_mcp",
+                                reason,
+                                started.elapsed(),
+                            )
+                            .await;
+                        }
                     }
                 }
                 let running = mcp::status(&state_for_task).await.running;
@@ -640,7 +670,10 @@ pub fn run() {
                 let _ =
                     refresh_tray_menu(&app_handle, backend_text(&language), running, error, ready);
             });
-            if login_launch {
+            // A login launch normally hides into the tray. While the config is
+            // broken that would leave the user with no visible explanation, so
+            // the recovery screen always wins.
+            if login_launch && !config_failed {
                 if auto_lightweight_mode {
                     request_lightweight_mode(app.handle(), true);
                 } else if let Some(window) = app.get_webview_window("main") {
@@ -650,8 +683,12 @@ pub fn run() {
                 show_main_window(app.handle());
             }
 
+            // Update checks read `auto_check_updates` from the config, so they
+            // must not run against defaults either.
             #[cfg(feature = "updater")]
-            updater::spawn_updater_task(app.handle().clone());
+            if !config_failed {
+                updater::spawn_updater_task(app.handle().clone());
+            }
 
             Ok(())
         })
@@ -747,6 +784,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_app_snapshot,
+            get_boot_status,
+            reset_corrupt_config,
+            open_config_directory,
+            exit_app,
             get_jdbc_status,
             install_jdbc_runtime,
             remove_jdbc_runtime,

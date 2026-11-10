@@ -1,11 +1,12 @@
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::RwLock as StdRwLock;
 
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use crate::access_control::AccessControlStore;
 use crate::audit::AuditLogger;
-use crate::config::{AppConfig, ConfigStore};
+use crate::config::{AppConfig, ConfigLoadFailure, ConfigStore};
 use crate::db::DatabaseManager;
 use crate::jdbc::JdbcManager;
 use crate::mcp::McpRuntime;
@@ -15,6 +16,11 @@ pub struct AppState {
     pub app_handle: Option<tauri::AppHandle>,
     pub store: ConfigStore,
     pub config: RwLock<AppConfig>,
+    /// Set when the persisted configuration could not be parsed. The app keeps
+    /// running on defaults so the front end can show a recovery screen; every
+    /// startup side effect is skipped until the file is repaired. Cleared once
+    /// a reset succeeds, so a failed relaunch cannot reset twice.
+    pub config_error: StdRwLock<Option<ConfigLoadFailure>>,
     pub config_transaction: RwLock<()>,
     pub snapshot_sequence: Mutex<u64>,
     pub vault: CredentialVault,
@@ -35,15 +41,28 @@ impl AppState {
         // Startup failures are exactly when the debug log is needed, so a
         // broken config force-enables logging even though the user preference
         // cannot be read at this point.
+        let mut config_error = None;
         let mut config = match store.load() {
             Ok(config) => config,
             Err(error) => {
                 crate::debug_log::set_enabled(true);
+                let message = crate::commands::sanitize_error(&error);
                 crate::debug_log::error(
                     "startup",
-                    format_args!("failed to load configuration: {error}"),
+                    format_args!(
+                        "failed to load configuration at {}: {message}",
+                        store.path().display()
+                    ),
                 );
-                return Err(error);
+                // Keep the app alive on defaults. The front end renders a
+                // recovery screen instead of the workspace, and the startup
+                // path skips every side effect that would otherwise treat the
+                // defaults as the user's real preferences.
+                config_error = Some(ConfigLoadFailure {
+                    message,
+                    path: store.path().display().to_string(),
+                });
+                AppConfig::default()
             }
         };
         let audit = AuditLogger::new(&app)?;
@@ -54,6 +73,7 @@ impl AppState {
             app_handle: Some(app.clone()),
             store,
             config: RwLock::new(config),
+            config_error: StdRwLock::new(config_error),
             config_transaction: RwLock::new(()),
             snapshot_sequence: Mutex::new(0),
             vault: CredentialVault::new(),
@@ -91,6 +111,22 @@ impl AppState {
 
     pub fn is_emergency_disabled(&self) -> bool {
         self.emergency_disabled.load(Ordering::Acquire)
+    }
+
+    /// Snapshot of the recorded configuration failure, if any.
+    pub fn config_error(&self) -> Option<ConfigLoadFailure> {
+        self.config_error
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    /// Clears the recorded failure after a successful reset.
+    pub fn clear_config_error(&self) {
+        *self
+            .config_error
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     }
 
     pub async fn enter_emergency_mode(&self) {

@@ -1,10 +1,19 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
+
+/// Describes why the persisted configuration could not be loaded. The
+/// application still starts with defaults so the front end can render a
+/// recovery screen instead of exiting without any window.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConfigLoadFailure {
+    pub message: String,
+    pub path: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -157,6 +166,57 @@ impl ConfigStore {
         let mut candidate = config.clone();
         candidate.normalize_and_validate()?;
         atomic_write(&self.path, toml::to_string_pretty(&candidate)?.as_bytes())
+    }
+
+    /// Absolute path of the persisted configuration file.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Copies the unreadable configuration next to itself before a reset so the
+    /// user can still recover hand-written content. Returns `None` when there
+    /// is no file to preserve (for example an unreadable directory entry).
+    pub fn backup_corrupt(&self) -> anyhow::Result<Option<PathBuf>> {
+        if !self.path.exists() {
+            return Ok(None);
+        }
+        let parent = self
+            .path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("configuration path has no parent directory"))?;
+        let stem = self
+            .path
+            .file_stem()
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_else(|| "config".to_string());
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+
+        // A second reset within the same second must not overwrite the first
+        // backup, so fall back to a numeric suffix.
+        for attempt in 0..100 {
+            let name = if attempt == 0 {
+                format!("{stem}.corrupt-{stamp}.toml")
+            } else {
+                format!("{stem}.corrupt-{stamp}-{attempt}.toml")
+            };
+            let candidate = parent.join(name);
+            if candidate.exists() {
+                continue;
+            }
+            fs::copy(&self.path, &candidate)?;
+            return Ok(Some(candidate));
+        }
+        Err(anyhow::anyhow!(
+            "unable to allocate a unique backup file name"
+        ))
+    }
+
+    /// Replaces the persisted configuration with defaults. Only called after a
+    /// failed load, and only after the caller has backed the original up.
+    pub fn reset_to_default(&self) -> anyhow::Result<AppConfig> {
+        let config = AppConfig::default();
+        self.save(&config)?;
+        Ok(config)
     }
 
     #[cfg(test)]
