@@ -45,11 +45,22 @@ async fn evaluate_inner(app: Arc<AppState>, token_id: String) -> anyhow::Result<
     if count < threshold as u64 {
         return Ok(());
     }
+    // Revoke pending writes before waiting for the commit barrier.
+    app.writes
+        .invalidate_token(&token_id)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.message))?;
+    let transaction = app.config_transaction.write().await;
+    app.writes
+        .invalidate_token(&token_id)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.message))?;
     // Only the request that performs the enabled -> disabled transition
     // records the breaker audit event; concurrent requests are skipped.
     if !app.access.disable_if_enabled(&token_id).await? {
         return Ok(());
     }
+    drop(transaction);
     let started = Instant::now();
     let reason = backend_text(&language).circuit_breaker_reason(window_minutes, threshold, count);
     crate::debug_log::warn(

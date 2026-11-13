@@ -1,0 +1,969 @@
+/*
+ * Write Center. Layout, spacing and typography come from the shared workbench
+ * and form primitives; only the write-specific rows are declared here.
+ *
+ * The operation panel is the primary surface, so the connection list stays
+ * narrow and the inspector keeps the remaining width.
+ */
+/*
+ * Both selectors are doubled on purpose: the global stylesheet is injected
+ * after this file, so a single-class rule would lose the cascade to
+ * `.connections-workbench` and `.page-scroll-list`.
+ */
+.connections-workbench.write-workbench {
+  grid-template-columns: minmax(288px, 0.46fr) minmax(500px, 1.54fr);
+  min-height: 0;
+}
+
+.write-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-height: 0;
+}
+
+.write-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex: 0 0 auto;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.write-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.write-identity-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.write-identity-copy strong {
+  font-size: 14px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.write-identity-copy code {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.write-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+/* Pending-approval count on the review button. */
+.write-pending-count {
+  min-width: 18px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--blue) 14%, transparent);
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Body: one scroll container, sections separated by rules instead of nested
+   cards, so the panel keeps a single visual plane. The padding sits on the
+   inner element so the scrollbar stays at the panel edge and the content is
+   inset the same amount on both sides. */
+.write-scroll.page-scroll-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-right: 0;
+}
+
+.write-body {
+  display: flex;
+  flex-direction: column;
+  padding: 0 18px 18px;
+}
+
+.write-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 0;
+}
+
+.write-section + .write-section {
+  border-top: 1px solid var(--line);
+}
+
+.write-section h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -.2px;
+}
+
+.write-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* A switch row is a full-width control here, not a grid cell. */
+.write-section .switch-row {
+  align-self: stretch;
+}
+
+.write-section .field-note {
+  margin: 0;
+  font-size: 12px;
+}
+
+/* Connection list: the same row treatment as the connections page — a
+   full-bleed row with a hairline separator and a glowing bar on the left when
+   selected — so the two lists read as one pattern. */
+.connection-list .write-connection {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 65px;
+  padding: 7px 10px 7px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background 160ms ease;
+}
+
+.connection-list .write-connection::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  width: 2px;
+  height: 30px;
+  border-radius: 0 2px 2px 0;
+  background: var(--blue);
+  opacity: 0;
+  transform: scaleY(.4);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.connection-list .write-connection:hover,
+.connection-list .write-connection.selected {
+  background: color-mix(in srgb, var(--blue) 6%, transparent);
+}
+
+.connection-list .write-connection.selected::before {
+  opacity: 1;
+  transform: scaleY(1);
+  box-shadow: 0 0 12px var(--blue);
+}
+
+.connection-list .write-connection.disabled .db-badge {
+  filter: grayscale(1);
+  opacity: .55;
+}
+
+/* The write badge sits on the icon's corner, so the badge can no longer clip
+   its own image; the image carries the corner radius instead. */
+.connection-list .write-connection .db-badge {
+  position: relative;
+  overflow: visible;
+}
+
+.connection-list .write-connection .db-badge img {
+  border-radius: 7px;
+}
+
+/* A filled pill rather than a dot on the corner: at the icon's size a 15px
+   circle read as an unidentifiable speck, so the mark carries the pen glyph at a
+   legible size and is big enough to recognise without hovering. */
+.write-badge-mark {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--surface-strong);
+  border-radius: 50%;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--blue) 78%, #fff), var(--blue));
+  color: #fff;
+  box-shadow:
+    0 2px 6px rgba(37, 99, 235, .34),
+    inset 0 1px 0 rgba(255, 255, 255, .38);
+}
+
+.write-badge-mark svg {
+  width: 11px;
+  height: 11px;
+  stroke-width: 2.4;
+}
+
+/* A disabled connection keeps its badge visible but muted: the permission is
+   still configured, only the connection is paused. */
+.connection-list .write-connection.disabled .write-badge-mark {
+  background: var(--muted);
+  box-shadow: none;
+}
+
+.write-connection-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.write-connection-copy strong {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.write-connection-copy small {
+  color: var(--muted);
+  font-size: 11px;
+  font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Name and its state badge share the first line, so the second line always
+   carries the database and a row never ends in a lone badge. */
+.write-connection-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.write-connection-title strong {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.write-connection-title .status-pill {
+  flex: 0 0 auto;
+  min-height: 18px;
+  padding: 0 6px;
+  font-size: 10px;
+}
+
+/* A JDBC connection has no configuration body. Center the explanation in the
+   remaining space instead of parking one line under the header, so the panel
+   reads as a deliberate empty state rather than a failed load. */
+.write-unsupported {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 24px 40px 48px;
+  text-align: center;
+}
+
+.write-unsupported strong {
+  max-width: 26ch;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+/* Two stacked record cards with a soft tint behind them and a small solid badge
+   in the corner, the same construction the approval window uses. The badge is an
+   amber warning triangle: this connection is not eligible for writes, so the mark
+   is a caution rather than an action glyph. */
+.write-art {
+  position: relative;
+  display: block;
+  width: 92px;
+  height: 84px;
+}
+
+.write-art-card {
+  position: absolute;
+  width: 62px;
+  height: 72px;
+  border: 1px solid var(--line-strong, var(--line));
+  border-radius: 8px;
+  box-shadow: var(--soft-shadow);
+}
+
+.write-art-back {
+  left: 24px;
+  top: 0;
+  background: color-mix(in srgb, var(--amber) 10%, var(--surface-strong));
+  transform: rotate(9deg);
+}
+
+.write-art-front {
+  left: 6px;
+  top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px 10px;
+  background: var(--surface-strong);
+  transform: rotate(-6deg);
+}
+
+.write-art-heading {
+  width: 22px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--muted);
+}
+
+.write-art-line {
+  width: 38px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line-strong, var(--line));
+}
+
+.write-art-line.short {
+  width: 26px;
+}
+
+.write-art-badge {
+  position: absolute;
+  right: 0;
+  bottom: 2px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid #ffce73;
+  border-radius: 8px;
+  color: #3d2a05;
+  background: linear-gradient(145deg, #ffd166, #f0a92a 72%);
+  box-shadow: var(--soft-shadow);
+}
+
+:root.dark .write-art-badge {
+  border-color: #7a5a18;
+  color: #2a1c04;
+  background: linear-gradient(145deg, #ffcf5c, #e09a1f 72%);
+}
+
+.write-art-badge svg {
+  stroke-width: 2.2;
+}
+
+/* Selected writable tables. */
+.write-table-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.write-table-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 4px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+}
+
+.write-table-row code {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The row already draws its own border, so the remove button inside it stays
+   bare instead of adding a second outline. */
+.write-table-row .icon-button {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* "Show all" control: a subordinate link under the list, so it carries no
+   border of its own. */
+.write-table-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.write-table-toggle svg {
+  transition: transform 160ms ease;
+}
+
+.write-table-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+/* Token grants: one row per token — the name on the left, the permission
+   control on the right. The control rests as three glass dots and becomes three
+   buttons on hover, so the list stays glanceable without hiding the controls
+   behind a disclosure step. */
+.write-token-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.write-token {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.write-token:hover {
+  border-color: color-mix(in srgb, var(--blue) 22%, var(--line));
+  background: color-mix(in srgb, var(--blue) 5%, var(--surface-strong));
+}
+
+.write-token-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  color: var(--ink);
+}
+
+.write-token-name svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.write-token-name strong {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Hint that sits opposite the section title. */
+.write-section-hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* The group owns the hover target, including the spaces between its three
+   controls. Its fixed height leaves room for the morph without moving the row. */
+.write-grants {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-height: 40px;
+  margin-left: auto;
+  transition: gap 300ms cubic-bezier(.32, 1.2, .48, 1);
+}
+
+.write-grants:hover,
+.write-grants:has(.write-grant:focus-visible) {
+  gap: 5px;
+}
+
+/* The bead has a translucent body, a lit upper edge and a deeper lower rim.
+   There is deliberately no radial highlight or opaque colour stop. */
+.write-grant {
+  --glass-rgb: 128, 128, 128;
+  --glass-deep-rgb: 88, 88, 88;
+  --glass-edge: rgba(192, 192, 192, .95);
+  --glass-highlight: rgba(255, 255, 255, .52);
+  --glass-reflection: rgba(255, 255, 255, .58);
+  --glass-ink: #626262;
+  --glass-body-top: .68;
+  --glass-body-middle: .42;
+  --glass-body-bottom: .52;
+  /* Neutral stand-in so the expanded chip's colour math always resolves; each
+     operation overrides it while the grant is on. */
+  --grant-solid-rgb: 112, 118, 128;
+  --grant-fill-strength: 0%;
+  --grant-edge-strength: 0%;
+  --grant-fill-hover: 0%;
+  --grant-edge-hover: 0%;
+  --grant-chip-ink: var(--muted);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid var(--glass-edge);
+  border-radius: 50%;
+  background:
+    linear-gradient(180deg, var(--glass-highlight) 0%, rgba(255, 255, 255, .10) 42%, rgba(255, 255, 255, 0) 62%),
+    linear-gradient(180deg, rgba(var(--glass-rgb), var(--glass-body-top)) 0%, rgba(var(--glass-rgb), var(--glass-body-middle)) 48%, rgba(var(--glass-deep-rgb), var(--glass-body-bottom)) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .70),
+    inset 0 -1px 2px rgba(var(--glass-deep-rgb), .32),
+    0 1px 2px rgba(28, 38, 52, .12);
+  color: var(--glass-ink);
+  overflow: hidden;
+  cursor: pointer;
+  transition:
+    width 300ms cubic-bezier(.32, 1.2, .48, 1),
+    height 300ms cubic-bezier(.32, 1.2, .48, 1),
+    padding 300ms cubic-bezier(.32, 1.2, .48, 1),
+    border-radius 300ms cubic-bezier(.32, 1.2, .48, 1),
+    background-color 220ms ease,
+    border-color 220ms ease,
+    box-shadow 180ms ease;
+}
+
+/* A lit grant must read as colour first: the body is more opaque and the two
+   white layers are pulled back so they light the lip without greying the hue. */
+.write-grant.on {
+  --glass-highlight: rgba(255, 255, 255, .30);
+  --glass-reflection: rgba(255, 255, 255, .34);
+  --glass-body-top: .96;
+  --glass-body-middle: .84;
+  --glass-body-bottom: .90;
+  /* Fill and edge strength of the expanded chip, mixed over --surface-strong. */
+  --grant-fill-strength: 11%;
+  --grant-edge-strength: 32%;
+  --grant-fill-hover: 19%;
+  --grant-edge-hover: 50%;
+  --grant-chip-ink: rgb(var(--grant-solid-rgb));
+}
+
+.write-grant.on.insert {
+  --glass-rgb: 47, 207, 110;
+  --glass-deep-rgb: 20, 156, 78;
+  --glass-edge: rgba(122, 226, 165, .95);
+  --glass-ink: #189a52;
+  --grant-solid-rgb: 22, 124, 70;
+}
+
+.write-grant.on.update {
+  --glass-rgb: 61, 139, 255;
+  --glass-deep-rgb: 22, 94, 214;
+  --glass-edge: rgba(128, 176, 252, .95);
+  --glass-ink: #1f6fdb;
+  --grant-solid-rgb: 32, 90, 188;
+}
+
+.write-grant.on.delete {
+  --glass-rgb: 255, 90, 95;
+  --glass-deep-rgb: 214, 40, 48;
+  --glass-edge: rgba(252, 152, 154, .95);
+  --glass-ink: #de3a40;
+  --grant-solid-rgb: 192, 52, 58;
+}
+
+/* A shallow curved reflection along the upper lip, not a spot in the middle.
+   It belongs to the bead only; the expanded button uses a plain surface. */
+.write-grant::before {
+  content: "";
+  position: absolute;
+  top: 1px;
+  right: 2px;
+  left: 2px;
+  height: 38%;
+  border-radius: 50%;
+  background: linear-gradient(180deg, var(--glass-reflection), rgba(255, 255, 255, 0));
+  pointer-events: none;
+  transition:
+    top 300ms cubic-bezier(.32, 1.2, .48, 1),
+    right 300ms cubic-bezier(.32, 1.2, .48, 1),
+    left 300ms cubic-bezier(.32, 1.2, .48, 1),
+    height 300ms cubic-bezier(.32, 1.2, .48, 1),
+    border-radius 300ms cubic-bezier(.32, 1.2, .48, 1);
+}
+
+:root.dark .write-grant {
+  --glass-edge: rgba(174, 181, 191, .62);
+  --glass-highlight: rgba(255, 255, 255, .12);
+  --glass-reflection: rgba(255, 255, 255, .18);
+  --glass-ink: #d0d0d0;
+  --glass-body-top: .58;
+  --glass-body-middle: .34;
+  --glass-body-bottom: .48;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .18),
+    inset 0 -1px 2px rgba(0, 0, 0, .30),
+    0 1px 2px rgba(0, 0, 0, .28);
+}
+
+:root.dark .write-grant.on {
+  --glass-body-top: .94;
+  --glass-body-middle: .82;
+  --glass-body-bottom: .88;
+  /* On a dark surface the low-strength tint needs a lighter base colour to show
+     at all, and the label has to clear the background. */
+  --grant-fill-strength: 20%;
+  --grant-edge-strength: 45%;
+  --grant-fill-hover: 28%;
+  --grant-edge-hover: 62%;
+  --grant-chip-ink: var(--glass-ink);
+}
+
+:root.dark .write-grant.on.insert {
+  --glass-edge: rgba(118, 224, 162, .78);
+  --glass-ink: #a8efc4;
+  --grant-solid-rgb: 118, 216, 158;
+}
+
+:root.dark .write-grant.on.update {
+  --glass-edge: rgba(126, 174, 250, .78);
+  --glass-ink: #9dc4ff;
+  --grant-solid-rgb: 130, 174, 246;
+}
+
+:root.dark .write-grant.on.delete {
+  --glass-edge: rgba(250, 146, 149, .78);
+  --glass-ink: #ffb3b6;
+  --grant-solid-rgb: 242, 154, 158;
+}
+
+/* Every measurement has a numeric endpoint: no auto-sized width, scale trick,
+   overlay, or second button. The eighteen-pixel height increase stays inside
+   the group's existing box, so only the control's silhouette changes. */
+.write-grants:hover .write-grant,
+.write-grants:has(.write-grant:focus-visible) .write-grant {
+  width: 64px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong, var(--line));
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(28, 38, 52, .06);
+}
+
+.write-grants:hover .write-grant::before,
+.write-grants:has(.write-grant:focus-visible) .write-grant::before {
+  display: none;
+}
+
+/* Expanded state, where the label is actually readable, needs a second signal
+   besides hue: a live grant is a filled chip of its own deep tint, a dead one is
+   an empty hairline button. The tint is mixed from the solid (darker) value and
+   kept at low strength on purpose — a large block of the bright dot colour reads
+   cheap, so only the 14px bead is allowed to be that vivid. */
+.write-grants:hover .write-grant.on,
+.write-grants:has(.write-grant:focus-visible) .write-grant.on {
+  border-color: color-mix(in srgb, rgb(var(--grant-solid-rgb)) var(--grant-edge-strength), transparent);
+  background: color-mix(in srgb, rgb(var(--grant-solid-rgb)) var(--grant-fill-strength), var(--surface-strong));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .40),
+    0 1px 2px rgba(28, 38, 52, .06);
+  color: var(--grant-chip-ink);
+}
+
+.write-grants:hover .write-grant:not(.on),
+.write-grants:has(.write-grant:focus-visible) .write-grant:not(.on) {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--muted);
+}
+
+/* Pointer on the expanded chip itself deepens the tint, so the button still
+   answers the cursor the way the bead did. */
+.write-grants .write-grant.on:hover:not(:disabled) {
+  border-color: color-mix(in srgb, rgb(var(--grant-solid-rgb)) var(--grant-edge-hover), transparent);
+  background: color-mix(in srgb, rgb(var(--grant-solid-rgb)) var(--grant-fill-hover), var(--surface-strong));
+}
+
+.write-grant:active:not(:disabled) {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .48),
+    inset 0 -1px 2px rgba(var(--glass-deep-rgb), .30),
+    0 1px 1px rgba(28, 38, 52, .08);
+}
+
+.write-grant:disabled {
+  cursor: not-allowed;
+}
+
+/* At rest the text has no box at all. It is revealed by the same geometric
+   expansion as its parent, with clipping instead of an opacity transition. */
+.write-grant-label {
+  width: 0;
+  max-width: 0;
+  flex: 0 0 auto;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+  transition:
+    width 300ms cubic-bezier(.32, 1.2, .48, 1),
+    max-width 300ms cubic-bezier(.32, 1.2, .48, 1);
+}
+
+.write-grants:hover .write-grant-label,
+.write-grants:has(.write-grant:focus-visible) .write-grant-label {
+  width: 42px;
+  max-width: 42px;
+}
+
+.write-inline-link {
+  margin-left: 6px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--blue);
+  font-size: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* Compact inline notice, matching the panel's own surface. */
+.wc-notice {
+  margin-top: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.wc-notice.wc-error {
+  border-color: color-mix(in srgb, var(--red) 35%, var(--line));
+  color: var(--red);
+}
+
+.wc-notice.wc-error p {
+  margin: 3px 0 0;
+  font-weight: 400;
+}
+
+/* Table picker dialog: a policy dialog with a schema strip and a table list. */
+.policy-dialog.write-picker-dialog {
+  display: flex;
+  flex-direction: column;
+  height: min(620px, 82vh);
+  gap: 0;
+  padding: 0;
+}
+
+/* The dialog itself carries no padding, so each band supplies its own. */
+.write-picker-dialog .dialog-titlebar {
+  padding: 16px 18px 0;
+}
+
+.write-picker-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 18px 12px;
+}
+
+.write-picker-schemas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.write-schema-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.write-schema-chip.active {
+  border-color: color-mix(in srgb, var(--blue) 45%, var(--line));
+  background: color-mix(in srgb, var(--blue) 12%, var(--surface-strong));
+  color: var(--blue);
+}
+
+.write-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--control-height);
+  padding: 0 6px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  color: var(--muted);
+}
+
+.write-picker-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.write-picker-search input:focus { outline: none; }
+
+/* The field owns the outline; a bordered button inside it would double the
+   edge, so the reload button stays bare. */
+.write-picker-search .icon-button {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.write-picker-search .icon-button:hover:not(:disabled) {
+  transform: none;
+}
+
+.write-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 18px 8px;
+}
+
+.write-picker-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.write-picker-row:hover { background: var(--surface-strong); }
+
+.write-picker-row.selected {
+  border-color: color-mix(in srgb, var(--blue) 35%, var(--line));
+  background: color-mix(in srgb, var(--blue) 8%, transparent);
+}
+
+.write-picker-row.disabled {
+  cursor: default;
+  opacity: .7;
+}
+
+/* The reason is a tooltip on the badge itself, so a blocked row stays one line
+   and the explanation appears exactly where the eye already is. */
+.write-unwritable {
+  display: inline-flex;
+  cursor: help;
+}
+
+.write-picker-check {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--line-strong, var(--line));
+  border-radius: 5px;
+  background: var(--surface);
+  color: #fff;
+}
+
+.write-picker-check.checked {
+  border-color: var(--blue);
+  background: var(--blue);
+}
+
+.write-picker-row code {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.write-picker-ops {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.write-op-pill {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+  color: var(--muted);
+}
+
+.write-op-pill.insert { background: color-mix(in srgb, var(--green) 16%, transparent); color: var(--green); }
+.write-op-pill.update { background: color-mix(in srgb, var(--blue) 16%, transparent); color: var(--blue); }
+.write-op-pill.delete { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red); }
+
+.write-picker-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 1080px) {
+  /* Doubled selector for the same reason as the desktop rule: the stacked
+     layout has to beat it on specificity, not on source order. */
+  .connections-workbench.write-workbench { grid-template-columns: 1fr; }
+  .write-workbench .connection-browser { max-height: 240px; }
+}

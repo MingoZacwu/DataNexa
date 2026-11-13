@@ -16,6 +16,10 @@ mod startup;
 mod state;
 mod transfer_crypto;
 mod vault;
+mod write;
+mod write_approval;
+mod write_catalog;
+mod write_operations;
 
 #[cfg(feature = "updater")]
 mod updater;
@@ -26,29 +30,85 @@ use std::time::Duration;
 
 use commands::{
     check_app_update, check_jdbc_runtime_update, check_jdbc_runtime_update_if_due,
-    check_updates_if_due, clear_audit_events, clear_jdbc_cache, clear_legacy_audit_log,
-    create_access_token, delete_access_token, delete_connection, delete_jdbc_driver,
-    diagnose_connection, disable_all_connections, exit_app, export_connections,
+    check_updates_if_due, clear_audit_events, clear_jdbc_cache,
+    clear_legacy_audit_log, create_access_token, delete_access_token, delete_connection,
+    delete_jdbc_driver, diagnose_connection, disable_all_connections, exit_app, export_connections,
     get_access_token_secret, get_app_snapshot, get_boot_status, get_jdbc_status,
-    get_jdbc_storage_status, hide_main_window, import_connections, import_jdbc_driver,
-    inspect_connection_file, install_app_update, install_jdbc_driver, install_jdbc_runtime,
-    log_frontend_event, minimize_main_window, open_config_directory, open_data_directory,
-    open_debug_log_directory, open_github_acceleration_provider, open_project_changelog,
-    open_project_help, open_project_homepage, open_project_issues, open_project_releases,
-    open_project_site, policy_check, remove_jdbc_runtime, rename_access_token,
-    reset_corrupt_config, retry_audit_migration, rotate_access_token, save_server_config,
-    save_settings_config, set_access_token_enabled, set_connection_enabled, set_mcp_tool_enabled,
-    set_token_connection_allowed, set_token_tool_allowed, set_window_material_theme,
-    start_mcp_server, start_window_drag, stop_jdbc_driver_runtime, stop_mcp_server,
-    test_connection, test_connection_input, upsert_connection,
+    get_jdbc_storage_status, get_write_schemas, get_write_tables, hide_main_window,
+    import_connections, import_jdbc_driver, inspect_connection_file, install_app_update,
+    install_jdbc_driver, install_jdbc_runtime, log_frontend_event, minimize_main_window,
+    open_config_directory, open_data_directory, open_debug_log_directory,
+    open_github_acceleration_provider, open_project_changelog, open_project_help,
+    open_project_homepage, open_project_issues, open_project_releases, open_project_site,
+    policy_check, remove_jdbc_runtime, rename_access_token, reset_corrupt_config,
+    restart_app, retry_audit_migration, rotate_access_token,
+    save_server_config, save_settings_config, save_write_configuration, set_access_token_enabled,
+    set_connection_enabled, set_mcp_tool_enabled, set_token_connection_allowed,
+    set_token_tool_allowed, set_token_write_allowed, set_window_material_theme, start_mcp_server,
+    start_window_drag, stop_jdbc_driver_runtime, stop_mcp_server, test_connection,
+    test_connection_input, upsert_connection,
 };
 use i18n::{backend_text, BackendText};
 use state::AppState;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, WebviewWindow, WebviewWindowBuilder, WindowEvent};
+use write_approval::{
+    close_write_approval, close_write_approval_preview, decide_write_approval, drag_write_approval,
+    drag_write_approval_preview, get_write_approval, open_write_approval, preview_write_approval,
+    ready_write_approval, ready_write_approval_preview,
+};
 
 const LIGHTWEIGHT_MODE_DELAY: Duration = Duration::from_secs(5 * 60);
+pub(crate) const WRITE_DRAIN_TIMEOUT: Duration = Duration::from_secs(130);
+
+#[derive(Default)]
+struct ExitState {
+    requested: AtomicBool,
+    drained: AtomicBool,
+}
+
+pub async fn request_app_restart(app: &AppHandle) -> Result<(), String> {
+    let exit_state = app.state::<ExitState>();
+    if exit_state.requested.swap(true, Ordering::AcqRel) {
+        return Err("An application exit or restart is already in progress.".to_string());
+    }
+    let state = app.state::<Arc<AppState>>().inner().clone();
+    if !state.writes.drain(WRITE_DRAIN_TIMEOUT).await {
+        // The restart is abandoned; admission must be re-opened or writes stay
+        // closed for the rest of the session.
+        state.writes.resume_admission();
+        exit_state.requested.store(false, Ordering::Release);
+        return Err("Restart blocked because writes have not safely drained.".to_string());
+    }
+    exit_state.drained.store(true, Ordering::Release);
+    app.restart();
+}
+
+pub async fn request_app_exit(app: &AppHandle) {
+    request_app_exit_with_code(app, 0).await;
+}
+
+async fn request_app_exit_with_code(app: &AppHandle, code: i32) {
+    let exit_state = app.state::<ExitState>();
+    if exit_state.requested.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let state = app.state::<Arc<AppState>>().inner().clone();
+    if state.writes.drain(WRITE_DRAIN_TIMEOUT).await {
+        exit_state.drained.store(true, Ordering::Release);
+        app.exit(code);
+    } else {
+        // Stays running after all; re-open write admission.
+        state.writes.resume_admission();
+        exit_state.requested.store(false, Ordering::Release);
+        debug_log::warn(
+            "startup",
+            format_args!("Exit blocked because writes have not safely drained"),
+        );
+        show_main_window(app);
+    }
+}
 
 #[allow(clippy::needless_return)]
 pub(crate) fn apply_system_material(
@@ -445,7 +505,7 @@ async fn activate_lightweight_mode(app: AppHandle, generation: u64, automatic: b
 
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
-        let _ = startup::set_app_in_dock(false);
+        sync_dock_visibility(&app);
         if let Err(error) = window.destroy() {
             debug_log::error(
                 "lightweight",
@@ -491,9 +551,33 @@ fn schedule_lightweight_mode(app: &AppHandle) {
     });
 }
 
+pub(crate) fn sync_dock_visibility(app: &AppHandle) {
+    let app_for_check = app.clone();
+    if app
+        .run_on_main_thread(move || {
+            let main_visible = app_for_check
+                .get_webview_window("main")
+                .is_some_and(|window| window.is_visible().unwrap_or(true));
+            let approval_visible = write_approval::is_visible(&app_for_check);
+            if startup::set_app_in_dock(main_visible || approval_visible).is_err() {
+                debug_log::warn(
+                    "window",
+                    format_args!("Unable to synchronize application Dock visibility"),
+                );
+            }
+        })
+        .is_err()
+    {
+        debug_log::warn(
+            "window",
+            format_args!("Unable to schedule application Dock visibility update"),
+        );
+    }
+}
+
 pub(crate) fn hide_main_window_to_tray(window: &WebviewWindow) -> tauri::Result<()> {
     window.hide()?;
-    let _ = startup::set_app_in_dock(false);
+    sync_dock_visibility(window.app_handle());
     schedule_lightweight_mode(window.app_handle());
     Ok(())
 }
@@ -564,6 +648,9 @@ pub fn run() {
             );
             app.manage(state);
             app.manage(Arc::new(MainWindowState::default()));
+            app.manage(write_approval::ApprovalWindowState::default());
+            app.manage(write_approval::PreviewWindowState::default());
+            app.manage(ExitState::default());
 
             let tray_icon = status_tray_icon(TrayMcpStatus::Stopped);
 
@@ -764,10 +851,27 @@ pub fn run() {
                     }
                 });
             }
-            "quit" => app.exit(0),
+            "quit" => {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move { request_app_exit(&app).await });
+            }
             _ => {}
         })
         .on_window_event(|window, event| {
+            if window.label() == write_approval::PREVIEW_WINDOW_LABEL {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    write_approval::native_preview_close_requested(window.app_handle());
+                }
+                return;
+            }
+            if window.label() == write_approval::WINDOW_LABEL {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    write_approval::native_close_requested(window.app_handle());
+                }
+                return;
+            }
             if window.label() == "main" {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
@@ -788,6 +892,7 @@ pub fn run() {
             reset_corrupt_config,
             open_config_directory,
             exit_app,
+            restart_app,
             get_jdbc_status,
             install_jdbc_runtime,
             remove_jdbc_runtime,
@@ -807,6 +912,20 @@ pub fn run() {
             get_access_token_secret,
             set_token_connection_allowed,
             set_token_tool_allowed,
+            set_token_write_allowed,
+            get_write_schemas,
+            get_write_tables,
+            save_write_configuration,
+            open_write_approval,
+            preview_write_approval,
+            ready_write_approval_preview,
+            close_write_approval_preview,
+            drag_write_approval_preview,
+            get_write_approval,
+            decide_write_approval,
+            ready_write_approval,
+            close_write_approval,
+            drag_write_approval,
             save_server_config,
             save_settings_config,
             log_frontend_event,
@@ -847,11 +966,34 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build DataNexa")
         .run(|app, event| {
+            if let tauri::RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::Destroyed,
+                ..
+            } = &event
+            {
+                if label == write_approval::PREVIEW_WINDOW_LABEL {
+                    write_approval::native_preview_destroyed(app);
+                } else if label == write_approval::WINDOW_LABEL {
+                    write_approval::native_destroyed(app);
+                } else if label == "main" {
+                    sync_dock_visibility(app);
+                }
+            }
             if let tauri::RunEvent::ExitRequested { code, api, .. } = &event {
-                if code.is_none() {
-                    api.prevent_exit();
-                } else {
+                let drained = app
+                    .try_state::<ExitState>()
+                    .is_some_and(|state| state.drained.load(Ordering::Acquire));
+                if drained {
                     debug_log::info("startup", format_args!("DataNexa exiting"));
+                } else {
+                    api.prevent_exit();
+                    if let Some(code) = *code {
+                        let app = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            request_app_exit_with_code(&app, code).await;
+                        });
+                    }
                 }
             }
 

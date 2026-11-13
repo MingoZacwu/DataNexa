@@ -63,6 +63,7 @@ const zhCN = {
   nav: {
     overview: "概览",
     connections: "数据库连接",
+    "write-center": "受控写入",
     server: "MCP 服务",
     tools: "工具",
     audit: "审计日志",
@@ -686,6 +687,7 @@ const en: I18nMessages = {
   nav: {
     overview: "Overview",
     connections: "Connections",
+    "write-center": "Restricted Writes",
     server: "MCP Server",
     tools: "Tools",
     audit: "Audit Log",

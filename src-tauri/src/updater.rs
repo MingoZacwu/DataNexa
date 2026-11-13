@@ -161,16 +161,16 @@ async fn check_with_fallback(app: &AppHandle) -> anyhow::Result<Option<Update>> 
     }
 }
 
-async fn download_and_install(
+async fn download_update(
     app: &AppHandle,
     update: &Update,
     route: &'static str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<u8>> {
     let mut downloaded = 0u64;
     let mut total: Option<u64> = None;
     let progress_app = app.clone();
-    update
-        .download_and_install(
+    let bytes = update
+        .download(
             move |chunk_length, content_length| {
                 downloaded = downloaded.saturating_add(chunk_length as u64);
                 if let Some(content_length) = content_length {
@@ -191,10 +191,27 @@ async fn download_and_install(
             },
         )
         .await?;
-    crate::debug_log::info(
-        "updater",
-        format_args!("app update package installed (route={route})"),
-    );
+    Ok(bytes)
+}
+
+async fn install_downloaded(
+    app: &AppHandle,
+    update: &Update,
+    bytes: Vec<u8>,
+) -> anyhow::Result<()> {
+    let state = app.state::<std::sync::Arc<AppState>>();
+    if !state.writes.drain(crate::WRITE_DRAIN_TIMEOUT).await {
+        return Err(anyhow::anyhow!(
+            "Application update blocked because writes have not safely drained."
+        ));
+    }
+    if let Err(error) = update.install(bytes) {
+        // The install failed and the application keeps running: writes must be
+        // available again instead of staying closed until a manual restart.
+        state.writes.resume_admission();
+        return Err(error.into());
+    }
+    crate::debug_log::info("updater", format_args!("app update package installed"));
     Ok(())
 }
 
@@ -228,8 +245,8 @@ pub async fn install_now(app: AppHandle, version: String) -> anyhow::Result<()> 
                 update.version, update.download_url
             ),
         );
-        match download_and_install(&app, &update, "accelerator").await {
-            Ok(()) => return Ok(()),
+        match download_update(&app, &update, "accelerator").await {
+            Ok(bytes) => return install_downloaded(&app, &update, bytes).await,
             Err(error) => {
                 crate::debug_log::warn(
                     "updater",
@@ -247,7 +264,8 @@ pub async fn install_now(app: AppHandle, version: String) -> anyhow::Result<()> 
             update.version, update.download_url
         ),
     );
-    download_and_install(&app, &update, "direct").await
+    let bytes = download_update(&app, &update, "direct").await?;
+    install_downloaded(&app, &update, bytes).await
 }
 
 /// Forget the cached check timestamps so switching the acceleration setting
@@ -538,7 +556,7 @@ pub async fn check_if_due(app: AppHandle) -> anyhow::Result<Option<String>> {
                 state.available_for_version = update.as_ref().map(|_| current_version);
                 Ok(update.map(|update| update.version))
             }
-            Err(error) => Err(error.into()),
+            Err(error) => Err(error),
         }
     } else {
         Ok(state.available_version.clone())

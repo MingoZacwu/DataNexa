@@ -2,11 +2,12 @@ import * as Dialog from "@radix-ui/react-dialog";
 import clsx from "clsx";
 import { CalendarDays, ChevronLeft, ChevronRight, Clipboard, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { formatMessage, type I18nMessages } from "../../i18n";
+import { formatMessage, type I18nMessages, type Locale } from "../../i18n";
 import type { AccessTokenInfo, AuditEvent, ConnectionConfig, McpToolInfo } from "../../types";
 import type { AuditFilters } from "../../app/types";
-import { statusLabel, statusTone, toolDisplayName } from "../../app/utils";
+import { auditStatusLabel, auditStatusTone, statusLabel, toolDisplayName } from "../../app/utils";
 import { StatusPill } from "../../components/ui";
+import { auditReasonText, auditWriteNextStep, auditWriteStageLabel, auditWriteStatusLabel, auditWriteStatuses, auditWriteText } from "./audit-write-text";
 
 const AUDIT_PAGE_SIZE = 50;
 
@@ -75,19 +76,28 @@ export function AuditDateField({ t, value, minDate, maxDate, onChange }: { t: I1
   );
 }
 
-export function AuditView({ t, events, tokens, tools, connections, filters, onFiltersChange, filterOpen, onFilterOpenChange, onSelect }: { t: I18nMessages; events: AuditEvent[]; tokens: AccessTokenInfo[]; tools: McpToolInfo[]; connections: ConnectionConfig[]; filters: AuditFilters; onFiltersChange: (filters: AuditFilters) => void; filterOpen: boolean; onFilterOpenChange: (open: boolean) => void; onSelect: (event: AuditEvent) => void }) {
+export function AuditView({ t, locale, events, tokens, tools, connections, filters, onFiltersChange, filterOpen, onFilterOpenChange, onSelect }: { t: I18nMessages; locale: Locale; events: AuditEvent[]; tokens: AccessTokenInfo[]; tools: McpToolInfo[]; connections: ConnectionConfig[]; filters: AuditFilters; onFiltersChange: (filters: AuditFilters) => void; filterOpen: boolean; onFilterOpenChange: (open: boolean) => void; onSelect: (event: AuditEvent) => void }) {
+  const text = auditWriteText[locale];
   const [page, setPage] = useState(1);
   const [draftFilters, setDraftFilters] = useState(filters);
   const auditBodyRef = useRef<HTMLDivElement>(null);
   const draftFrom = draftFilters.from ? parseAuditDate(draftFilters.from) : null;
   const draftTo = draftFilters.to ? parseAuditDate(draftFilters.to) : null;
   const invalidDateRange = Boolean(draftFrom && draftTo && draftTo < draftFrom);
+  const search = filters.search?.trim().toLocaleLowerCase() ?? "";
+  const from = filters.from ? parseAuditDate(filters.from) : null;
+  const to = filters.to ? parseAuditDate(filters.to, true) : null;
+  const toolOptions = [...new Set([...tools.map((tool) => tool.name), ...events.map((event) => event.tool)])];
   const filteredEvents = events.filter((event) => {
     const date = new Date(event.timestamp);
-    const from = filters.from ? parseAuditDate(filters.from) : null;
-    const to = filters.to ? parseAuditDate(filters.to, true) : null;
     const tokenKey = event.token_id ?? event.access_source;
-    return (!from || date >= from) && (!to || date <= to) && (!filters.tool || event.tool === filters.tool) && (!filters.connection || (event.connection_id ?? "") === filters.connection) && (!filters.status || event.status === filters.status) && (!filters.token || tokenKey === filters.token);
+    const statusMatches = !filters.status || event.status === filters.status || event.write_status === filters.status;
+    const searchMatches = !search || [auditTarget(event), event.reason_code, event.reason, auditReasonText(locale, event), event.request_id, event.id, event.operation, event.connection_name, event.connection_id, event.token_name, auditToolLabel(t, locale, event.tool), auditStatusLabel(t, event, locale)]
+      .some((value) => value?.toLocaleLowerCase().includes(search));
+    return (!from || date >= from) && (!to || date <= to) && (!filters.tool || event.tool === filters.tool)
+      && (!filters.connection || (event.connection_id ?? "") === filters.connection)
+      && statusMatches && (!filters.operation || event.operation === filters.operation)
+      && (!filters.token || tokenKey === filters.token) && searchMatches;
   });
   const totalPages = Math.max(1, Math.ceil(filteredEvents.length / AUDIT_PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -129,14 +139,14 @@ export function AuditView({ t, events, tokens, tools, connections, filters, onFi
           ) : (
             pageEvents.map((event) => (
               <button type="button" className="audit-row audit-button" key={event.id} onClick={() => onSelect(event)}>
-                <span>{new Date(event.timestamp).toLocaleString()}</span>
+                <span>{new Date(event.timestamp).toLocaleString(locale)}</span>
                 <span>{auditTokenListLabel(t, event)}</span>
-                <span>{toolDisplayName(t, event.tool)}</span>
-                <span>{event.connection_name ?? event.connection_id ?? "—"}</span>
-                <span>
-                  <StatusPill tone={statusTone(event.status)} label={statusLabel(t, event.status)} />
+                <span title={auditToolLabel(t, locale, event.tool)}>{event.operation ? `${event.operation.toUpperCase()} · ` : ""}{auditToolLabel(t, locale, event.tool)}</span>
+                <span title={[event.connection_name ?? event.connection_id, auditTarget(event)].filter(Boolean).join(" · ")}>{event.connection_name ?? event.connection_id ?? "—"}</span>
+                <span title={auditStatusLabel(t, event, locale)}>
+                  <StatusPill tone={auditStatusTone(event)} label={auditStatusLabel(t, event, locale)} />
                 </span>
-                <span>{event.reason ?? formatMessage(t.common.rowsElapsed, { rows: event.row_count ?? 0, elapsed: event.elapsed_ms ?? 0 })}</span>
+                <span title={auditRowDetail(t, locale, event)}>{auditRowDetail(t, locale, event)}</span>
               </button>
             ))
           )}
@@ -171,10 +181,12 @@ export function AuditView({ t, events, tokens, tools, connections, filters, onFi
             <div className="audit-filter-grid">
               <label><span>{t.audit.from}</span><AuditDateField t={t} value={draftFilters.from} maxDate={draftTo} onChange={(from) => setDraftFilters({ ...draftFilters, from })} /></label>
               <label><span>{t.audit.to}</span><AuditDateField t={t} value={draftFilters.to} minDate={draftFrom} onChange={(to) => setDraftFilters({ ...draftFilters, to })} /></label>
-              <label><span>{t.audit.tool}</span><select value={draftFilters.tool} onChange={(event) => setDraftFilters({ ...draftFilters, tool: event.target.value })}><option value="">{t.audit.all}</option>{tools.map((tool) => <option key={tool.name} value={tool.name}>{toolDisplayName(t, tool.name)}</option>)}</select></label>
+              <label><span>{t.audit.tool}</span><select value={draftFilters.tool} onChange={(event) => setDraftFilters({ ...draftFilters, tool: event.target.value })}><option value="">{t.audit.all}</option>{toolOptions.map((tool) => <option key={tool} value={tool}>{auditToolLabel(t, locale, tool)}</option>)}</select></label>
               <label><span>{t.audit.connection}</span><select value={draftFilters.connection} onChange={(event) => setDraftFilters({ ...draftFilters, connection: event.target.value })}><option value="">{t.audit.all}</option>{connections.map((connection) => <option key={connection.id} value={connection.id}>{connection.name}</option>)}</select></label>
-              <label><span>{t.audit.status}</span><select value={draftFilters.status} onChange={(event) => setDraftFilters({ ...draftFilters, status: event.target.value })}><option value="">{t.audit.all}</option>{(["allowed", "denied", "error", "timeout", "truncated"] as AuditEvent["status"][]).map((status) => <option key={status} value={status}>{statusLabel(t, status)}</option>)}</select></label>
+              <label><span>{t.audit.status}</span><select value={draftFilters.status} onChange={(event) => setDraftFilters({ ...draftFilters, status: event.target.value })}><option value="">{t.audit.all}</option>{(["allowed", "denied", "error", "timeout", "truncated"] as AuditEvent["status"][]).map((status) => <option key={status} value={status}>{statusLabel(t, status)}</option>)}{auditWriteStatuses.map((status) => <option key={status} value={status}>{auditWriteStatusLabel(locale, status)}</option>)}</select></label>
               <label><span>{t.access.tokens}</span><select value={draftFilters.token} onChange={(event) => setDraftFilters({ ...draftFilters, token: event.target.value })}><option value="">{t.audit.all}</option>{auditTokenOptions(t, tokens, events).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+              <label><span>{text.operation}</span><select value={draftFilters.operation ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, operation: event.target.value })}><option value="">{t.audit.all}</option><option value="insert">{text.insert}</option><option value="update">{text.update}</option><option value="delete">{text.delete}</option></select></label>
+              <label><span>{text.search}</span><input type="search" value={draftFilters.search ?? ""} placeholder={text.searchPlaceholder} onChange={(event) => setDraftFilters({ ...draftFilters, search: event.target.value })} /></label>
             </div>
             {invalidDateRange && <p className="audit-filter-error">{t.audit.invalidDateRange}</p>}
             <div className="dialog-actions"><button type="button" className="button ghost" onClick={() => onFilterOpenChange(false)}>{t.common.cancel}</button><button type="button" className="button primary" disabled={invalidDateRange} onClick={() => { onFiltersChange(draftFilters); setPage(1); onFilterOpenChange(false); }}>{t.audit.applyFilter}</button></div>
@@ -185,7 +197,11 @@ export function AuditView({ t, events, tokens, tools, connections, filters, onFi
   );
 }
 
-export function AuditDetailDialog({ t, event, onClose }: { t: I18nMessages; event: AuditEvent | null; onClose: () => void }) {
+export function AuditDetailDialog({ t, locale, event, onClose }: { t: I18nMessages; locale: Locale; event: AuditEvent | null; onClose: () => void }) {
+  const text = auditWriteText[locale];
+  const writeEvent = Boolean(event && (event.write_status || event.request_id || event.operation || event.tool === "datanexa_submit_write"));
+  const reason = event ? auditReasonText(locale, event) : null;
+  const sql = event && !writeEvent && event.tool !== "datanexa_get_write_status" ? event.sql : null;
   return (
     <Dialog.Root open={Boolean(event)} onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
@@ -196,7 +212,7 @@ export function AuditDetailDialog({ t, event, onClose }: { t: I18nMessages; even
               <div className="dialog-titlebar">
                 <div>
                   <Dialog.Title>{t.audit.detailTitle}</Dialog.Title>
-                  <Dialog.Description>{new Date(event.timestamp).toLocaleString()}</Dialog.Description>
+                  <Dialog.Description>{new Date(event.timestamp).toLocaleString(locale)}</Dialog.Description>
                 </div>
                 <Dialog.Close asChild>
                   <button type="button" className="icon-button" aria-label={t.common.close}>
@@ -209,7 +225,7 @@ export function AuditDetailDialog({ t, event, onClose }: { t: I18nMessages; even
                 <div><dt>{t.access.tokens}</dt><dd>{auditTokenLabel(t, event)}</dd></div>
                 <div>
                   <dt>{t.audit.tool}</dt>
-                  <dd>{toolDisplayName(t, event.tool)}</dd>
+                  <dd>{auditToolLabel(t, locale, event.tool)}</dd>
                 </div>
                 <div>
                   <dt>{t.audit.connection}</dt>
@@ -217,32 +233,54 @@ export function AuditDetailDialog({ t, event, onClose }: { t: I18nMessages; even
                 </div>
                 <div>
                   <dt>{t.audit.status}</dt>
-                  <dd><StatusPill tone={statusTone(event.status)} label={statusLabel(t, event.status)} /></dd>
+                  <dd><StatusPill tone={auditStatusTone(event)} label={auditStatusLabel(t, event, locale)} /></dd>
                 </div>
-                <div className="detail-grid-wide">
-                  <dt>{t.audit.elapsedRows}</dt>
-                  <dd>{formatMessage(t.audit.elapsedRowsValue, { elapsed: event.elapsed_ms ?? 0, rows: event.row_count ?? 0 })}</dd>
-                </div>
+                {writeEvent ? (
+                  <>
+                    <div><dt>{text.operation}</dt><dd>{event.operation?.toUpperCase() ?? "—"}</dd></div>
+                    <div><dt>{text.target}</dt><dd>{auditTarget(event) || "—"}</dd></div>
+                    <div><dt>{text.requestId}</dt><dd>{event.request_id ?? text.noRequest}</dd></div>
+                    {!event.request_id && <div><dt>{text.attemptId}</dt><dd>{event.id}</dd></div>}
+                    <div><dt>{text.stage}</dt><dd>{auditWriteStageLabel(locale, event.stage)}</dd></div>
+                    <div><dt>{text.revision}</dt><dd>{event.revision ?? "—"}</dd></div>
+                    <div><dt>{text.updatedAt}</dt><dd>{event.updated_at ? new Date(event.updated_at).toLocaleString(locale) : "—"}</dd></div>
+                    <div><dt>{text.affectedRows}</dt><dd>{event.row_count ?? text.notReported}</dd></div>
+                  </>
+                ) : (
+                  <div className="detail-grid-wide">
+                    <dt>{t.audit.elapsedRows}</dt>
+                    <dd>{formatMessage(t.audit.elapsedRowsValue, { elapsed: event.elapsed_ms ?? 0, rows: event.row_count ?? 0 })}</dd>
+                  </div>
+                )}
+                {event.reason_code && <div><dt>{text.reasonCode}</dt><dd><code>{event.reason_code}</code></dd></div>}
               </dl>
 
-              {event.reason && (
+              {reason && (
                 <div className="detail-section">
                   <h3>{t.audit.reason}</h3>
-                  <p>{event.reason}</p>
+                  <p>{reason}</p>
+                </div>
+              )}
+
+              {writeEvent && (
+                <div className="detail-section">
+                  {(event.outcome_unknown || event.write_status === "unknown") && <><h3>{text.outcome}</h3><p>{text.outcomeUnknown}</p></>}
+                  <h3>{text.nextStep}</h3>
+                  <p>{auditWriteNextStep(locale, event)}</p>
                 </div>
               )}
 
               <div className="detail-section audit-sql-section">
                 <div className="detail-section-title">
                   <h3>SQL</h3>
-                  {event.sql && (
-                    <button type="button" className="button ghost" onClick={() => navigator.clipboard.writeText(event.sql ?? "")}>
+                  {sql && (
+                    <button type="button" className="button ghost" onClick={() => navigator.clipboard.writeText(sql)}>
                       <Clipboard size={15} />
                       {t.common.copy}
                     </button>
                   )}
                 </div>
-                {event.sql ? <pre>{event.sql}</pre> : <p className="muted">{t.audit.noSql}</p>}
+                {sql ? <pre>{sql}</pre> : <p className="muted">{t.audit.noSql}</p>}
               </div>
             </>
           )}
@@ -250,6 +288,24 @@ export function AuditDetailDialog({ t, event, onClose }: { t: I18nMessages; even
       </Dialog.Portal>
     </Dialog.Root>
   );
+}
+
+function auditToolLabel(t: I18nMessages, locale: Locale, tool: string) {
+  if (tool === "datanexa_submit_write") return auditWriteText[locale].submitTool;
+  if (tool === "datanexa_get_write_status") return auditWriteText[locale].statusTool;
+  return toolDisplayName(t, tool);
+}
+
+function auditTarget(event: AuditEvent) {
+  return [event.schema, event.table].filter(Boolean).join(".");
+}
+
+function auditRowDetail(t: I18nMessages, locale: Locale, event: AuditEvent) {
+  const reason = auditReasonText(locale, event);
+  const details = [event.reason_code, reason === event.reason_code ? null : reason, auditTarget(event)].filter(Boolean);
+  return details.length ? details.join(" · ") : event.write_status
+    ? auditWriteNextStep(locale, event)
+    : formatMessage(t.common.rowsElapsed, { rows: event.row_count ?? 0, elapsed: event.elapsed_ms ?? 0 });
 }
 
 function accessSourceLabel(t: I18nMessages, source: string) {

@@ -3,7 +3,7 @@ import { Activity, AlertTriangle, CheckCircle2, ChevronRight, Info, Play, Plus, 
 import quickStep1Url from "../../../resources/quickguide/step1.png";
 import quickStep2Url from "../../../resources/quickguide/step2.png";
 import quickStep3Url from "../../../resources/quickguide/step3.png";
-import type { I18nMessages } from "../../i18n";
+import type { I18nMessages, Locale } from "../../i18n";
 import type { AppSnapshot, AuditEvent } from "../../types";
 import { EventList, IconTooltip, PanelHeader, PanelIconAction, QuickStep } from "../../components/ui";
 import { ConnectionListItem } from "../connections/ConnectionsView";
@@ -13,6 +13,7 @@ const AUDIT_LIST_LIMIT = 5000;
 
 export function OverviewView({
   t,
+  locale,
   snapshot,
   enabledConnections,
   recentEvents,
@@ -34,6 +35,7 @@ export function OverviewView({
   onDismissBackgroundTip
 }: {
   t: I18nMessages;
+  locale: Locale;
   snapshot: AppSnapshot;
   enabledConnections: number;
   recentEvents: AuditEvent[];
@@ -170,7 +172,7 @@ export function OverviewView({
           title={t.overview.recentLogs}
           action={<PanelIconAction icon={<ChevronRight size={16} />} label={t.overview.viewAll} onClick={onOpenAudit} />}
         />
-        <EventList t={t} events={recentEvents} onSelect={onSelectAudit} />
+        <EventList t={t} locale={locale} events={recentEvents} onSelect={onSelectAudit} />
         </section>
       </div>
 

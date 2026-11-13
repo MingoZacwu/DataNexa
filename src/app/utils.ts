@@ -1,6 +1,7 @@
 import { Columns3, Database, ListTree, Rows3, ShieldCheck, Terminal, Workflow, Wrench, type LucideIcon } from "lucide-react";
 import { useCallback, useLayoutEffect, useRef, type UIEvent as ReactUIEvent } from "react";
-import { formatMessage, type I18nMessages } from "../i18n";
+import { formatMessage, type I18nMessages, type Locale } from "../i18n";
+import { auditWriteStatusLabel } from "../features/audit/audit-write-text";
 import type { AuditEvent, ConnectionDiagnostics, DatabaseType, McpToolInfo } from "../types";
 import type { View } from "./types";
 
@@ -40,6 +41,8 @@ export function viewTitle(t: I18nMessages, view: View) {
       return t.nav.overview;
     case "connections":
       return t.nav.connections;
+    case "write-center":
+      return t.nav["write-center"];
     case "access":
       return t.access.title;
     case "tools":
@@ -110,6 +113,22 @@ export function statusLabel(t: I18nMessages, status: AuditEvent["status"]) {
   if (status === "timeout") return t.status.timeout;
   if (status === "truncated") return t.status.truncated;
   return t.status.error;
+}
+
+export function auditStatusTone(event: AuditEvent): ReturnType<typeof statusTone> {
+  if (event.outcome_unknown) return "red";
+  if (!event.write_status) return statusTone(event.status);
+  if (event.write_status === "committed") return "green";
+  if (["pending", "executing", "committing"].includes(event.write_status)) return "blue";
+  if (["rejected", "failed", "unknown"].includes(event.write_status)) return "red";
+  if (event.write_status === "expired") return "amber";
+  return "slate";
+}
+
+export function auditStatusLabel(t: I18nMessages, event: AuditEvent, locale: Locale) {
+  if (event.write_status) return auditWriteStatusLabel(locale, event.write_status);
+  if (event.outcome_unknown) return auditWriteStatusLabel(locale, "unknown");
+  return statusLabel(t, event.status);
 }
 
 export function formatDiagnostics(t: I18nMessages, diagnostics: ConnectionDiagnostics) {

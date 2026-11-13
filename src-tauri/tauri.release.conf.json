@@ -2,7 +2,9 @@
   "app": {
     "security": {
       "capabilities": [
-        "default"
+        "default",
+        "write-approval",
+        "write-approval-preview"
       ]
     }
   },

@@ -1,7 +1,7 @@
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import clsx from "clsx";
-import { AlertTriangle, Coffee, Database, Filter, Home, LifeBuoy, Logs, Plus, RefreshCw, Settings, ShieldCheck, Trash2, Wrench, X } from "lucide-react";
+import { AlertTriangle, Coffee, Database, Filter, Home, LifeBuoy, Logs, PenLine, Plus, RefreshCw, Settings, ShieldCheck, Trash2, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import brandLogoUrl from "../resources/datanexa.png";
@@ -10,6 +10,7 @@ import type { Locale } from "./i18n";
 import { api, WRONG_PASSWORD_ERROR } from "./lib/tauri";
 import { useAppUpdater } from "./lib/updater";
 import type { AppSnapshot, AuditEvent, ConnectionConfig, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcInstallProgress, JdbcRuntimeInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "./types";
+import { WriteCenterView, type WriteDrafts } from "./features/write-center/WriteCenterView";
 import { detectThemeMode, persistThemeMode, resolveTheme, systemTheme } from "./app/theme";
 import { hasSeenBackgroundRunTip, markBackgroundRunTip } from "./app/tips";
 import type { AuditFilters, EffectiveTheme, SettingsTab, ThemeMode, ToastMessage, ToastTone, View } from "./app/types";
@@ -48,6 +49,8 @@ const defaultConnection = (name: string): ConnectionConfig => ({
   name,
   type: "mysql",
   enabled: true,
+  write_enabled: false,
+  write_tables: [],
   database: "",
   host: "localhost",
   port: 3306,
@@ -67,6 +70,8 @@ function App() {
   const isMacos = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent);
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
   const [activeView, setActiveView] = useState<View>("overview");
+  const [writeDrafts, setWriteDrafts] = useState<WriteDrafts>({});
+  const [writeConnectionId, setWriteConnectionId] = useState("");
   const [editing, setEditing] = useState<ConnectionConfig | null>(null);
   const [password, setPassword] = useState("");
   const [clearPassword, setClearPassword] = useState(false);
@@ -79,7 +84,7 @@ function App() {
   const [policyResult, setPolicyResult] = useState<PolicyCheckResult | null>(null);
   const [selectedAudit, setSelectedAudit] = useState<AuditEvent | null>(null);
   const [auditFilterOpen, setAuditFilterOpen] = useState(false);
-  const [auditFilters, setAuditFilters] = useState<AuditFilters>({ from: "", to: "", tool: "", connection: "", status: "", token: "" });
+  const [auditFilters, setAuditFilters] = useState<AuditFilters>({ from: "", to: "", tool: "", connection: "", status: "", token: "", operation: "", search: "" });
   const [selectedTokenId, setSelectedTokenId] = useState("");
   const [createTokenRequest, setCreateTokenRequest] = useState(0);
   const [promptTokenDialogOpen, setPromptTokenDialogOpen] = useState(false);
@@ -414,6 +419,26 @@ function App() {
       window.clearTimeout(mcpActivityTimerRef.current);
       mcpActivityTimerRef.current = undefined;
       window.clearTimeout(refreshTimer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    let cancelled = false;
+    let timer: number | undefined;
+    void listen("write-approval-changed", () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => void refresh({ quiet: true }), 120);
+    }).then((dispose) => {
+      if (cancelled) dispose();
+      else unlisten = dispose;
+    }).catch(() => {
+      // The regular summary-only snapshot poll remains available.
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+      window.clearTimeout(timer);
     };
   }, []);
 
@@ -1146,6 +1171,7 @@ function App() {
               <NavButton icon={<Database />} label={t.nav.connections} active={activeView === "connections"} onClick={() => setActiveView("connections")} />
               <NavButton icon={<Wrench />} label={t.nav.tools} active={activeView === "tools"} onClick={() => setActiveView("tools")} />
               <NavButton icon={<ShieldCheck />} label={t.access.title} active={activeView === "access"} onClick={() => setActiveView("access")} />
+              <NavButton icon={<PenLine />} label={t.nav["write-center"]} active={activeView === "write-center"} onClick={() => setActiveView("write-center")} />
               <NavButton icon={<Logs />} label={t.nav.audit} active={activeView === "audit"} onClick={() => setActiveView("audit")} />
               <NavButton icon={<Settings />} label={t.nav.settings} active={activeView === "settings"} onClick={() => setActiveView("settings")} />
               <span className="nav-divider" aria-hidden="true" />
@@ -1212,7 +1238,7 @@ function App() {
                     {showAuditClear && (
                       <span className={clsx("audit-clear-action", !hasAuditFilters && "leaving")}>
                         <IconTooltip label={t.audit.clearFilter}>
-                          <button type="button" className="icon-button" onClick={() => setAuditFilters({ from: "", to: "", tool: "", connection: "", status: "", token: "" })} aria-label={t.audit.clearFilter}>
+                          <button type="button" className="icon-button" onClick={() => setAuditFilters({ from: "", to: "", tool: "", connection: "", status: "", token: "", operation: "", search: "" })} aria-label={t.audit.clearFilter}>
                             <X size={17} />
                           </button>
                         </IconTooltip>
@@ -1280,6 +1306,7 @@ function App() {
                 {activeView === "overview" && (
                   <OverviewView
                     t={t}
+                    locale={locale}
                     snapshot={snapshot}
                     enabledConnections={enabledConnections}
                     recentEvents={recentEvents}
@@ -1304,6 +1331,8 @@ function App() {
                 {activeView === "connections" && (
                   <ConnectionsView
                     t={t}
+                    locale={locale}
+                    onOpenWriteCenter={(id) => { setWriteConnectionId(id); setActiveView("write-center"); }}
                     connections={connections}
                     busy={isBusy("connections") || emergencyDisconnect}
                     onEdit={openExistingConnection}
@@ -1315,9 +1344,10 @@ function App() {
                     onCopyName={(name) => void copyConnectionName(name)}
                   />
                 )}
-                {activeView === "access" && <AccessControlView t={t} tokens={snapshot.access_tokens} connections={connections} tools={snapshot.tools} requireToken={requireToken} busy={isBusy("access")} selectedId={selectedTokenId} onSelectedIdChange={setSelectedTokenId} createRequest={createTokenRequest} onCreateRequestHandled={() => setCreateTokenRequest(0)} onEnableAuthentication={() => void enableTokenAuthentication()} onCreate={createAccessToken} onRename={renameAccessToken} onToggle={(id, enabled) => void updateAccess(() => api.setAccessTokenEnabled(id, enabled), enabled ? t.access.tokenEnabled : t.access.tokenDisabled)} onRotate={rotateAccessToken} onDelete={deleteAccessToken} onCopyPrompt={(id) => void copyPromptForToken(id)} onConnectionAllowed={(tokenId, connectionId, allowed) => void updateAccess(() => api.setTokenConnectionAllowed(tokenId, connectionId, allowed), t.access.permissionUpdated)} onToolAllowed={(tokenId, toolName, allowed) => void updateAccess(() => api.setTokenToolAllowed(tokenId, toolName, allowed), t.access.permissionUpdated)} />}
-                {activeView === "tools" && <ToolsView t={t} tools={snapshot.tools} busy={isBusy("tools")} onToggle={setToolEnabled} />}
-                {activeView === "audit" && <AuditView t={t} events={snapshot.audit_events} tokens={snapshot.access_tokens} tools={snapshot.tools} connections={snapshot.config.connections} filters={auditFilters} onFiltersChange={setAuditFilters} filterOpen={auditFilterOpen} onFilterOpenChange={setAuditFilterOpen} onSelect={setSelectedAudit} />}
+                {activeView === "access" && <AccessControlView t={t} locale={locale} tokens={snapshot.access_tokens} connections={connections} tools={snapshot.tools} requireToken={requireToken} busy={isBusy("access")} selectedId={selectedTokenId} onSelectedIdChange={setSelectedTokenId} createRequest={createTokenRequest} onCreateRequestHandled={() => setCreateTokenRequest(0)} onEnableAuthentication={() => void enableTokenAuthentication()} onCreate={createAccessToken} onRename={renameAccessToken} onToggle={(id, enabled) => void updateAccess(() => api.setAccessTokenEnabled(id, enabled), enabled ? t.access.tokenEnabled : t.access.tokenDisabled)} onRotate={rotateAccessToken} onDelete={deleteAccessToken} onCopyPrompt={(id) => void copyPromptForToken(id)} onConnectionAllowed={(tokenId, connectionId, allowed) => void updateAccess(() => api.setTokenConnectionAllowed(tokenId, connectionId, allowed), t.access.permissionUpdated)} onToolAllowed={(tokenId, toolName, allowed) => void updateAccess(() => api.setTokenToolAllowed(tokenId, toolName, allowed), t.access.permissionUpdated)} />}
+                {activeView === "tools" && <ToolsView t={t} locale={locale} tools={snapshot.tools} busy={isBusy("tools")} onToggle={setToolEnabled} />}
+                {activeView === "audit" && <AuditView t={t} locale={locale} events={snapshot.audit_events} tokens={snapshot.access_tokens} tools={snapshot.tools} connections={snapshot.config.connections} filters={auditFilters} onFiltersChange={setAuditFilters} filterOpen={auditFilterOpen} onFilterOpenChange={setAuditFilterOpen} onSelect={setSelectedAudit} />}
+                {activeView === "write-center" && <WriteCenterView locale={locale} snapshot={snapshot} drafts={writeDrafts} onDraftsChange={setWriteDrafts} selectedId={writeConnectionId} onSelectedIdChange={setWriteConnectionId} onSnapshot={applySnapshot} onOpenAccess={() => setActiveView("access")} onOpenTools={() => setActiveView("tools")} />}
                 {activeView === "settings" && (
                   <SettingsView
                     t={t}
@@ -1397,7 +1427,7 @@ function App() {
           onSubmit={saveConnection}
           onClose={() => setEditing(null)}
         />
-        <AuditDetailDialog t={t} event={selectedAudit} onClose={() => setSelectedAudit(null)} />
+        <AuditDetailDialog t={t} locale={locale} event={selectedAudit ? snapshot?.audit_events.find((event) => event.id === selectedAudit.id) ?? null : null} onClose={() => setSelectedAudit(null)} />
         {importRequest ? (
           <EncryptionPasswordDialog
             t={t}

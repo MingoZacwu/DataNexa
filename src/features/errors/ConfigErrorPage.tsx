@@ -1,4 +1,3 @@
-import { relaunch } from "@tauri-apps/plugin-process";
 import { AlertTriangle, ArrowUpRight, ChevronDown, FolderOpen, Github, LifeBuoy, Power, RotateCcw, X } from "lucide-react";
 import { useState } from "react";
 import { WindowControls, WindowDragRegion } from "../../components/chrome";
@@ -47,7 +46,7 @@ export function ConfigErrorPage({ t, error }: { t: I18nMessages; error: ConfigLo
     // must not be reported as a failed reset.
     try {
       if (isTauri) {
-        await relaunch();
+        await api.restartApp();
       } else {
         window.setTimeout(() => window.location.reload(), 600);
       }

@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 use tauri::Emitter;
-use tokio::sync::{oneshot, Mutex, Semaphore};
+use tokio::sync::{oneshot, Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -21,6 +21,7 @@ use crate::audit::{AuditActor, AuditSql, AuditStatus};
 use crate::commands::{database_error_summary, sanitize_error};
 use crate::config::{
     is_tool_enabled, ConnectionConfig, DbKind, ServerConfig, ToolConfig, MCP_TOOL_NAMES,
+    WRITE_STATUS_TOOL, WRITE_SUBMIT_TOOL, WRITE_TARGETS_TOOL,
 };
 use crate::i18n::{backend_text, BackendText};
 use crate::state::AppState;
@@ -63,12 +64,120 @@ struct McpToolCallResult {
 #[derive(Clone)]
 struct McpHttpState {
     app: Arc<AppState>,
-    tool_concurrency: Arc<Semaphore>,
-    connection_concurrency: ConnectionConcurrency,
     rate_limit: Arc<Mutex<ToolRateLimit>>,
 }
 
 type ConnectionConcurrency = Arc<Mutex<HashMap<String, (u32, Arc<Semaphore>)>>>;
+
+pub struct ExecutionLimits {
+    tool_concurrency: Arc<Semaphore>,
+    connection_concurrency: ConnectionConcurrency,
+}
+
+impl Default for ExecutionLimits {
+    fn default() -> Self {
+        Self {
+            tool_concurrency: Arc::new(Semaphore::new(TOOL_CONCURRENCY_LIMIT)),
+            connection_concurrency: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+pub struct ExecutionPermits {
+    _global: OwnedSemaphorePermit,
+    _connection: Option<OwnedSemaphorePermit>,
+}
+
+impl ExecutionLimits {
+    async fn acquire(
+        &self,
+        connection: Option<(String, u32)>,
+    ) -> Result<ExecutionPermits, (i32, String)> {
+        let global = tokio::time::timeout(
+            TOOL_CONCURRENCY_WAIT,
+            self.tool_concurrency.clone().acquire_owned(),
+        )
+        .await
+        .map_err(|_| (-32000, "tools/call concurrency limit exceeded".to_string()))?
+        .map_err(|_| {
+            (
+                -32603,
+                "MCP concurrency controller is unavailable".to_string(),
+            )
+        })?;
+        let connection = if let Some((connection_id, max_connections)) = connection {
+            let max_connections = max_connections.clamp(1, 3);
+            let semaphore = {
+                let mut limits = self.connection_concurrency.lock().await;
+                let entry = limits.entry(connection_id).or_insert_with(|| {
+                    (
+                        max_connections,
+                        Arc::new(Semaphore::new(max_connections as usize)),
+                    )
+                });
+                // Never replace an in-use semaphore: existing reads and writes
+                // must continue sharing the same execution budget.
+                if entry.0 != max_connections {
+                    if entry.1.available_permits() != entry.0 as usize
+                        || Arc::strong_count(&entry.1) != 1
+                    {
+                        return Err((
+                            -32000,
+                            "connection concurrency configuration is changing".to_string(),
+                        ));
+                    }
+                    *entry = (
+                        max_connections,
+                        Arc::new(Semaphore::new(max_connections as usize)),
+                    );
+                }
+                entry.1.clone()
+            };
+            Some(
+                tokio::time::timeout(TOOL_CONCURRENCY_WAIT, semaphore.acquire_owned())
+                    .await
+                    .map_err(|_| (-32000, "connection concurrency limit exceeded".to_string()))?
+                    .map_err(|_| {
+                        (
+                            -32603,
+                            "connection concurrency controller is unavailable".to_string(),
+                        )
+                    })?,
+            )
+        } else {
+            None
+        };
+        Ok(ExecutionPermits {
+            _global: global,
+            _connection: connection,
+        })
+    }
+}
+
+async fn acquire_execution_permits(
+    app: &Arc<AppState>,
+    connection_id: Option<&str>,
+) -> Result<ExecutionPermits, (i32, String)> {
+    let connection = if let Some(connection_id) = connection_id {
+        app.config
+            .read()
+            .await
+            .connections
+            .iter()
+            .find(|connection| connection.id == connection_id)
+            .map(|connection| (connection.id.clone(), connection.max_connections))
+    } else {
+        None
+    };
+    app.execution_limits.acquire(connection).await
+}
+
+pub async fn acquire_write_permits(
+    app: &Arc<AppState>,
+    connection_id: &str,
+) -> Result<ExecutionPermits, (i32, String)> {
+    acquire_execution_permits(app, Some(connection_id)).await
+}
 
 const TOOL_CONCURRENCY_LIMIT: usize = 8;
 const TOOL_CONCURRENCY_WAIT: Duration = Duration::from_secs(2);
@@ -232,8 +341,6 @@ async fn activate_listener(
 fn mcp_router(app: Arc<AppState>) -> Router {
     let state = McpHttpState {
         app,
-        tool_concurrency: Arc::new(Semaphore::new(TOOL_CONCURRENCY_LIMIT)),
-        connection_concurrency: Arc::new(Mutex::new(HashMap::new())),
         rate_limit: Arc::new(Mutex::new(ToolRateLimit::new())),
     };
     Router::new()
@@ -244,7 +351,9 @@ fn mcp_router(app: Arc<AppState>) -> Router {
 pub async fn stop(app: Arc<AppState>) -> ServerStatus {
     let _lifecycle = app.mcp_lifecycle.lock().await;
     stop_locked(&app).await;
-    app.exit_emergency_mode().await;
+    app.emergency_disabled
+        .store(false, std::sync::atomic::Ordering::Release);
+    // Keep the stopped generation cancelled until a listener is activated.
     app.mcp.write().await.startup_error = None;
     status(&app).await
 }
@@ -280,6 +389,7 @@ pub async fn reconfigure(
     mut server: ServerConfig,
 ) -> anyhow::Result<ServerStatus> {
     let _lifecycle = app.mcp_lifecycle.lock().await;
+    app.writes.invalidate_all().await?;
     let old_config = app.config.read().await.server.clone();
     server.host = server.host.trim().to_ascii_lowercase();
     server.token = old_config.token.clone();
@@ -349,6 +459,7 @@ pub async fn reconfigure(
 
 async fn persist_server_config(app: &Arc<AppState>, server: ServerConfig) -> anyhow::Result<()> {
     let _transaction = app.config_transaction.write().await;
+    app.writes.invalidate_all().await?;
     let mut candidate = app.config.read().await.clone();
     candidate.server = server;
     candidate.normalize_and_validate()?;
@@ -431,8 +542,66 @@ async fn handle_mcp_post(
         "notifications/initialized" => Ok(Value::Null),
         "ping" => Ok(json!({})),
         "tools/list" => {
-            let config = state.app.config.read().await;
-            Ok(json!({ "tools": tools_for_actor(&config.tools, &actor) }))
+            let config = state.app.config.read().await.clone();
+            let mut visible = tools_for_actor(&config.tools, &actor);
+            if config.server.require_token && actor.source == "token" {
+                if let Some(token_id) = actor.token_id.as_deref() {
+                    if is_tool_enabled(&config.tools, WRITE_STATUS_TOOL)
+                        && actor.allows_tool(WRITE_STATUS_TOOL)
+                        && state
+                            .app
+                            .access
+                            .allows_write_status(token_id)
+                            .await
+                            .unwrap_or(false)
+                    {
+                        visible.push(write_status_tool());
+                    }
+                    if is_tool_enabled(&config.tools, WRITE_TARGETS_TOOL)
+                        && actor.allows_tool(WRITE_TARGETS_TOOL)
+                    {
+                        visible.push(write_targets_tool());
+                    }
+                    if is_tool_enabled(&config.tools, WRITE_SUBMIT_TOOL)
+                        && actor.allows_tool(WRITE_SUBMIT_TOOL)
+                        && !state.app.is_emergency_disabled()
+                    {
+                        for connection in &config.connections {
+                            if !connection.enabled
+                                || !connection.write_enabled
+                                || connection.write_tables.is_empty()
+                                || connection.kind == DbKind::Jdbc
+                                || !actor.allows_connection(&connection.id)
+                            {
+                                continue;
+                            }
+                            let insert = state
+                                .app
+                                .access
+                                .allows_write(token_id, &connection.id, "insert")
+                                .await
+                                .unwrap_or(false);
+                            let update = state
+                                .app
+                                .access
+                                .allows_write(token_id, &connection.id, "update")
+                                .await
+                                .unwrap_or(false);
+                            let delete = state
+                                .app
+                                .access
+                                .allows_write(token_id, &connection.id, "delete")
+                                .await
+                                .unwrap_or(false);
+                            if insert || update || delete {
+                                visible.push(write_submit_tool());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(json!({ "tools": visible }))
         }
         "tools/call" => handle_tool_call(&state, actor, request.params).await,
         _ => Err((-32601, "Method not found".to_string())),
@@ -582,11 +751,13 @@ async fn validate_request(app: Arc<AppState>, headers: &HeaderMap) -> Result<Aud
                 .into_response()
         })?;
         if let Some(identity) = identity {
-            return Ok(AuditActor::token_with_permissions(
+            let mut actor = AuditActor::token_with_permissions(
                 identity.token_id,
                 identity.denied_connections,
                 identity.denied_tools,
-            ));
+            );
+            actor.authentication_fingerprint = Some(identity.authentication_fingerprint);
+            return Ok(actor);
         }
         // Never log the supplied token value itself, only the outcome.
         crate::debug_log::warn(
@@ -603,7 +774,12 @@ async fn handle_tool_call(
     actor: AuditActor,
     params: Option<Value>,
 ) -> Result<Value, (i32, String)> {
-    if state.app.is_emergency_disabled() {
+    let status_query = params
+        .as_ref()
+        .and_then(|params| params.get("name"))
+        .and_then(Value::as_str)
+        == Some(WRITE_STATUS_TOOL);
+    if state.app.is_emergency_disabled() && !status_query {
         return Err((-32001, "MCP emergency disconnect is active".to_string()));
     }
     let cancellation = state.app.mcp_cancellation_token().await;
@@ -638,88 +814,21 @@ async fn handle_active_tool_call(
         return Err((-32000, "tools/call rate limit exceeded".to_string()));
     }
 
-    let acquire_permits = async {
-        let global_permit = tokio::time::timeout(
-            TOOL_CONCURRENCY_WAIT,
-            state.tool_concurrency.clone().acquire_owned(),
-        )
-        .await
-        .map_err(|_| {
-            crate::debug_log::warn(
-                "mcp",
-                format_args!("tool call rejected: global concurrency wait timed out"),
-            );
-            (-32000, "tools/call concurrency limit exceeded".to_string())
-        })?
-        .map_err(|_| {
-            (
-                -32603,
-                "MCP concurrency controller is unavailable".to_string(),
-            )
-        })?;
-
-        let connection_id = params_object
-            .get("arguments")
-            .and_then(|arguments| arguments.get("connection_id"))
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        let connection_limit = if let Some(connection_id) = connection_id {
-            state
-                .app
-                .config
-                .read()
-                .await
-                .connections
-                .iter()
-                .find(|connection| connection.id == connection_id)
-                .map(|connection| (connection_id, connection.max_connections.clamp(1, 3)))
-        } else {
-            None
-        };
-        let connection_permit = if let Some((connection_id, max_connections)) = connection_limit {
-            // The concurrency map key consumes the id, so keep a copy for logging.
-            let log_connection_id = connection_id.clone();
-            let semaphore = {
-                let mut limits = state.connection_concurrency.lock().await;
-                let entry = limits.entry(connection_id).or_insert_with(|| {
-                    (
-                        max_connections,
-                        Arc::new(Semaphore::new(max_connections as usize)),
-                    )
-                });
-                if entry.0 != max_connections {
-                    *entry = (
-                        max_connections,
-                        Arc::new(Semaphore::new(max_connections as usize)),
-                    );
-                }
-                entry.1.clone()
-            };
-            Some(
-                tokio::time::timeout(TOOL_CONCURRENCY_WAIT, semaphore.acquire_owned())
-                    .await
-                    .map_err(|_| {
-                        crate::debug_log::warn(
-                            "mcp",
-                            format_args!(
-                                "tool call rejected: connection concurrency wait timed out (connection_id={log_connection_id})"
-                            ),
-                        );
-                        (-32000, "connection concurrency limit exceeded".to_string())
-                    })?
-                    .map_err(|_| {
-                        (
-                            -32603,
-                            "connection concurrency controller is unavailable".to_string(),
-                        )
-                    })?,
-            )
-        } else {
-            None
-        };
-
-        Ok::<_, (i32, String)>((global_permit, connection_permit))
-    };
+    let name = params_object
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if name == WRITE_SUBMIT_TOOL || name == WRITE_STATUS_TOOL || name == WRITE_TARGETS_TOOL {
+        // Structured writes never enter the readonly audit/long-lock wrapper.
+        // Approval waiting holds no database execution permits.
+        return handle_write_tool_call(state, actor, name, params_object.get("arguments").cloned())
+            .await;
+    }
+    let connection_id = params_object
+        .get("arguments")
+        .and_then(|arguments| arguments.get("connection_id"))
+        .and_then(Value::as_str);
+    let acquire_permits = acquire_execution_permits(&state.app, connection_id);
     let permits = tokio::select! {
         biased;
         _ = cancellation.cancelled() => None,
@@ -753,6 +862,227 @@ async fn handle_active_tool_call(
     }
     emit_mcp_tool_call_completed(&state.app, call_failed);
     Ok(result)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WriteStatusArguments {
+    request_id: String,
+}
+
+fn write_error_result(code: &str, message: &str, outcome_unknown: bool) -> Value {
+    structured_tool_result(
+        json!({
+            "code": code,
+            "message": message,
+            "outcome_unknown": outcome_unknown
+        }),
+        true,
+    )
+}
+
+fn structured_tool_result(payload: Value, is_error: bool) -> Value {
+    json!({
+        "content": [{ "type": "text", "text": payload.to_string() }],
+        "structuredContent": payload,
+        "isError": is_error
+    })
+}
+
+async fn handle_write_tool_call(
+    state: &McpHttpState,
+    actor: AuditActor,
+    name: &str,
+    arguments: Option<Value>,
+) -> Result<Value, (i32, String)> {
+    let result = process_write_tool_call(state, actor.clone(), name, arguments.clone()).await;
+    if name == WRITE_SUBMIT_TOOL {
+        if let Ok(response) = &result {
+            if response.get("isError").and_then(Value::as_bool) == Some(true) {
+                let payload = response.get("structuredContent");
+                let code = payload
+                    .and_then(|value| value.get("code"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("write_failed");
+                let message = payload
+                    .and_then(|value| value.get("message"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("The write request was rejected.");
+                let field = |key: &str| {
+                    arguments
+                        .as_ref()
+                        .and_then(|value| value.get(key))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                };
+                let config = state.app.config.read().await.clone();
+                let requested_connection = field("connection_id");
+                let connection_id = config
+                    .connections
+                    .iter()
+                    .find(|connection| Some(&connection.id) == requested_connection.as_ref())
+                    .map(|connection| connection.id.clone());
+                if state
+                    .app
+                    .audit
+                    .record_write_rejection(
+                        actor,
+                        connection_id,
+                        field("operation"),
+                        field("schema"),
+                        field("table"),
+                        code,
+                        message,
+                        config.settings.audit_retention_days,
+                    )
+                    .await
+                    .is_err()
+                {
+                    return Ok(write_error_result("audit_unavailable", "The request failed and its audit record could not be saved. No write approval was issued.", false));
+                }
+            }
+        }
+    }
+    result
+}
+
+async fn process_write_tool_call(
+    state: &McpHttpState,
+    actor: AuditActor,
+    name: &str,
+    arguments: Option<Value>,
+) -> Result<Value, (i32, String)> {
+    let Some(token_id) = actor.token_id.clone().filter(|_| actor.source == "token") else {
+        return Ok(write_error_result(
+            "unauthorized",
+            "A valid access token is required.",
+            false,
+        ));
+    };
+    if !state.app.config.read().await.server.require_token {
+        return Ok(write_error_result(
+            "unauthorized",
+            "Token authentication must be enabled.",
+            false,
+        ));
+    }
+    if !tool_enabled(&state.app, name).await {
+        return Ok(write_error_result(
+            "tool_disabled",
+            "This MCP tool is disabled.",
+            false,
+        ));
+    }
+    if actor.denied_tools.iter().any(|tool| tool == name) {
+        return Ok(write_error_result(
+            "permission_denied",
+            "This MCP tool is not allowed for this access token.",
+            false,
+        ));
+    }
+    let Some(authentication_fingerprint) = actor.authentication_fingerprint.clone() else {
+        return Ok(write_error_result(
+            "unauthorized",
+            "A current authenticated token is required.",
+            false,
+        ));
+    };
+    if !state
+        .app
+        .access
+        .authentication_matches(&token_id, &authentication_fingerprint)
+        .await
+        .unwrap_or(false)
+    {
+        return Ok(write_error_result(
+            "unauthorized",
+            "The authenticated token is no longer current.",
+            false,
+        ));
+    }
+    let arguments = arguments.unwrap_or_else(|| json!({}));
+    if name == WRITE_TARGETS_TOOL {
+        return Ok(
+            match list_write_targets(state, &actor, &token_id, arguments).await {
+                Ok(result) => structured_tool_result(result, false),
+                Err(error) => write_error_result(&error.code, &error.message, false),
+            },
+        );
+    }
+    let result = if name == WRITE_SUBMIT_TOOL {
+        let request = match serde_json::from_value::<crate::write::WriteRequest>(arguments) {
+            Ok(request) => request,
+            Err(_) => {
+                return Ok(write_error_result(
+                    "invalid_request",
+                    "Invalid structured write request.",
+                    false,
+                ))
+            }
+        };
+        let app = state.app.clone();
+        // The manager owns preparation and native presentation independently
+        // of the HTTP caller, including if this response is disconnected.
+        match tauri::async_runtime::spawn(async move {
+            app.writes
+                .submit(app.clone(), token_id, request, authentication_fingerprint)
+                .await
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => return Ok(write_error_result(
+                "internal_error",
+                "Unable to retrieve the accepted write request; query its status before retrying.",
+                true,
+            )),
+        }
+    } else {
+        let request = match serde_json::from_value::<WriteStatusArguments>(arguments) {
+            Ok(request) if !request.request_id.is_empty() && request.request_id.len() <= 128 => {
+                request
+            }
+            _ => {
+                return Ok(write_error_result(
+                    "invalid_request",
+                    "A valid request_id is required.",
+                    false,
+                ))
+            }
+        };
+        if !state
+            .app
+            .access
+            .allows_write_status(&token_id)
+            .await
+            .unwrap_or(false)
+        {
+            return Ok(write_error_result(
+                "permission_denied",
+                "This access token cannot query write status.",
+                false,
+            ));
+        }
+        state
+            .app
+            .writes
+            .get_status(&token_id, &request.request_id)
+            .await
+    };
+    match result {
+        Ok(status) => {
+            emit_mcp_tool_call_completed(&state.app, false);
+            Ok(structured_tool_result(json!(status), false))
+        }
+        Err(error) => {
+            emit_mcp_tool_call_completed(&state.app, true);
+            Ok(write_error_result(
+                &error.code,
+                &error.message,
+                error.outcome_unknown,
+            ))
+        }
+    }
 }
 
 fn emit_mcp_tool_call_completed(app: &Arc<AppState>, failed: bool) {
@@ -873,6 +1203,9 @@ fn tool_description(name: &str) -> &'static str {
         "datanexa_policy_check" => {
             "Validate SQL against DataNexa read-only policy without executing it. Provide either kind (sqlite, mysql, or postgres) or connection_id."
         }
+        WRITE_TARGETS_TOOL => "Discover explicitly authorized write targets and their canonical target_id. Use target_id in submit_write instead of guessing schema or table names. Capability unchecked is not permission to execute; every write still requires native approval.",
+        WRITE_SUBMIT_TOOL => "Submit one structured single-row INSERT, primary-key UPDATE, or primary-key DELETE for native user approval. Discover authorized targets with datanexa_list_write_targets and pass target_id. On INSERT, columns with defaults or auto-increment may be omitted and the database fills them in. The call waits up to 45 seconds for the local decision and usually returns the final outcome directly; if the user has not decided within that window it answers status pending plus a request_id to poll with datanexa_get_write_status. Never accepts SQL. Reuse an idempotency key only for the same request.",
+        WRITE_STATUS_TOOL => "Read the status of your own write request without executing SQL. Use it when datanexa_submit_write answered status pending. An unknown outcome must be reconciled manually, never retried with a new key.",
         _ => "Unknown DataNexa MCP tool.",
     }
 }
@@ -884,6 +1217,217 @@ fn tool(name: &str, description: &str, input_schema: Value, output_schema: Value
         "inputSchema": input_schema,
         "outputSchema": output_schema
     })
+}
+
+fn write_value_schema() -> Value {
+    json!({ "oneOf": [
+        { "type": "object", "required": ["type"], "additionalProperties": false,
+          "properties": { "type": { "const": "null" } } },
+        { "type": "object", "required": ["type", "value"], "additionalProperties": false,
+          "properties": { "type": { "const": "boolean" }, "value": { "type": "boolean" } } },
+        { "type": "object", "required": ["type", "value"], "additionalProperties": false,
+          "description": "Numbers are exact decimal strings, never JSON numbers, so integers and decimals cannot lose precision (for example \"12\" or \"12.50\").",
+          "properties": { "type": { "const": "number" }, "value": { "type": "string", "maxLength": 128 } } },
+        { "type": "object", "required": ["type", "value"], "additionalProperties": false,
+          "description": "Text also carries dates, timestamps, JSON and UUID values; each column's accepted shape is described by the capability listing.",
+          "properties": { "type": { "const": "text" }, "value": { "type": "string", "maxLength": 16384 } } }
+    ] })
+}
+
+fn write_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "oneOf": [
+            {
+                "required": ["request_id", "connection_id", "operation", "schema", "table", "status", "created_at", "expires_at", "revision"],
+                "properties": {
+                    "request_id": { "type": "string" },
+                    "connection_id": { "type": "string" },
+                    "operation": { "enum": ["insert", "update", "delete"] },
+                    "schema": { "type": "string" },
+                    "table": { "type": "string" },
+                    "status": { "type": "string" },
+                    "created_at": { "type": "string" },
+                    "expires_at": { "type": "string" },
+                    "revision": { "type": "integer" }
+                }
+            },
+            {
+                "required": ["code", "message", "outcome_unknown"],
+                "properties": {
+                    "code": { "type": "string" },
+                    "message": { "type": "string" },
+                    "outcome_unknown": { "type": "boolean" }
+                }
+            }
+        ]
+    })
+}
+
+fn write_submit_tool() -> Value {
+    let mut definition = tool(
+        WRITE_SUBMIT_TOOL,
+        tool_description(WRITE_SUBMIT_TOOL),
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["connection_id", "operation", "idempotency_key"],
+            "anyOf": [{"required":["target_id"]},{"required":["schema","table"]}],
+            "allOf": [
+                {"if": {"properties": {"operation": {"enum": ["update", "delete"]}}}, "then": {"required": ["primary_key"]}},
+                {"if": {"properties": {"operation": {"enum": ["insert", "update"]}}}, "then": {"required": ["values"]}}
+            ],
+            "properties": {
+                "connection_id": { "type": "string" },
+                "target_id": { "type": "string", "description": "Canonical target_id from datanexa_list_write_targets; preferred over handwritten names." },
+                "operation": { "type": "string", "enum": ["insert", "update", "delete"] },
+                "schema": { "type": "string", "description": "Legacy schema/catalog name. Resolve it from database metadata; never use the connection display name." },
+                "table": { "type": "string" },
+                "values": { "type": "object", "additionalProperties": write_value_schema(), "description": "Columns to write. On INSERT, omit columns that have a default or are auto-generated; the database fills them in. Not allowed for DELETE." },
+                "primary_key": { "type": "object", "additionalProperties": write_value_schema(), "default": {}, "description": "Every primary-key column, for UPDATE and DELETE. Must not contain extra predicate columns." },
+                "idempotency_key": { "type": "string" },
+                "reason": { "type": "string" }
+            }
+        }),
+        write_output_schema(),
+    );
+    definition["annotations"] = json!({
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+    });
+    definition
+}
+
+fn write_targets_tool() -> Value {
+    let mut definition = tool(
+        WRITE_TARGETS_TOOL,
+        tool_description(WRITE_TARGETS_TOOL),
+        json!({"type":"object","additionalProperties":false,"required":["connection_id"],"properties":{"connection_id":{"type":"string"},"target_id":{"type":"string","description":"Inspect this authorized target's capability when supplied."}}}),
+        json!({"type":"object"}),
+    );
+    definition["annotations"] = json!({"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false});
+    definition
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WriteTargetsArguments {
+    connection_id: String,
+    target_id: Option<String>,
+}
+
+async fn list_write_targets(
+    state: &McpHttpState,
+    actor: &AuditActor,
+    token_id: &str,
+    arguments: Value,
+) -> Result<Value, crate::write::WriteError> {
+    let args: WriteTargetsArguments = serde_json::from_value(arguments).map_err(|_| {
+        crate::write_catalog::failure(
+            "invalid_request",
+            "Provide a connection_id to discover authorized write targets.",
+        )
+    })?;
+    if !actor.allows_connection(&args.connection_id) {
+        return Err(crate::write_catalog::failure(
+            "permission_denied",
+            "This token cannot access the requested connection.",
+        ));
+    }
+    let _permits = acquire_write_permits(&state.app, &args.connection_id)
+        .await
+        .map_err(|_| {
+            crate::write_catalog::failure(
+                "capacity_exceeded",
+                "Metadata capacity is busy; retry discovery later.",
+            )
+        })?;
+    let _guard = state.app.config_transaction.read().await;
+    let config = state.app.config.read().await;
+    let connection = config
+        .connections
+        .iter()
+        .find(|connection| {
+            connection.id == args.connection_id && connection.enabled && connection.write_enabled
+        })
+        .cloned()
+        .ok_or_else(|| {
+            crate::write_catalog::failure(
+                "write_disabled",
+                "Writes are not enabled for this connection.",
+            )
+        })?;
+    drop(config);
+    let mut operations = Vec::new();
+    for operation in ["insert", "update", "delete"] {
+        if state
+            .app
+            .access
+            .allows_write(token_id, &args.connection_id, operation)
+            .await
+            .map_err(|_| {
+                crate::write_catalog::failure(
+                    "authorization_unavailable",
+                    "Write permissions could not be read.",
+                )
+            })?
+        {
+            operations.push(operation.to_string());
+        }
+    }
+    if operations.is_empty() {
+        return Err(crate::write_catalog::failure(
+            "write_denied",
+            "No write operations are granted to this token for the connection.",
+        ));
+    }
+    if let Some(id) = args.target_id {
+        let (schema, table) = crate::write_catalog::resolve_allowed(
+            &state.app.db,
+            &connection,
+            &state.app.vault,
+            Some(&id),
+            "",
+            "",
+        )
+        .await?;
+        let mut detail =
+            crate::write_catalog::inspect_target(&connection, &state.app.vault, &schema, &table)
+                .await?;
+        detail
+            .target
+            .operations
+            .retain(|operation| operations.contains(operation));
+        return Ok(json!({"connection_id":connection.id,"capability":detail}));
+    }
+    let resolved =
+        crate::write_catalog::resolve_saved(&state.app.db, &connection, &state.app.vault).await;
+    Ok(
+        json!({"connection_id":connection.id,"operations":operations,"targets":resolved.targets,"unresolved":resolved.unresolved,"requires_approval":true}),
+    )
+}
+
+fn write_status_tool() -> Value {
+    let mut definition = tool(
+        WRITE_STATUS_TOOL,
+        tool_description(WRITE_STATUS_TOOL),
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["request_id"],
+            "properties": { "request_id": { "type": "string", "minLength": 1, "maxLength": 128 } }
+        }),
+        write_output_schema(),
+    );
+    definition["annotations"] = json!({
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+    });
+    definition
 }
 
 fn connection_schema() -> Value {
@@ -1210,6 +1754,9 @@ async fn call_tool_audited(
         false
     };
     let result = call_tool(app.clone(), actor.clone(), params, &cancellation).await;
+    // The query is finished. Circuit-breaker revocation takes the exclusive
+    // configuration barrier, so do not retain its read guard while evaluating.
+    drop(_config_transaction);
     let redact_errors = app.config.read().await.settings.audit_redact_sql_literals;
     let breaker_token_id = actor.token_id.clone();
     if let Err(error) = &result {
@@ -1912,6 +2459,9 @@ mod tests {
             app_handle: None,
             store,
             config: tokio::sync::RwLock::new(config),
+            config_error: std::sync::RwLock::new(None),
+            writes: crate::write_operations::WriteManager::for_test(),
+            execution_limits: ExecutionLimits::default(),
             config_transaction: tokio::sync::RwLock::new(()),
             snapshot_sequence: tokio::sync::Mutex::new(0),
             vault: CredentialVault::new(),
@@ -1936,6 +2486,9 @@ mod tests {
             app_handle: None,
             store: ConfigStore::for_test(invalid_target),
             config: tokio::sync::RwLock::new(config),
+            config_error: std::sync::RwLock::new(None),
+            writes: crate::write_operations::WriteManager::for_test(),
+            execution_limits: ExecutionLimits::default(),
             config_transaction: tokio::sync::RwLock::new(()),
             snapshot_sequence: tokio::sync::Mutex::new(0),
             vault: CredentialVault::new(),

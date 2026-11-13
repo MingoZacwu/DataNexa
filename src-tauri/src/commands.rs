@@ -14,7 +14,7 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::audit::AuditStatus;
 use crate::config::{
     clamp_with_log, default_max_result_bytes, default_port, is_known_tool, AppConfig,
-    ConfigLoadFailure, ConnectionConfig, DbKind, ServerConfig, SettingsConfig,
+    ConfigLoadFailure, ConnectionConfig, DbKind, ServerConfig, SettingsConfig, WriteTable,
 };
 use crate::db::ConnectionDiagnostics;
 use crate::debug_log;
@@ -56,6 +56,10 @@ pub struct AppSnapshot {
     pub auto_start_status: startup::AutoStartStatus,
     pub audit_migration: crate::audit::AuditMigrationState,
     pub access_tokens: Vec<crate::access_control::AccessTokenInfo>,
+    /// Requests prepared and waiting for a human decision. The approval window
+    /// opens by itself, so this only drives a manual "review" affordance for
+    /// requests whose window was closed without a decision.
+    pub pending_write_approvals: usize,
 }
 
 /// Boot-time health report. Deliberately separate from [`AppSnapshot`]: it must
@@ -208,7 +212,14 @@ pub async fn open_config_directory(state: State<'_, Arc<AppState>>) -> Result<()
 /// Quit the application from the boot recovery screen.
 #[tauri::command]
 pub fn exit_app(app: AppHandle) {
-    app.exit(0);
+    tauri::async_runtime::spawn(async move {
+        crate::request_app_exit(&app).await;
+    });
+}
+
+#[tauri::command]
+pub async fn restart_app(app: AppHandle) -> Result<(), String> {
+    crate::request_app_restart(&app).await
 }
 
 #[tauri::command]
@@ -393,6 +404,7 @@ pub async fn set_access_token_enabled(
     enabled: bool,
 ) -> Result<AppSnapshot, String> {
     ensure_token_management_enabled(state.inner()).await?;
+    let _transaction = lock_token_write_change(state.inner(), &id).await?;
     state
         .access
         .set_enabled(&id, enabled)
@@ -407,6 +419,7 @@ pub async fn rotate_access_token(
     id: String,
 ) -> Result<AccessTokenSecretResult, String> {
     ensure_token_management_enabled(state.inner()).await?;
+    let _transaction = lock_token_write_change(state.inner(), &id).await?;
     let secret = state.access.rotate(&id).await.map_err(to_client_error)?;
     Ok(AccessTokenSecretResult {
         token_id: id,
@@ -420,6 +433,7 @@ pub async fn delete_access_token(
     id: String,
 ) -> Result<AppSnapshot, String> {
     ensure_token_management_enabled(state.inner()).await?;
+    let _transaction = lock_token_write_change(state.inner(), &id).await?;
     state.access.delete(&id).await.map_err(to_client_error)?;
     snapshot(state.inner()).await.map_err(to_client_error)
 }
@@ -445,6 +459,7 @@ pub async fn set_token_connection_allowed(
     allowed: bool,
 ) -> Result<AppSnapshot, String> {
     ensure_token_management_enabled(state.inner()).await?;
+    let _transaction = lock_token_write_change(state.inner(), &token_id).await?;
     if !state
         .config
         .read()
@@ -471,12 +486,288 @@ pub async fn set_token_tool_allowed(
     allowed: bool,
 ) -> Result<AppSnapshot, String> {
     ensure_token_management_enabled(state.inner()).await?;
+    let _transaction = lock_token_write_change(state.inner(), &token_id).await?;
     state
         .access
         .set_tool_allowed(&token_id, &tool_name, allowed)
         .await
         .map_err(to_client_error)?;
     snapshot(state.inner()).await.map_err(to_client_error)
+}
+
+#[tauri::command]
+pub async fn set_token_write_allowed(
+    state: State<'_, Arc<AppState>>,
+    token_id: String,
+    connection_id: String,
+    operation: String,
+    allowed: bool,
+) -> Result<AppSnapshot, String> {
+    ensure_token_management_enabled(state.inner()).await?;
+    let _transaction = lock_token_write_change(state.inner(), &token_id).await?;
+    let config = state.config.read().await;
+    let connection = config
+        .connections
+        .iter()
+        .find(|connection| connection.id == connection_id)
+        .ok_or_else(|| "Connection not found".to_string())?;
+    if allowed
+        && (!connection.enabled
+            || !connection.write_enabled
+            || connection.write_tables.is_empty()
+            || connection.kind == DbKind::Jdbc)
+    {
+        return Err(
+            "Enable restricted writes and explicitly choose writable tables first.".to_string(),
+        );
+    }
+    drop(config);
+    state
+        .access
+        .set_write_allowed(&token_id, &connection_id, &operation, allowed)
+        .await
+        .map_err(to_client_error)?;
+    drop(_transaction);
+    snapshot(state.inner()).await.map_err(to_client_error)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WriteGrantInput {
+    pub token_id: String,
+    pub insert: bool,
+    pub update: bool,
+    pub delete: bool,
+}
+
+#[tauri::command]
+pub async fn get_write_schemas(
+    state: State<'_, Arc<AppState>>,
+    connection_id: String,
+) -> Result<Vec<crate::write_catalog::WriteSchema>, String> {
+    let _guard = state.config_transaction.read().await;
+    let connection = find_connection(state.inner(), &connection_id)
+        .await
+        .map_err(to_client_error)?;
+    crate::write_catalog::list_schemas(&state.db, &connection, &state.vault)
+        .await
+        .map_err(|error| error.message)
+}
+
+#[tauri::command]
+pub async fn get_write_tables(
+    state: State<'_, Arc<AppState>>,
+    connection_id: String,
+    schema: String,
+    search: Option<String>,
+) -> Result<Vec<crate::write_catalog::WriteTarget>, String> {
+    let _guard = state.config_transaction.read().await;
+    let connection = find_connection(state.inner(), &connection_id)
+        .await
+        .map_err(to_client_error)?;
+    crate::write_catalog::list_tables(
+        &state.db,
+        &connection,
+        &state.vault,
+        &schema,
+        search.as_deref(),
+    )
+    .await
+    .map_err(|error| error.message)
+}
+
+#[tauri::command]
+pub async fn save_write_configuration(
+    state: State<'_, Arc<AppState>>,
+    connection_id: String,
+    enabled: bool,
+    tables: Vec<WriteTable>,
+    grants: Vec<WriteGrantInput>,
+) -> Result<AppSnapshot, String> {
+    if tables.len() > 64 || grants.len() > 1000 {
+        return Err("The write configuration exceeds the supported selection limit.".to_string());
+    }
+    let previous = find_connection(state.inner(), &connection_id)
+        .await
+        .map_err(to_client_error)?;
+    if previous.kind == DbKind::Jdbc {
+        return Err("JDBC write configuration is not supported.".to_string());
+    }
+    let mut resolved = Vec::new();
+    for selected in tables {
+        // An entry already saved with the same identity was validated when it
+        // was added, and the write path re-reads its metadata before every
+        // execution. Re-probing it on each autosave would turn a grant toggle
+        // into a full metadata scan of the connection. This also keeps disabling
+        // write access possible while the database is unreachable.
+        if previous.write_tables.contains(&selected) {
+            resolved.push(selected);
+            continue;
+        }
+        let (schema, table) = crate::write_catalog::resolve_target(
+            &state.db,
+            &previous,
+            &state.vault,
+            &selected.schema,
+            &selected.table,
+        )
+        .await
+        .map_err(|error| error.message)?;
+        let identity = crate::write_catalog::target_id(&previous, &schema, &table);
+        if selected
+            .target_id
+            .as_ref()
+            .is_some_and(|id| id != &identity)
+        {
+            return Err("The selected table identity changed; refresh the table list.".to_string());
+        }
+        let capability = crate::write::inspect_table(&previous, &state.vault, &schema, &table)
+            .await
+            .map_err(|error| error.message)?;
+        if !capability.insert && !capability.update && !capability.delete {
+            return Err(capability.reason.unwrap_or_else(|| {
+                "The selected table cannot be written.".to_string()
+            }));
+        }
+        if !resolved
+            .iter()
+            .any(|entry: &WriteTable| entry.target_id.as_ref() == Some(&identity))
+        {
+            resolved.push(WriteTable {
+                schema,
+                table,
+                target_id: Some(identity),
+            });
+        }
+    }
+    let _guard = lock_connection_write_change(state.inner(), &connection_id).await?;
+    let current = find_connection(state.inner(), &connection_id)
+        .await
+        .map_err(to_client_error)?;
+    if serde_json::to_value(&previous).map_err(to_client_error)?
+        != serde_json::to_value(&current).map_err(to_client_error)?
+    {
+        return Err(
+            "The connection changed while tables were being selected. Reload before saving."
+                .to_string(),
+        );
+    }
+    let tokens = state.access.list().await.map_err(to_client_error)?;
+    let mut seen = HashSet::new();
+    let mut desired = Vec::new();
+    for grant in grants {
+        if !seen.insert(grant.token_id.clone()) {
+            return Err("Duplicate access token in write configuration.".to_string());
+        }
+        let token = tokens
+            .iter()
+            .find(|token| token.id == grant.token_id)
+            .ok_or_else(|| "An access token changed; reload before saving.".to_string())?;
+        if (grant.insert || grant.update || grant.delete)
+            && (!token.enabled
+                || token.denied_connections.contains(&connection_id)
+                || token
+                    .denied_tools
+                    .iter()
+                    .any(|tool| tool == crate::config::WRITE_SUBMIT_TOOL))
+        {
+            let already_granted = [
+                ("insert", grant.insert),
+                ("update", grant.update),
+                ("delete", grant.delete),
+            ]
+            .iter()
+            .all(|(operation, allowed)| {
+                !allowed
+                    || token.write_grants.iter().any(|old| {
+                        old.connection_id == connection_id && old.operation == *operation
+                    })
+            });
+            if !already_granted {
+                return Err("Allow this token to access the connection and submit tool before granting new write operations.".to_string());
+            }
+        }
+        desired.push((grant.token_id, grant.insert, grant.update, grant.delete));
+    }
+    let mut candidate = state.config.read().await.clone();
+    let connection = candidate
+        .connections
+        .iter_mut()
+        .find(|connection| connection.id == connection_id)
+        .ok_or_else(|| "Connection not found".to_string())?;
+    connection.write_enabled = enabled;
+    connection.write_tables = resolved;
+    candidate
+        .normalize_and_validate()
+        .map_err(to_client_error)?;
+    // Cross-store updates cannot be atomic. Revoke first and keep writes
+    // disabled on any persistence failure, rather than retaining broader grants.
+    state
+        .access
+        .clear_connection_write_grants(&connection_id)
+        .await
+        .map_err(to_client_error)?;
+    persist_config_candidate(&state.store, &state.config, candidate)
+        .await
+        .map_err(to_client_error)?;
+    if let Err(error) = state
+        .access
+        .replace_connection_write_grants(&connection_id, &desired)
+        .await
+    {
+        if let Some(connection) = state
+            .config
+            .write()
+            .await
+            .connections
+            .iter_mut()
+            .find(|connection| connection.id == connection_id)
+        {
+            connection.write_enabled = false;
+        }
+        return Err(format!(
+            "Write permissions were not saved; writes remain unavailable. {}",
+            to_client_error(error)
+        ));
+    }
+    drop(_guard);
+    snapshot(state.inner()).await.map_err(to_client_error)
+}
+
+async fn lock_token_write_change<'a>(
+    state: &'a Arc<AppState>,
+    token_id: &str,
+) -> Result<tokio::sync::RwLockWriteGuard<'a, ()>, String> {
+    state
+        .writes
+        .invalidate_token(token_id)
+        .await
+        .map_err(|error| error.message)?;
+    let transaction = state.config_transaction.write().await;
+    state
+        .writes
+        .invalidate_token(token_id)
+        .await
+        .map_err(|error| error.message)?;
+    Ok(transaction)
+}
+
+async fn lock_connection_write_change<'a>(
+    state: &'a Arc<AppState>,
+    connection_id: &str,
+) -> Result<tokio::sync::RwLockWriteGuard<'a, ()>, String> {
+    state
+        .writes
+        .invalidate_connection(connection_id)
+        .await
+        .map_err(|error| error.message)?;
+    let transaction = state.config_transaction.write().await;
+    state
+        .writes
+        .invalidate_connection(connection_id)
+        .await
+        .map_err(|error| error.message)?;
+    Ok(transaction)
 }
 
 async fn ensure_token_management_enabled(state: &Arc<AppState>) -> Result<(), String> {
@@ -934,6 +1225,8 @@ async fn apply_connection_import(
             query_timeout_ms: portable.query_timeout_ms,
             max_connections: portable.max_connections,
             max_result_bytes: portable.max_result_bytes,
+            write_enabled: false,
+            write_tables: Vec::new(),
         };
         if !append_importable_connection(&mut candidate, connection, &text, |bundle_id| {
             state.jdbc.ensure_bundle_exists(bundle_id)
@@ -1029,7 +1322,7 @@ pub async fn upsert_connection(
     let password = input.password.filter(|value| !value.is_empty());
     let updates_credential = password.is_some();
     {
-        let _transaction = state.config_transaction.write().await;
+        let _transaction = lock_connection_write_change(state.inner(), &connection.id).await?;
         if connection.kind == DbKind::Jdbc {
             state
                 .jdbc
@@ -1051,6 +1344,26 @@ pub async fn upsert_connection(
         let existing_ref = existing
             .as_ref()
             .and_then(|existing| existing.credential_ref.clone());
+        let write_target_changed = existing.as_ref().is_some_and(|previous| {
+            previous.kind != connection.kind
+                || previous.database != connection.database
+                || previous.host != connection.host
+                || previous.port != connection.port
+                || previous.username != connection.username
+                || previous.ssl_mode != connection.ssl_mode
+                || updates_credential
+                || clear_password
+        });
+        if write_target_changed {
+            // A grant is for a particular database and credential, not a reusable name.
+            connection.write_enabled = false;
+            connection.write_tables.clear();
+            state
+                .access
+                .clear_connection_write_grants(&connection.id)
+                .await
+                .map_err(to_client_error)?;
+        }
         let trusted_ref = existing_ref
             .clone()
             .unwrap_or_else(|| CredentialVault::credential_ref(&connection.id));
@@ -1080,7 +1393,7 @@ pub async fn upsert_connection(
         }
         candidate
             .normalize_and_validate()
-            .map_err(|error| to_jdbc_client_error(error, &text))?;
+            .map_err(to_client_error)?;
         let credential_to_delete = candidate
             .connections
             .iter()
@@ -1164,7 +1477,12 @@ pub async fn delete_connection(
     state: State<'_, Arc<AppState>>,
     id: String,
 ) -> Result<AppSnapshot, String> {
-    let _transaction = state.config_transaction.write().await;
+    let _transaction = lock_connection_write_change(state.inner(), &id).await?;
+    state
+        .access
+        .clear_connection_write_grants(&id)
+        .await
+        .map_err(to_client_error)?;
     let mut candidate = state.config.read().await.clone();
     let connection_name = candidate
         .connections
@@ -1808,6 +2126,7 @@ async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
         }
     }
     let access_tokens = state.access.list().await?;
+    let pending_write_approvals = state.writes.pending_approvals().await;
     Ok(AppSnapshot {
         version: *sequence,
         server_status: mcp::status(state).await,
@@ -1819,6 +2138,7 @@ async fn snapshot(state: &Arc<AppState>) -> anyhow::Result<AppSnapshot> {
         auto_start_status: startup::status(),
         audit_migration: state.audit.migration_state().await,
         access_tokens,
+        pending_write_approvals,
         config,
     })
 }
@@ -1876,7 +2196,17 @@ async fn commit_config<T>(
     state: &Arc<AppState>,
     update: impl FnOnce(&mut AppConfig) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
+    state
+        .writes
+        .invalidate_all()
+        .await
+        .map_err(|error| anyhow::anyhow!(error.message))?;
     let _transaction = state.config_transaction.write().await;
+    state
+        .writes
+        .invalidate_all()
+        .await
+        .map_err(|error| anyhow::anyhow!(error.message))?;
     let mut candidate = state.config.read().await.clone();
     let result = update(&mut candidate)?;
     candidate.normalize_and_validate()?;
@@ -1889,7 +2219,21 @@ async fn commit_config_invalidating<T>(
     connection_ids: &[String],
     update: impl FnOnce(&mut AppConfig) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
+    for id in connection_ids {
+        state
+            .writes
+            .invalidate_connection(id)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.message))?;
+    }
     let _transaction = state.config_transaction.write().await;
+    for id in connection_ids {
+        state
+            .writes
+            .invalidate_connection(id)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.message))?;
+    }
     let mut candidate = state.config.read().await.clone();
     let result = update(&mut candidate)?;
     candidate.normalize_and_validate()?;
@@ -2373,6 +2717,8 @@ mod tests {
             query_timeout_ms: 1_000,
             max_connections: 1,
             max_result_bytes: default_max_result_bytes(),
+            write_enabled: false,
+            write_tables: Vec::new(),
         });
         config
             .normalize_and_validate()
@@ -2409,6 +2755,8 @@ mod tests {
             query_timeout_ms: 1_000,
             max_connections: 1,
             max_result_bytes: default_max_result_bytes(),
+            write_enabled: false,
+            write_tables: Vec::new(),
         };
         let jdbc = ConnectionConfig {
             id: "imported_jdbc".to_string(),
@@ -2428,6 +2776,8 @@ mod tests {
             query_timeout_ms: 1_000,
             max_connections: 1,
             max_result_bytes: default_max_result_bytes(),
+            write_enabled: false,
+            write_tables: Vec::new(),
         };
 
         assert!(append_importable_connection(

@@ -3,7 +3,8 @@ import * as Switch from "@radix-ui/react-switch";
 import clsx from "clsx";
 import { ChevronDown, Clipboard, KeyRound, Pencil, Power, RefreshCw, ShieldAlert, Trash2, X } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
-import type { I18nMessages } from "../../i18n";
+import type { I18nMessages, Locale } from "../../i18n";
+import { writeToolName } from "../../write-i18n";
 import type { AccessTokenInfo, ConnectionConfig, McpToolInfo } from "../../types";
 import { DATABASE_LOGOS } from "../../app/assets";
 import { toolDisplayName, toolIcon } from "../../app/utils";
@@ -13,12 +14,13 @@ type PermissionTab = "connections" | "tools";
 type TokenDialogMode = "create" | "rename" | "rotate" | "delete" | null;
 
 export function AccessControlView({
-  t, tokens, connections, tools, requireToken, busy, selectedId, onSelectedIdChange,
+  t, locale, tokens, connections, tools, requireToken, busy, selectedId, onSelectedIdChange,
   createRequest, onCreateRequestHandled,
   onEnableAuthentication, onCreate, onRename, onToggle, onRotate, onDelete,
   onCopyPrompt, onConnectionAllowed, onToolAllowed
 }: {
   t: I18nMessages;
+  locale: Locale;
   tokens: AccessTokenInfo[];
   connections: ConnectionConfig[];
   tools: McpToolInfo[];
@@ -122,7 +124,7 @@ export function AccessControlView({
                 {tab === "tools" && <div className="access-permission-list page-scroll-list">{tools.map((tool) => {
                   const allowed = tool.enabled && !selected.denied_tools.includes(tool.name);
                   const ToolIcon = toolIcon(tool.name);
-                  return <PermissionRow key={tool.name} icon={<ToolIcon size={16} />} iconClassName="tool-icon" title={toolDisplayName(t, tool.name)} detail={tool.enabled ? tool.name : t.access.globallyDisabled} checked={allowed} disabled={busy || !tool.enabled} globallyDisabled={!tool.enabled} label={t.access.allowTool} onChange={(checked) => onToolAllowed(selected.id, tool.name, checked)} />;
+                  return <PermissionRow key={tool.name} icon={<ToolIcon size={16} />} iconClassName="tool-icon" title={writeToolName(locale, tool.name) ?? toolDisplayName(t, tool.name)} detail={tool.enabled ? tool.name : t.access.globallyDisabled} checked={allowed} disabled={busy || !tool.enabled} globallyDisabled={!tool.enabled} label={t.access.allowTool} onChange={(checked) => onToolAllowed(selected.id, tool.name, checked)} />;
                 })}</div>}
               </div>
             </>

@@ -8,6 +8,7 @@ use sqlparser::ast::{Value, VisitMut, VisitorMut};
 use sqlparser::dialect::{Dialect, GenericDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
 use sqlparser::parser::Parser;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::{Sqlite, Transaction};
 use tauri::{AppHandle, Manager};
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
@@ -70,11 +71,48 @@ pub struct AuditEvent {
     pub token_deleted: bool,
     #[serde(default)]
     pub token_enabled: bool,
+    #[serde(default)]
+    pub request_id: Option<String>,
+    #[serde(default)]
+    pub operation: Option<String>,
+    #[serde(default)]
+    pub schema: Option<String>,
+    #[serde(default)]
+    pub table: Option<String>,
+    #[serde(default)]
+    pub reason_code: Option<String>,
+    #[serde(default)]
+    pub write_status: Option<String>,
+    #[serde(default)]
+    pub revision: Option<u64>,
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub stage: Option<String>,
+    #[serde(default)]
+    pub outcome_unknown: Option<bool>,
+}
+
+/// Audit projection only: never persist SQL, request values, or idempotency keys.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct WriteAuditMetadata {
+    request_id: Option<String>,
+    operation: Option<String>,
+    schema: Option<String>,
+    table: Option<String>,
+    reason_code: Option<String>,
+    write_status: Option<String>,
+    revision: Option<u64>,
+    updated_at: Option<DateTime<Utc>>,
+    stage: Option<String>,
+    outcome_unknown: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
 pub struct AuditActor {
     pub token_id: Option<String>,
+    pub authentication_fingerprint: Option<String>,
     pub source: &'static str,
     pub denied_connections: Vec<String>,
     pub denied_tools: Vec<String>,
@@ -88,6 +126,7 @@ impl AuditActor {
     ) -> Self {
         Self {
             token_id: Some(token_id),
+            authentication_fingerprint: None,
             source: "token",
             denied_connections,
             denied_tools,
@@ -96,6 +135,7 @@ impl AuditActor {
     pub fn unauthenticated() -> Self {
         Self {
             token_id: None,
+            authentication_fingerprint: None,
             source: "unauthenticated",
             denied_connections: Vec::new(),
             denied_tools: Vec::new(),
@@ -104,6 +144,7 @@ impl AuditActor {
     pub fn system() -> Self {
         Self {
             token_id: None,
+            authentication_fingerprint: None,
             source: "system",
             denied_connections: Vec::new(),
             denied_tools: Vec::new(),
@@ -115,6 +156,7 @@ impl AuditActor {
     pub fn system_for_token(token_id: String) -> Self {
         Self {
             token_id: Some(token_id),
+            authentication_fingerprint: None,
             source: "system",
             denied_connections: Vec::new(),
             denied_tools: Vec::new(),
@@ -235,7 +277,7 @@ impl AuditLogger {
         sqlx::query("PRAGMA journal_mode=WAL")
             .execute(&self.pool)
             .await?;
-        sqlx::query("CREATE TABLE IF NOT EXISTS audit_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL UNIQUE, timestamp_ms INTEGER NOT NULL, connection_id TEXT, connection_name TEXT, tool TEXT NOT NULL, status TEXT NOT NULL, reason TEXT, elapsed_ms INTEGER, row_count INTEGER, sql TEXT, token_id TEXT, access_source TEXT NOT NULL DEFAULT 'legacy')").execute(&self.pool).await?;
+        sqlx::query("CREATE TABLE IF NOT EXISTS audit_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL UNIQUE, timestamp_ms INTEGER NOT NULL, connection_id TEXT, connection_name TEXT, tool TEXT NOT NULL, status TEXT NOT NULL, reason TEXT, elapsed_ms INTEGER, row_count INTEGER, sql TEXT, token_id TEXT, access_source TEXT NOT NULL DEFAULT 'legacy', write_metadata TEXT)").execute(&self.pool).await?;
         let columns =
             sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info('audit_events')")
                 .fetch_all(&self.pool)
@@ -252,6 +294,16 @@ impl AuditLogger {
             .execute(&self.pool)
             .await?;
         }
+        if !columns.iter().any(|column| column == "write_metadata") {
+            sqlx::query("ALTER TABLE audit_events ADD COLUMN write_metadata TEXT")
+                .execute(&self.pool)
+                .await?;
+        }
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS audit_meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL)",
+        )
+        .execute(&self.pool)
+        .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp ON audit_events(timestamp_ms DESC)").execute(&self.pool).await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_audit_events_connection ON audit_events(connection_id, seq DESC)").execute(&self.pool).await?;
         sqlx::query(
@@ -269,7 +321,7 @@ impl AuditLogger {
         )
         .execute(&self.pool)
         .await?;
-        sqlx::query("PRAGMA user_version = 1")
+        sqlx::query("PRAGMA user_version = 2")
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -334,12 +386,7 @@ impl AuditLogger {
             processed: total,
             total,
         };
-        let cutoff_ms = retention_cutoff_ms(retention_days);
-        if let Err(error) = sqlx::query("DELETE FROM audit_events WHERE timestamp_ms < ?")
-            .bind(cutoff_ms)
-            .execute(&mut *tx)
-            .await
-        {
+        if let Err(error) = trim_transaction(&mut tx, retention_days).await {
             return self.fail(error).await;
         }
         if let Err(error) = tx.commit().await {
@@ -401,9 +448,7 @@ impl AuditLogger {
         }
         let clear_result = async {
             let mut transaction = self.pool.begin().await?;
-            sqlx::query("DELETE FROM audit_events")
-                .execute(&mut *transaction)
-                .await?;
+            clear_transaction(&mut transaction).await?;
             sqlx::query("DELETE FROM sqlite_sequence WHERE name = 'audit_events'")
                 .execute(&mut *transaction)
                 .await?;
@@ -473,7 +518,7 @@ impl AuditLogger {
             sqlx::query("INSERT INTO audit_events (event_id,timestamp_ms,connection_id,connection_name,tool,status,reason,elapsed_ms,row_count,sql,token_id,access_source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
                 .bind(Uuid::new_v4().to_string()).bind(Utc::now().timestamp_millis()).bind(connection_id).bind(connection_name).bind(tool.into())
                 .bind(status_text(&status)).bind(reason).bind(elapsed_ms.map(|v| v as i64)).bind(row_count.map(|v| v as i64)).bind(sql.map(|v| truncate_sql(v.0))).bind(actor.token_id).bind(actor.source).execute(&mut *tx).await?;
-            sqlx::query("DELETE FROM audit_events WHERE timestamp_ms < ?").bind(retention_cutoff_ms(retention_days)).execute(&mut *tx).await?;
+            trim_transaction(&mut tx, retention_days).await?;
             tx.commit().await?;
             Ok::<(), anyhow::Error>(())
         }.await;
@@ -488,15 +533,147 @@ impl AuditLogger {
         })
     }
 
+    /// Projects one durable request into the ordinary audit list. Replaying a
+    /// snapshot never advances an older revision or recreates cleared history.
+    pub async fn sync_write_status(
+        &self,
+        status: &crate::write_operations::WriteStatus,
+        connection_name: Option<String>,
+        retention_days: u32,
+    ) -> anyhow::Result<()> {
+        let result = async {
+            if !self.is_ready().await {
+                return Err(anyhow::anyhow!("audit migration is not ready"));
+            }
+            let _guard = self.persist_lock.lock().await;
+            self.ensure_initialized().await?;
+            let mut tx = self.pool.begin().await?;
+            let created_ms = status.created_at.timestamp_millis();
+            let excluded = sqlx::query_scalar::<_, i64>(
+                "SELECT EXISTS(SELECT 1 FROM audit_meta WHERE (key='clear_watermark_ms' AND value>=?) OR (key='retention_cutoff_ms' AND value>?))",
+            )
+            .bind(created_ms)
+            .bind(created_ms)
+            .fetch_one(&mut *tx)
+            .await?;
+            if excluded != 0 {
+                tx.commit().await?;
+                return Ok(());
+            }
+            if created_ms < retention_cutoff_ms(retention_days) {
+                trim_transaction(&mut tx, retention_days).await?;
+                tx.commit().await?;
+                return Ok(());
+            }
+            let event_id = format!("write:{}", status.request_id);
+            let existing = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT write_metadata FROM audit_events WHERE event_id=?",
+            )
+            .bind(&event_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            if let Some(Some(metadata)) = existing {
+                let stored: WriteAuditMetadata = serde_json::from_str(&metadata)?;
+                if stored.revision.is_some_and(|revision| revision >= status.revision) {
+                    tx.commit().await?;
+                    return Ok(());
+                }
+            }
+            let metadata = WriteAuditMetadata {
+                request_id: Some(status.request_id.clone()),
+                operation: Some(status.operation.as_str().to_string()),
+                schema: Some(status.schema.clone()),
+                table: Some(status.table.clone()),
+                reason_code: status.error_code.as_deref().map(safe_reason_code),
+                write_status: Some(write_status_text(status.status).to_string()),
+                revision: Some(status.revision),
+                updated_at: Some(status.updated_at),
+                stage: write_stage(status.status).map(str::to_string),
+                outcome_unknown: Some(status.outcome_unknown),
+            };
+            // WriteStatus carries only allowlisted error messages; user request
+            // reasons, parameter values and SQL must never enter this projection.
+            sqlx::query("INSERT INTO audit_events (event_id,timestamp_ms,connection_id,connection_name,tool,status,reason,elapsed_ms,row_count,sql,token_id,access_source,write_metadata) VALUES (?,?,?,?,?,?,?,NULL,?,NULL,?,'token',?) ON CONFLICT(event_id) DO UPDATE SET connection_name=COALESCE(excluded.connection_name,audit_events.connection_name),status=excluded.status,reason=excluded.reason,row_count=excluded.row_count,sql=NULL,write_metadata=excluded.write_metadata")
+                .bind(event_id)
+                .bind(created_ms)
+                .bind(&status.connection_id)
+                .bind(connection_name)
+                .bind("datanexa_submit_write")
+                .bind(status_text(&write_audit_status(status)))
+                .bind(status.error_message.as_deref().map(sanitize_reason))
+                .bind(status.affected_rows.and_then(|rows| i64::try_from(rows).ok()))
+                .bind(&status.token_id)
+                .bind(serde_json::to_string(&metadata)?)
+                .execute(&mut *tx)
+                .await?;
+            trim_transaction(&mut tx, retention_days).await?;
+            tx.commit().await?;
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+        result.map_err(|_| write_audit_storage_error())
+    }
+
+    /// Records a rejected submission that has no durable request ID. Callers
+    /// must supply a static, safe error message, never parser or database output.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn record_write_rejection(
+        &self,
+        actor: AuditActor,
+        connection_id: Option<String>,
+        operation: Option<String>,
+        schema: Option<String>,
+        table: Option<String>,
+        code: &str,
+        message: &str,
+        retention_days: u32,
+    ) -> anyhow::Result<()> {
+        let result = async {
+            if !self.is_ready().await {
+                return Err(anyhow::anyhow!("audit migration is not ready"));
+            }
+            let _guard = self.persist_lock.lock().await;
+            self.ensure_initialized().await?;
+            let now = Utc::now();
+            let metadata = WriteAuditMetadata {
+                operation: operation.filter(|value| matches!(value.as_str(), "insert" | "update" | "delete")),
+                schema: schema.filter(|value| safe_write_identifier(value)),
+                table: table.filter(|value| safe_write_identifier(value)),
+                reason_code: Some(safe_reason_code(code)),
+                write_status: Some("rejected".to_string()),
+                updated_at: Some(now),
+                stage: Some("submission".to_string()),
+                outcome_unknown: Some(false),
+                ..WriteAuditMetadata::default()
+            };
+            let mut tx = self.pool.begin().await?;
+            sqlx::query("INSERT INTO audit_events (event_id,timestamp_ms,connection_id,tool,status,reason,sql,token_id,access_source,write_metadata) VALUES (?,?,?,'datanexa_submit_write','denied',?,NULL,?,?,?)")
+                .bind(format!("write-attempt:{}", Uuid::new_v4()))
+                .bind(now.timestamp_millis())
+                .bind(connection_id)
+                .bind(sanitize_reason(message))
+                .bind(actor.token_id)
+                .bind(actor.source)
+                .bind(serde_json::to_string(&metadata)?)
+                .execute(&mut *tx)
+                .await?;
+            trim_transaction(&mut tx, retention_days).await?;
+            tx.commit().await?;
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+        result.map_err(|_| write_audit_storage_error())
+    }
+
     pub async fn trim(&self, retention_days: u32) -> anyhow::Result<()> {
         if !self.is_ready().await {
             return Ok(());
         }
+        let _guard = self.persist_lock.lock().await;
         self.ensure_initialized().await?;
-        sqlx::query("DELETE FROM audit_events WHERE timestamp_ms < ?")
-            .bind(retention_cutoff_ms(retention_days))
-            .execute(&self.pool)
-            .await?;
+        let mut tx = self.pool.begin().await?;
+        trim_transaction(&mut tx, retention_days).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -528,36 +705,165 @@ impl AuditLogger {
     }
     pub async fn list(&self) -> anyhow::Result<Vec<AuditEvent>> {
         self.ensure_initialized().await?;
-        let rows = sqlx::query_as::<_, (String, i64, Option<String>, Option<String>, String, String, Option<String>, Option<i64>, Option<i64>, Option<String>, Option<String>, String)>("SELECT event_id,timestamp_ms,connection_id,connection_name,tool,status,reason,elapsed_ms,row_count,sql,token_id,access_source FROM audit_events ORDER BY seq DESC LIMIT ?").bind(MAX_AUDIT_LIST_EVENTS as i64).fetch_all(&self.pool).await?;
-        Ok(rows
-            .into_iter()
-            .filter_map(|r| {
-                DateTime::<Utc>::from_timestamp_millis(r.1).map(|timestamp| AuditEvent {
-                    id: r.0,
-                    timestamp,
-                    connection_id: r.2,
-                    connection_name: r.3,
-                    tool: r.4,
-                    status: parse_status(&r.5),
-                    reason: r.6,
-                    elapsed_ms: r.7.map(|v| v as u64),
-                    row_count: r.8.map(|v| v as usize),
-                    sql: r.9,
-                    token_id: r.10,
-                    access_source: r.11,
-                    token_name: None,
-                    token_deleted: false,
-                    token_enabled: false,
-                })
-            })
-            .collect())
+        let rows = sqlx::query_as::<_, (String, i64, Option<String>, Option<String>, String, String, Option<String>, Option<i64>, Option<i64>, Option<String>, Option<String>, String, Option<String>)>("SELECT event_id,timestamp_ms,connection_id,connection_name,tool,status,reason,elapsed_ms,row_count,sql,token_id,access_source,write_metadata FROM audit_events ORDER BY timestamp_ms DESC,seq DESC LIMIT ?").bind(MAX_AUDIT_LIST_EVENTS as i64).fetch_all(&self.pool).await?;
+        let mut events = Vec::with_capacity(rows.len());
+        for row in rows {
+            let Some(timestamp) = DateTime::<Utc>::from_timestamp_millis(row.1) else {
+                continue;
+            };
+            let is_write = row.12.is_some();
+            let metadata = row
+                .12
+                .as_deref()
+                .map(serde_json::from_str::<WriteAuditMetadata>)
+                .transpose()
+                .map_err(|_| write_audit_storage_error())?
+                .unwrap_or_default();
+            events.push(AuditEvent {
+                id: row.0,
+                timestamp,
+                connection_id: row.2,
+                connection_name: row.3,
+                tool: row.4,
+                status: parse_status(&row.5),
+                reason: row.6,
+                elapsed_ms: row.7.map(|value| value as u64),
+                row_count: row.8.map(|value| value as usize),
+                sql: if is_write { None } else { row.9 },
+                token_id: row.10,
+                access_source: row.11,
+                token_name: None,
+                token_deleted: false,
+                token_enabled: false,
+                request_id: metadata.request_id,
+                operation: metadata.operation,
+                schema: metadata.schema,
+                table: metadata.table,
+                reason_code: metadata.reason_code,
+                write_status: metadata.write_status,
+                revision: metadata.revision,
+                updated_at: metadata.updated_at,
+                stage: metadata.stage,
+                outcome_unknown: metadata.outcome_unknown,
+            });
+        }
+        Ok(events)
     }
     pub async fn clear(&self) -> anyhow::Result<()> {
+        let _guard = self.persist_lock.lock().await;
         self.ensure_initialized().await?;
-        sqlx::query("DELETE FROM audit_events")
-            .execute(&self.pool)
-            .await?;
+        let mut tx = self.pool.begin().await?;
+        clear_transaction(&mut tx).await?;
+        tx.commit().await?;
         Ok(())
+    }
+}
+
+async fn trim_transaction(
+    tx: &mut Transaction<'_, Sqlite>,
+    retention_days: u32,
+) -> Result<(), sqlx::Error> {
+    // The cutoff only advances: expanding retention must not restore history
+    // already removed. Write timestamps remain their original creation time.
+    sqlx::query("INSERT INTO audit_meta (key,value) VALUES ('retention_cutoff_ms',?) ON CONFLICT(key) DO UPDATE SET value=MAX(audit_meta.value,excluded.value)")
+        .bind(retention_cutoff_ms(retention_days))
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("DELETE FROM audit_events WHERE timestamp_ms < (SELECT value FROM audit_meta WHERE key='retention_cutoff_ms')")
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+async fn clear_transaction(tx: &mut Transaction<'_, Sqlite>) -> Result<(), sqlx::Error> {
+    // Include future-dated events if the system clock moved backwards. Both
+    // the watermark and deletion commit together; the ledger is never touched.
+    sqlx::query("INSERT INTO audit_meta (key,value) VALUES ('clear_watermark_ms',MAX(?,COALESCE((SELECT MAX(timestamp_ms) FROM audit_events),?))) ON CONFLICT(key) DO UPDATE SET value=MAX(audit_meta.value,excluded.value)")
+        .bind(Utc::now().timestamp_millis())
+        .bind(Utc::now().timestamp_millis())
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("DELETE FROM audit_events")
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+fn write_audit_storage_error() -> anyhow::Error {
+    // Never log SQL errors or serialized records from this sensitive path.
+    crate::debug_log::error("audit", format_args!("write audit storage unavailable"));
+    anyhow::anyhow!("write audit storage unavailable")
+}
+
+/// Audit metadata only stores identifiers that are printable and bounded, so a
+/// hostile or garbled name cannot be used for log injection. Non-ASCII names are
+/// legitimate (server metadata may contain them), so they are not rejected.
+fn safe_write_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().count() <= 128
+        && !value.chars().any(|character| character.is_control())
+}
+
+fn safe_reason_code(code: &str) -> String {
+    if !code.is_empty()
+        && code.len() <= 64
+        && code
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        code.to_string()
+    } else {
+        "write_rejected".to_string()
+    }
+}
+
+fn write_status_text(status: crate::write_operations::WriteOperationStatus) -> &'static str {
+    use crate::write_operations::WriteOperationStatus;
+    match status {
+        WriteOperationStatus::Pending => "pending",
+        WriteOperationStatus::Rejected => "rejected",
+        WriteOperationStatus::Expired => "expired",
+        WriteOperationStatus::Cancelled => "cancelled",
+        WriteOperationStatus::Executing => "executing",
+        WriteOperationStatus::Committing => "committing",
+        WriteOperationStatus::Committed => "committed",
+        WriteOperationStatus::RolledBack => "rolled_back",
+        WriteOperationStatus::Failed => "failed",
+        WriteOperationStatus::Unknown => "unknown",
+    }
+}
+
+fn write_stage(status: crate::write_operations::WriteOperationStatus) -> Option<&'static str> {
+    use crate::write_operations::WriteOperationStatus;
+    match status {
+        WriteOperationStatus::Pending => Some("preparation_or_approval"),
+        WriteOperationStatus::Rejected | WriteOperationStatus::Expired => Some("approval"),
+        WriteOperationStatus::Executing => Some("execution"),
+        WriteOperationStatus::Committing | WriteOperationStatus::Committed => Some("commit"),
+        WriteOperationStatus::RolledBack => Some("rollback"),
+        WriteOperationStatus::Cancelled
+        | WriteOperationStatus::Failed
+        | WriteOperationStatus::Unknown => None,
+    }
+}
+
+fn write_audit_status(status: &crate::write_operations::WriteStatus) -> AuditStatus {
+    use crate::write_operations::WriteOperationStatus;
+    if status.outcome_unknown {
+        return AuditStatus::Error;
+    }
+    match status.status {
+        WriteOperationStatus::Committed => AuditStatus::Allowed,
+        WriteOperationStatus::Rejected | WriteOperationStatus::Cancelled => AuditStatus::Denied,
+        WriteOperationStatus::Expired => AuditStatus::Timeout,
+        WriteOperationStatus::Failed
+        | WriteOperationStatus::RolledBack
+        | WriteOperationStatus::Unknown => AuditStatus::Error,
+        // "Allowed" remains the authorization classification, not a success
+        // claim. Consumers must prefer write_status for in-flight operations.
+        WriteOperationStatus::Pending
+        | WriteOperationStatus::Executing
+        | WriteOperationStatus::Committing => AuditStatus::Allowed,
     }
 }
 

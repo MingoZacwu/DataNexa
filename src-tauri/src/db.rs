@@ -82,7 +82,7 @@ pub struct ConnectionDiagnostics {
 }
 
 #[derive(Clone)]
-enum ManagedPool {
+pub(crate) enum ManagedPool {
     Sqlite(SqlitePool),
     Mysql(MySqlPool),
     Postgres(PgPool),
@@ -268,7 +268,7 @@ impl DatabaseManager {
                 let rows = timeout(
                     query_timeout(config),
                     collect_metadata_rows(
-                        sqlx::query("SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() ORDER BY TABLE_NAME")
+                        sqlx::query("SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() ORDER BY TABLE_SCHEMA, TABLE_NAME")
                             .fetch(&pool),
                     ),
                 )
@@ -611,7 +611,7 @@ impl DatabaseManager {
         }
     }
 
-    async fn pool(
+    pub(crate) async fn pool(
         &self,
         config: &ConnectionConfig,
         vault: &CredentialVault,
@@ -936,7 +936,7 @@ fn annotate_connect_error(kind: &DbKind, error: sqlx::Error, text: &BackendText)
     error.into()
 }
 
-fn mysql_ssl_mode(config: &ConnectionConfig) -> anyhow::Result<MySqlSslMode> {
+pub(crate) fn mysql_ssl_mode(config: &ConnectionConfig) -> anyhow::Result<MySqlSslMode> {
     Ok(match config.ssl_mode.as_deref().unwrap_or("preferred") {
         "disable" | "disabled" => MySqlSslMode::Disabled,
         "prefer" | "preferred" => MySqlSslMode::Preferred,
@@ -947,7 +947,7 @@ fn mysql_ssl_mode(config: &ConnectionConfig) -> anyhow::Result<MySqlSslMode> {
     })
 }
 
-fn pg_ssl_mode(config: &ConnectionConfig) -> anyhow::Result<PgSslMode> {
+pub(crate) fn pg_ssl_mode(config: &ConnectionConfig) -> anyhow::Result<PgSslMode> {
     Ok(match config.ssl_mode.as_deref().unwrap_or("prefer") {
         "disable" | "disabled" => PgSslMode::Disable,
         "allow" => PgSslMode::Allow,
@@ -959,7 +959,7 @@ fn pg_ssl_mode(config: &ConnectionConfig) -> anyhow::Result<PgSslMode> {
     })
 }
 
-fn resolve_password(
+pub(crate) fn resolve_password(
     config: &ConnectionConfig,
     vault: &CredentialVault,
     password_override: Option<&str>,
@@ -1447,6 +1447,46 @@ const MYSQL_BINARY_FLAGGED_TYPE_NAMES: [&str; 6] = [
     "LONGBLOB",
 ];
 
+/// Strictly decodes a textual MySQL metadata column, including binary-flagged
+/// collations. Invalid UTF-8 and other type mismatches remain errors.
+pub(crate) fn mysql_metadata_text<I>(row: &MySqlRow, index: I) -> Result<String, sqlx::Error>
+where
+    I: sqlx::ColumnIndex<MySqlRow>,
+{
+    let index = index.index(row)?;
+    match row.try_get::<String, _>(index) {
+        Ok(value) => Ok(value),
+        Err(_)
+            if MYSQL_BINARY_FLAGGED_TYPE_NAMES
+                .contains(&row.columns()[index].type_info().name()) =>
+        {
+            // Metadata names are text even when MySQL flags their collation as
+            // binary. Reject invalid UTF-8 instead of replacing or hiding names.
+            let bytes = row.try_get::<Vec<u8>, _>(index)?;
+            String::from_utf8(bytes).map_err(|error| sqlx::Error::ColumnDecode {
+                index: index.to_string(),
+                source: Box::new(error.utf8_error()),
+            })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+pub(crate) fn mysql_metadata_optional_text<I>(
+    row: &MySqlRow,
+    index: I,
+) -> Result<Option<String>, sqlx::Error>
+where
+    I: sqlx::ColumnIndex<MySqlRow>,
+{
+    let index = index.index(row)?;
+    if row.try_get_raw(index)?.is_null() {
+        Ok(None)
+    } else {
+        mysql_metadata_text(row, index).map(Some)
+    }
+}
+
 /// Renders a MySQL value whose column is flagged binary.
 ///
 /// SQLx refuses to decode such a column as a string, so text with a binary
@@ -1555,6 +1595,8 @@ mod tests {
             query_timeout_ms: 2_000,
             max_connections: 1,
             max_result_bytes: crate::config::default_max_result_bytes(),
+            write_enabled: false,
+            write_tables: Vec::new(),
         }
     }
 

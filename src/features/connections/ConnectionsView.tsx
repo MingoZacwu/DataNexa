@@ -1,16 +1,19 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import clsx from "clsx";
-import { Cable, Database, MoreVertical, Power, SearchCheck, Trash2, X } from "lucide-react";
+import { Cable, Database, MoreVertical, PenLine, Power, SearchCheck, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { formatMessage, type I18nMessages } from "../../i18n";
+import { formatMessage, type I18nMessages, type Locale } from "../../i18n";
+import { writeMessages } from "../../write-i18n";
 import type { ConnectionConfig, DatabaseType, JdbcDriverBundle } from "../../types";
 import { DATABASE_LOGOS } from "../../app/assets";
 import { defaultPort } from "../../app/utils";
-import { Field, FormSection, IconTooltip, PanelHeader, StatusPill } from "../../components/ui";
+import { Field, FormSection, IconTooltip, StatusPill } from "../../components/ui";
 
 export function ConnectionsView({
   t,
+  locale,
+  onOpenWriteCenter,
   connections,
   busy,
   onEdit,
@@ -22,6 +25,8 @@ export function ConnectionsView({
   onCopyName
 }: {
   t: I18nMessages;
+  locale: Locale;
+  onOpenWriteCenter: (connectionId: string) => void;
   connections: ConnectionConfig[];
   busy: boolean;
   onEdit: (connection: ConnectionConfig) => void;
@@ -33,6 +38,7 @@ export function ConnectionsView({
   onCopyName: (name: string) => void;
 }) {
   const [selectedId, setSelectedId] = useState(connections[0]?.id ?? "");
+  const wt = writeMessages[locale];
   const selected = connections.find((connection) => connection.id === selectedId) ?? connections[0];
 
   return (
@@ -90,6 +96,7 @@ export function ConnectionsView({
               <div className={selected.type === "jdbc" ? undefined : "inspector-grid-wide"}><dt>{t.connectionDialog.maxResultBytes}</dt><dd>{Math.round(selected.max_result_bytes / 1024)} KiB</dd></div>
             </dl>
             <div className="inspector-actions">
+              <button type="button" className="button ghost" onClick={() => onOpenWriteCenter(selected.id)}><PenLine size={15} />{wt.openCenter}</button>
               <button type="button" className="button soft" disabled={busy || !selected.enabled || !migrationReady} onClick={() => onTest(selected.id)}><Cable size={15} />{t.connections.test}</button>
               <button type="button" className="button ghost" disabled={busy || !selected.enabled || selected.type === "jdbc"} onClick={() => onDiagnose(selected.id)}><SearchCheck size={15} />{t.connections.diagnose}</button>
             </div>

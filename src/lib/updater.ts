@@ -1,4 +1,3 @@
-import { relaunch } from "@tauri-apps/plugin-process";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./tauri";
@@ -90,7 +89,7 @@ export function useAppUpdater(enabled: boolean | null, autoCheck: boolean) {
     setState({ kind: "relaunching", version });
     api.logFrontendEvent("info", `app update downloaded, relaunching (version=${version})`);
     try {
-      await relaunch();
+      await api.restartApp();
     } catch (error) {
       api.logFrontendEvent("error", `app update relaunch failed (version=${version}): ${error}`);
       setState({ kind: "error", phase: "relaunch", version });

@@ -1,13 +1,27 @@
 import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { WriteApprovalWindow } from "./features/approval/WriteApprovalWindow";
 import App from "./App";
 import { ConfigErrorPage } from "./features/errors/ConfigErrorPage";
 import { detectLocale, messages } from "./i18n";
 import { detectThemeMode, resolveTheme, systemTheme } from "./app/theme";
-import { api } from "./lib/tauri";
+import { api, isTauri } from "./lib/tauri";
 import type { ConfigLoadFailure } from "./types";
 import "./styles.css";
 import "./future-glass.css";
+import "./features/approval/write-approval.css";
+
+// Only the native window label selects the privileged approval UI. Browser
+// previews are local demonstrations and never call approval commands.
+const nativeLabel = isTauri ? getCurrentWindow().label : null;
+const nativeApproval = nativeLabel === "write-approval";
+const approvalPreview = nativeLabel === "write-approval-preview" || (!isTauri && new URLSearchParams(window.location.search).get("write-approval-preview") === "1");
+const approvalWindow = nativeApproval || approvalPreview;
+if (approvalWindow) {
+  document.documentElement.dataset.window = "write-approval";
+  document.documentElement.dataset.approvalPreview = String(approvalPreview);
+}
 
 const themeMode = (() => {
   const stored = window.localStorage.getItem("datanexa.theme");
@@ -26,9 +40,11 @@ document.documentElement.classList.toggle("dark", themeMode === "dark" || (theme
 // Forward global script errors and unhandled promise rejections to the Rust
 // debug log so runtime failures are captured even when no toast is shown.
 window.addEventListener("error", (event) => {
+  if (approvalWindow) return; // Approval values must never reach global logs.
   void api.logFrontendEvent("error", `${event.message} (${event.filename}:${event.lineno}:${event.colno})`);
 });
 window.addEventListener("unhandledrejection", (event) => {
+  if (approvalWindow) return; // Native errors can contain sensitive SQL values.
   const reason = event.reason instanceof Error
     ? `${event.reason.name}: ${event.reason.message}`
     : String(event.reason);
@@ -126,6 +142,6 @@ function Root() {
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <Root />
+    {approvalWindow ? <WriteApprovalWindow previewMode={approvalPreview} /> : <Root />}
   </React.StrictMode>
 );

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type {
+  AccessTokenInfo,
   AccessTokenSecretResult,
   AppSnapshot,
   AppUpdateInfo,
@@ -20,10 +21,18 @@ import type {
   PolicyCheckResult,
   ResetOutcome,
   ServerConfig,
-  SettingsConfig
+  SettingsConfig,
+  WriteApprovalDto,
+  WriteOperation,
+  WriteSchema,
+  WriteTarget,
+  WriteGrantInput,
+  WriteTable,
+  WriteStatus
 } from "../types";
 import { formatMessage, messages, type Locale } from "../i18n";
 import { systemTheme } from "../app/theme";
+import { mockWriteSchemas, mockWriteTables } from "./write-mock";
 
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const previewText = messages["zh-CN"].api;
@@ -63,6 +72,21 @@ const mockTools: McpToolInfo[] = [
     name: "datanexa_policy_check",
     description: "Validate SQL against DataNexa read-only policy without executing it.",
     enabled: true
+  },
+  {
+    name: "datanexa_submit_write",
+    description: "Submit a structured restricted write for local user approval.",
+    enabled: false
+  },
+  {
+    name: "datanexa_list_write_targets",
+    description: "Read the configured write targets available to the current authenticated token.",
+    enabled: true
+  },
+  {
+    name: "datanexa_get_write_status",
+    description: "Read a write request status summary for the current token.",
+    enabled: true
   }
 ];
 
@@ -73,7 +97,8 @@ const mockSnapshot: AppSnapshot = {
   startup_error: null,
   auto_start_status: "disabled",
   audit_migration: { status: "ready" },
-  access_tokens: [{ id: "preview-token", name: "Codex", enabled: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), last_used_at: new Date().toISOString(), denied_connections: [], denied_tools: [] }],
+  access_tokens: [{ id: "preview-token", name: "Codex", enabled: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), last_used_at: new Date().toISOString(), denied_connections: [], denied_tools: [], write_grants: [] }],
+  pending_write_approvals: 0,
   config: {
     version: 1,
     server: {
@@ -114,6 +139,8 @@ const mockSnapshot: AppSnapshot = {
         jdbc_bundle_id: "00000000-0000-4000-8000-000000000021",
         jdbc_url: "jdbc:oracle:thin:@//analytics-db.example.test:1521/analytics?ssl_server_dn_match=true&oracle.net.keepAlive=true",
         jdbc_driver_class: "oracle.jdbc.OracleDriver",
+        write_enabled: false,
+        write_tables: [],
         max_rows: 300,
         query_timeout_ms: 8000,
         max_connections: 1,
@@ -130,6 +157,8 @@ const mockSnapshot: AppSnapshot = {
         username: "readonly_user",
         credential_ref: "vault://local_mysql",
         ssl_mode: "prefer",
+        write_enabled: false,
+        write_tables: [],
         max_rows: 500,
         query_timeout_ms: 8000,
         max_connections: 1,
@@ -146,6 +175,8 @@ const mockSnapshot: AppSnapshot = {
         username: "readonly_user",
         credential_ref: "vault://prod_readonly_pg",
         ssl_mode: "require",
+        write_enabled: false,
+        write_tables: [],
         max_rows: 200,
         query_timeout_ms: 5000,
         max_connections: 2,
@@ -306,23 +337,109 @@ const mockBootStatus: BootStatus = previewBootError
     }
   : { config_error: null };
 
+function normalizeSnapshot(snapshot: AppSnapshot): AppSnapshot {
+  return {
+    ...snapshot,
+    // Native audit records contain safe diagnostic summaries; write SQL is
+    // excluded by the backend. Preserve reasons, error codes and SQLSTATE.
+    access_tokens: snapshot.access_tokens.map((token) => ({ ...token, write_grants: token.write_grants ?? [] })),
+    config: {
+      ...snapshot.config,
+      connections: snapshot.config.connections.map((connection) => ({
+        ...connection,
+        write_enabled: connection.write_enabled ?? false,
+        write_tables: connection.write_tables ?? []
+      }))
+    }
+  };
+}
+
+function normalizeResponse<T>(response: T): T {
+  if (typeof response !== "object" || response === null) return response;
+  if ("config" in response && "version" in response) return normalizeSnapshot(response as unknown as AppSnapshot) as T;
+  if ("snapshot" in response) return { ...response, snapshot: normalizeSnapshot(response.snapshot as AppSnapshot) };
+  return response;
+}
+
+function applyMockMutation<T>(name: string, args: Record<string, unknown> | undefined, fallback: T): T {
+  const input = args ?? {};
+  const changeToken = (update: (token: AccessTokenInfo) => AccessTokenInfo) => {
+    mockSnapshot.access_tokens = mockSnapshot.access_tokens.map((token) => token.id === (input.id ?? input.tokenId)
+      ? { ...update(token), updated_at: new Date().toISOString() } : token);
+  };
+  switch (name) {
+    case "create_access_token": {
+      const id = crypto.randomUUID();
+      const now = new Date().toISOString();
+      mockSnapshot.access_tokens = [...mockSnapshot.access_tokens, { id, name: String(input.name), enabled: true, created_at: now, updated_at: now, denied_connections: [], denied_tools: [], write_grants: [] }];
+      return { token_id: id, secret: "preview-only-secret" } as T;
+    }
+    case "rename_access_token": changeToken((token) => ({ ...token, name: String(input.name) })); break;
+    case "set_access_token_enabled": changeToken((token) => ({ ...token, enabled: Boolean(input.enabled) })); break;
+    case "rotate_access_token": changeToken((token) => token); break;
+    case "delete_access_token": mockSnapshot.access_tokens = mockSnapshot.access_tokens.filter((token) => token.id !== input.id); break;
+    case "set_token_connection_allowed":
+      changeToken((token) => ({ ...token, denied_connections: input.allowed ? token.denied_connections.filter((id) => id !== input.connectionId) : [...new Set([...token.denied_connections, String(input.connectionId)])] }));
+      break;
+    case "set_token_tool_allowed":
+      changeToken((token) => ({ ...token, denied_tools: input.allowed ? token.denied_tools.filter((tool) => tool !== input.toolName) : [...new Set([...token.denied_tools, String(input.toolName)])] }));
+      break;
+    case "set_token_write_allowed":
+      changeToken((token) => {
+        const grants = token.write_grants.filter((grant) => grant.connection_id !== input.connectionId || grant.operation !== input.operation);
+        return { ...token, write_grants: input.allowed ? [...grants, { connection_id: String(input.connectionId), operation: input.operation as WriteOperation }] : grants };
+      });
+      break;
+    case "save_write_configuration": {
+      const grants = input.grants as WriteGrantInput[];
+      mockSnapshot.config = { ...mockSnapshot.config, connections: mockSnapshot.config.connections.map((connection) => connection.id === input.connectionId
+        ? { ...connection, write_enabled: Boolean(input.enabled), write_tables: (input.tables as WriteTable[]).map((table) => ({ ...table })) } : connection) };
+      mockSnapshot.access_tokens = mockSnapshot.access_tokens.map((token) => {
+        const grant = grants.find((entry) => entry.token_id === token.id);
+        if (!grant) return token;
+        const remaining = token.write_grants.filter((entry) => entry.connection_id !== input.connectionId);
+        const added = (["insert", "update", "delete"] as const).filter((operation) => grant[operation]).map((operation) => ({ connection_id: String(input.connectionId), operation }));
+        return { ...token, write_grants: [...remaining, ...added], updated_at: new Date().toISOString() };
+      });
+      break;
+    }
+    case "save_server_config": mockSnapshot.config = { ...mockSnapshot.config, server: input.server as ServerConfig }; break;
+    case "upsert_connection": {
+      const connection = (input.input as ConnectionInput).connection;
+      const exists = mockSnapshot.config.connections.some((item) => item.id === connection.id);
+      mockSnapshot.config = { ...mockSnapshot.config, connections: exists ? mockSnapshot.config.connections.map((item) => item.id === connection.id ? { ...connection } : item) : [...mockSnapshot.config.connections, { ...connection }] };
+      break;
+    }
+    case "delete_connection": mockSnapshot.config = { ...mockSnapshot.config, connections: mockSnapshot.config.connections.filter((connection) => connection.id !== input.id) }; break;
+    case "retry_audit_migration":
+    case "clear_legacy_audit_log": mockSnapshot.audit_migration = { status: "ready" }; break;
+  }
+  // Every snapshot mutation is persisted before the next preview poll.
+  if (typeof fallback === "object" && fallback !== null && "config" in fallback && "version" in fallback) {
+    Object.assign(mockSnapshot, fallback);
+    return { ...mockSnapshot } as T;
+  }
+  return fallback;
+}
+
 async function command<T>(name: string, args?: Record<string, unknown>, fallback?: T): Promise<T> {
   if (!isTauri) {
     if (fallback === undefined) {
       throw new Error(formatMessage(previewText.desktopOnly, { name }));
     }
     // Version the captured preview response before simulating transport latency.
-    let response = fallback;
+    let response = applyMockMutation(name, args, fallback);
     if (typeof response === "object" && response !== null && "version" in response && "config" in response) {
       response = { ...response, version: ++previewSnapshotVersion };
     } else if (typeof response === "object" && response !== null && "snapshot" in response) {
       response = { ...response, snapshot: { ...(response.snapshot as AppSnapshot), version: ++previewSnapshotVersion } };
     }
+    const normalized = normalizeResponse(response);
     await new Promise((resolve) => window.setTimeout(resolve, 120));
-    return response;
+    return normalized;
   }
 
-  return invoke<T>(name, args);
+  return normalizeResponse(await invoke<T>(name, args));
 }
 
 function withSettings(settings: SettingsConfig, applyAutoStart: boolean): AppSnapshot {
@@ -339,7 +456,7 @@ function withSettings(settings: SettingsConfig, applyAutoStart: boolean): AppSna
 }
 
 function withToolEnabled(name: string, enabled: boolean): AppSnapshot {
-  const tools = mockTools.map((tool) => (tool.name === name ? { ...tool, enabled } : tool));
+  const tools = mockSnapshot.tools.map((tool) => (tool.name === name ? { ...tool, enabled } : tool));
   return {
     ...mockSnapshot,
     tools,
@@ -401,13 +518,43 @@ function connectionTransferFileName(encrypted: boolean) {
     : `datanexa-connections-${date}.json`;
 }
 
+function mockWriteConnection(connectionId: string) {
+  const connection = mockSnapshot.config.connections.find((entry) => entry.id === connectionId);
+  if (!connection) throw new Error("connection_not_found: Demonstration connection does not exist.");
+  return connection;
+}
+
 export const api = {
   bootStatus: () => command<BootStatus>("get_boot_status", undefined, mockBootStatus),
   resetCorruptConfig: () =>
     command<ResetOutcome>("reset_corrupt_config", undefined, { backup_path: "Preview/config.toml.corrupt-preview.toml" }),
   openConfigDirectory: () => command<void>("open_config_directory", undefined, undefined),
   exitApp: () => command<void>("exit_app", undefined, undefined),
+  restartApp: () => command<void>("restart_app"),
   snapshot: () => command<AppSnapshot>("get_app_snapshot", undefined, mockSnapshot),
+  getWriteSchemas: (connectionId: string) => command<WriteSchema[]>("get_write_schemas", { connectionId }, isTauri ? undefined : mockWriteSchemas(mockWriteConnection(connectionId))),
+  getWriteTables: (connectionId: string, schema: string, search?: string) => command<WriteTarget[]>("get_write_tables", { connectionId, schema, search: search ?? null }, isTauri ? undefined : mockWriteTables(mockWriteConnection(connectionId), schema, search)),
+  saveWriteConfiguration: (connectionId: string, enabled: boolean, tables: WriteTable[], grants: WriteGrantInput[]) => command<AppSnapshot>("save_write_configuration", { connectionId, enabled, tables, grants }, mockSnapshot),
+  openWriteApproval: () => command<void>("open_write_approval", undefined, undefined),
+  previewWriteApproval: async (): Promise<void> => {
+    if (isTauri) return command<void>("preview_write_approval");
+    const url = new URL(window.location.href);
+    url.search = "?write-approval-preview=1";
+    window.open(url.toString(), "_blank", "noopener,noreferrer,width=760,height=640");
+  },
+  readyWriteApprovalPreview: () => isTauri ? command<void>("ready_write_approval_preview") : Promise.resolve(),
+  closeWriteApprovalPreview: () => {
+    if (isTauri) return command<void>("close_write_approval_preview");
+    window.close();
+    return Promise.resolve();
+  },
+  dragWriteApprovalPreview: () => isTauri ? command<void>("drag_write_approval_preview") : Promise.resolve(),
+  getWriteApproval: () => command<WriteApprovalDto | null>("get_write_approval"),
+  decideWriteApproval: (requestId: string, revision: number, approve: boolean) =>
+    command<WriteStatus>("decide_write_approval", { requestId, revision, approve }),
+  readyWriteApproval: () => command<void>("ready_write_approval"),
+  closeWriteApproval: () => command<void>("close_write_approval"),
+  dragWriteApproval: () => command<void>("drag_write_approval"),
   jdbcStatus: () => command<JdbcStatus>("get_jdbc_status", undefined, mockJdbcStatus),
   installJdbcRuntime: () => command<JdbcStatus["runtime"]>("install_jdbc_runtime", undefined, mockJdbcStatus.runtime),
   removeJdbcRuntime: () => command<void>("remove_jdbc_runtime", undefined, undefined),
@@ -456,6 +603,8 @@ export const api = {
   deleteAccessToken: (id: string) => command<AppSnapshot>("delete_access_token", { id }, mockSnapshot),
   getAccessTokenSecret: (id: string) => command<AccessTokenSecretResult>("get_access_token_secret", { id }, { token_id: id, secret: "preview-token-secret" }),
   setTokenConnectionAllowed: (tokenId: string, connectionId: string, allowed: boolean) => command<AppSnapshot>("set_token_connection_allowed", { tokenId, connectionId, allowed }, mockSnapshot),
+  setTokenWriteAllowed: (tokenId: string, connectionId: string, operation: WriteOperation, allowed: boolean) =>
+    command<AppSnapshot>("set_token_write_allowed", { tokenId, connectionId, operation, allowed }, mockSnapshot),
   setTokenToolAllowed: (tokenId: string, toolName: string, allowed: boolean) => command<AppSnapshot>("set_token_tool_allowed", { tokenId, toolName, allowed }, mockSnapshot),
   saveServerConfig: (server: ServerConfig) =>
     command<AppSnapshot>("save_server_config", { server }, mockSnapshot),

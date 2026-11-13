@@ -82,11 +82,36 @@ pub struct SettingsConfig {
     pub debug_logging_enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ToolConfig {
     pub name: String,
-    #[serde(default = "default_true")]
     pub enabled: bool,
+}
+
+impl<'de> Deserialize<'de> for ToolConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Input {
+            name: String,
+            enabled: Option<bool>,
+        }
+        let input = Input::deserialize(deserializer)?;
+        Ok(Self {
+            enabled: input
+                .enabled
+                .unwrap_or_else(|| default_tool_enabled(&input.name)),
+            name: input.name,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WriteTable {
+    pub schema: String,
+    pub table: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -130,6 +155,10 @@ pub struct ConnectionConfig {
     pub max_connections: u32,
     #[serde(default = "default_max_result_bytes")]
     pub max_result_bytes: usize,
+    #[serde(default)]
+    pub write_enabled: bool,
+    #[serde(default)]
+    pub write_tables: Vec<WriteTable>,
 }
 
 pub struct ConfigStore {
@@ -372,7 +401,11 @@ fn normalize_settings(settings: &mut SettingsConfig) {
     settings.auto_circuit_breaker_threshold = settings.auto_circuit_breaker_threshold.clamp(1, 50);
 }
 
-pub const MCP_TOOL_NAMES: [&str; 7] = [
+pub const WRITE_SUBMIT_TOOL: &str = "datanexa_submit_write";
+pub const WRITE_STATUS_TOOL: &str = "datanexa_get_write_status";
+pub const WRITE_TARGETS_TOOL: &str = "datanexa_list_write_targets";
+
+pub const MCP_TOOL_NAMES: [&str; 10] = [
     "datanexa_list_connections",
     "datanexa_get_schema",
     "datanexa_describe_table",
@@ -380,7 +413,14 @@ pub const MCP_TOOL_NAMES: [&str; 7] = [
     "datanexa_execute_readonly_sql",
     "datanexa_explain_sql",
     "datanexa_policy_check",
+    WRITE_SUBMIT_TOOL,
+    WRITE_STATUS_TOOL,
+    WRITE_TARGETS_TOOL,
 ];
+
+pub fn default_tool_enabled(name: &str) -> bool {
+    is_known_tool(name) && name != WRITE_SUBMIT_TOOL
+}
 
 pub fn is_known_tool(name: &str) -> bool {
     MCP_TOOL_NAMES.contains(&name)
@@ -391,7 +431,7 @@ pub fn is_tool_enabled(tools: &[ToolConfig], name: &str) -> bool {
         .iter()
         .find(|tool| tool.name == name)
         .map(|tool| tool.enabled)
-        .unwrap_or_else(|| is_known_tool(name))
+        .unwrap_or_else(|| default_tool_enabled(name))
 }
 
 pub fn normalize_tool_configs(tools: &mut Vec<ToolConfig>) {
@@ -403,7 +443,7 @@ pub fn normalize_tool_configs(tools: &mut Vec<ToolConfig>) {
         if !tools.iter().any(|tool| tool.name == name) {
             tools.push(ToolConfig {
                 name: name.to_string(),
-                enabled: true,
+                enabled: default_tool_enabled(name),
             });
         }
     }
@@ -414,7 +454,7 @@ fn default_tool_configs() -> Vec<ToolConfig> {
         .iter()
         .map(|name| ToolConfig {
             name: (*name).to_string(),
-            enabled: true,
+            enabled: default_tool_enabled(name),
         })
         .collect()
 }
@@ -517,6 +557,47 @@ fn normalize_connection(connection: &mut ConnectionConfig) -> anyhow::Result<()>
     }
     if connection.name.is_empty() {
         return Err(anyhow::anyhow!("connection name is required"));
+    }
+    if connection.kind == DbKind::Jdbc {
+        connection.write_enabled = false;
+        connection.write_tables.clear();
+    }
+    if connection.write_tables.len() > 64 {
+        return Err(anyhow::anyhow!(
+            "at most 64 writable tables may be configured"
+        ));
+    }
+    let mut write_tables = HashSet::new();
+    for target in &mut connection.write_tables {
+        target.schema = target.schema.trim().to_string();
+        target.table = target.table.trim().to_string();
+        // Names come from server metadata. They only have to be quotable and
+        // bounded here; refusing non-ASCII names would reject valid tables.
+        let valid = |value: &str| {
+            !value.is_empty()
+                && value.chars().count() <= 128
+                && !value.chars().any(|character| character.is_control())
+        };
+        if !valid(&target.schema) || !valid(&target.table) {
+            return Err(anyhow::anyhow!(
+                "writable table schema and name must be non-empty identifiers"
+            ));
+        }
+        if connection.kind == DbKind::Sqlite && target.schema != "main" {
+            return Err(anyhow::anyhow!(
+                "SQLite writes only support the main schema"
+            ));
+        }
+        if target.target_id.as_ref().is_some_and(|id| {
+            id.len() != 67
+                || !id.starts_with("wt_")
+                || !id[3..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        }) {
+            return Err(anyhow::anyhow!("invalid writable target identity"));
+        }
+        if !write_tables.insert((target.schema.clone(), target.table.clone())) {
+            return Err(anyhow::anyhow!("duplicate writable table"));
+        }
     }
 
     match connection.kind {
@@ -706,6 +787,8 @@ require_token = true
             query_timeout_ms: 1_000,
             max_connections: 1,
             max_result_bytes: default_max_result_bytes(),
+            write_enabled: false,
+            write_tables: Vec::new(),
         });
         assert!(config.normalize_and_validate().is_err());
 

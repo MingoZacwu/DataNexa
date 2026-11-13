@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "write-approval",
+  "description": "Restricted native write approval window without management or process access",
+  "windows": ["write-approval"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-get-write-approval",
+    "allow-decide-write-approval",
+    "allow-ready-write-approval",
+    "allow-close-write-approval",
+    "allow-drag-write-approval",
+    "allow-set-window-material-theme",
+    "allow-log-frontend-event"
+  ]
+}

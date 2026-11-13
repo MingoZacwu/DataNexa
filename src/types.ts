@@ -7,11 +7,36 @@ export interface ServerConfig {
   token?: string | null;
 }
 
+export interface WriteTable {
+  schema: string;
+  table: string;
+  target_id?: string | null;
+}
+
+export interface WriteSchema { name: string; }
+
+export interface WriteTarget extends WriteTable {
+  target_id: string;
+  operations: WriteOperation[];
+  reason_code?: string | null;
+  reason?: string | null;
+  reason_detail?: string | null;
+}
+
+export interface WriteGrantInput {
+  token_id: string;
+  insert: boolean;
+  update: boolean;
+  delete: boolean;
+}
+
 export interface ConnectionConfig {
   id: string;
   name: string;
   type: DatabaseType;
   enabled: boolean;
+  write_enabled: boolean;
+  write_tables: WriteTable[];
   database: string;
   host?: string | null;
   port?: number | null;
@@ -75,6 +100,16 @@ export interface AuditEvent {
   token_name?: string | null;
   token_deleted: boolean;
   token_enabled: boolean;
+  request_id?: string | null;
+  operation?: WriteOperation | null;
+  schema?: string | null;
+  table?: string | null;
+  reason_code?: string | null;
+  write_status?: WriteOperationStatus | null;
+  revision?: number | null;
+  updated_at?: string | null;
+  stage?: string | null;
+  outcome_unknown?: boolean | null;
 }
 
 export interface ServerStatus {
@@ -92,6 +127,58 @@ export interface AccessTokenInfo {
   last_used_at?: string | null;
   denied_connections: string[];
   denied_tools: string[];
+  write_grants: Array<{ connection_id: string; operation: WriteOperation }>;
+}
+
+export type WriteOperation = "insert" | "update" | "delete";
+export type WriteOperationStatus = "pending" | "rejected" | "expired" | "cancelled" | "executing" | "committing" | "committed" | "rolled_back" | "failed" | "unknown";
+
+/** Summary only. Values are delivered exclusively to the native approval window. */
+export interface WriteStatus {
+  request_id: string;
+  connection_id: string;
+  token_id?: string | null;
+  operation: WriteOperation;
+  schema: string;
+  table: string;
+  status: WriteOperationStatus;
+  created_at: string;
+  expires_at: string;
+  revision: number;
+  affected_rows?: number | null;
+  error_code?: string | null;
+  error_message?: string | null;
+}
+
+export type WriteValue =
+  | { type: "null" }
+  | { type: "boolean"; value: boolean }
+  | { type: "number"; value: string }
+  | { type: "text"; value: string };
+
+export interface WriteChange {
+  column: string;
+  before: WriteValue | null;
+  after: WriteValue;
+}
+
+/** A column the database fills in itself, shown to the approver. */
+export interface WriteNote {
+  column: string;
+  code: "uses_default" | "auto_generated";
+}
+
+export interface WriteApprovalDto {
+  request: WriteStatus;
+  connection_name: string;
+  token_name: string;
+  primary_key: Record<string, WriteValue>;
+  changes: WriteChange[];
+  sql: string;
+  reason?: string | null;
+  language: string;
+  notes?: WriteNote[];
+  warnings?: string[];
 }
 
 export interface AccessTokenSecretResult {
@@ -118,6 +205,7 @@ export interface AppSnapshot {
   auto_start_status: "enabled" | "disabled" | "requires_approval" | "unknown";
   audit_migration: AuditMigrationState;
   access_tokens: AccessTokenInfo[];
+  pending_write_approvals: number;
 }
 
 /** Why the persisted configuration could not be read. Mirrors the Rust

@@ -11,6 +11,7 @@ use crate::db::DatabaseManager;
 use crate::jdbc::JdbcManager;
 use crate::mcp::McpRuntime;
 use crate::vault::CredentialVault;
+use crate::write_operations::WriteManager;
 
 pub struct AppState {
     pub app_handle: Option<tauri::AppHandle>,
@@ -28,6 +29,8 @@ pub struct AppState {
     pub access: AccessControlStore,
     pub db: DatabaseManager,
     pub jdbc: JdbcManager,
+    pub writes: WriteManager,
+    pub execution_limits: crate::mcp::ExecutionLimits,
     pub jdbc_lifecycle: Mutex<()>,
     pub mcp: RwLock<McpRuntime>,
     pub mcp_lifecycle: Mutex<()>,
@@ -68,6 +71,16 @@ impl AppState {
         let audit = AuditLogger::new(&app)?;
         let access = AccessControlStore::new(&app)?;
         access.initialize(&store, &mut config).await?;
+        let writes = match WriteManager::new(&app).await {
+            Ok(manager) => manager,
+            Err(_) => {
+                crate::debug_log::error(
+                    "write",
+                    format_args!("write journal unavailable; restricted writes disabled"),
+                );
+                WriteManager::unavailable()
+            }
+        };
 
         Ok(Self {
             app_handle: Some(app.clone()),
@@ -81,6 +94,8 @@ impl AppState {
             access,
             db: DatabaseManager::default(),
             jdbc: JdbcManager::new(app),
+            writes,
+            execution_limits: crate::mcp::ExecutionLimits::default(),
             jdbc_lifecycle: Mutex::new(()),
             mcp: RwLock::new(McpRuntime::default()),
             mcp_lifecycle: Mutex::new(()),
@@ -95,6 +110,12 @@ impl AppState {
 
     pub async fn cancel_mcp_requests(&self) {
         self.mcp_cancellation.read().await.cancel();
+        if let Err(error) = self.writes.invalidate_all().await {
+            crate::debug_log::error(
+                "write",
+                format_args!("failed to invalidate write requests (code={})", error.code),
+            );
+        }
     }
 
     pub async fn close_database_sessions(&self) {

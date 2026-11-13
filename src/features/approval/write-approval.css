@@ -1,0 +1,184 @@
+/* Scoped to the independent approval window; the main workspace keeps its width. */
+:root[data-window="write-approval"],
+:root[data-window="write-approval"] body,
+:root[data-window="write-approval"] #root {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+  background-image: none;
+}
+
+.write-approval-window {
+  --wa-workspace: #f7f9fc;
+  --wa-surface: #fcfdff;
+  --wa-sidebar: #edf1f6;
+  --wa-soft: rgba(235, 240, 247, .72);
+  --wa-blue-soft: #e7efff;
+  /* Operation accent: blue for reads and inserts, red for deletes. */
+  --wa-accent: var(--blue);
+  --wa-accent-soft: var(--wa-blue-soft);
+  display: grid;
+  grid-template-columns: 152px minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+:root.dark .write-approval-window {
+  --wa-workspace: #080b10;
+  --wa-surface: #161d27;
+  --wa-sidebar: #101720;
+  --wa-soft: rgba(23, 31, 42, .66);
+  --wa-blue-soft: #192b4c;
+}
+
+/* A delete is irreversible, so the whole window leans red instead of blue. */
+.write-approval-window.is-delete {
+  --wa-workspace: #fbf7f8;
+  --wa-surface: #fffdfd;
+  --wa-sidebar: #fbeef0;
+  --wa-soft: rgba(248, 234, 236, .74);
+  --wa-blue-soft: #fbe2e6;
+  --wa-accent: #d8384c;
+  --wa-accent-soft: #fbe2e6;
+}
+
+:root.dark .write-approval-window.is-delete {
+  --wa-workspace: #100b0c;
+  --wa-surface: #241a1d;
+  --wa-sidebar: #1e1316;
+  --wa-soft: rgba(46, 27, 32, .70);
+  --wa-blue-soft: #3b2229;
+  --wa-accent: #ff707d;
+  --wa-accent-soft: #3b2229;
+}
+
+:root[data-approval-preview="true"] #root {
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: var(--bg);
+}
+
+:root[data-approval-preview="true"] .write-approval-window {
+  max-width: 720px;
+  height: min(600px, 100%);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+.wa-context {
+  display: flex;
+  flex-direction: column;
+  gap: 17px;
+  padding: 16px;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+  background: var(--wa-sidebar);
+  overflow: hidden;
+}
+
+:root[data-system-material="enabled"] .wa-context { background: transparent; }
+.wa-identity { min-width: 0; }
+.wa-meta-label { display: flex; align-items: center; gap: 5px; margin-bottom: 4px; color: var(--muted); font-size: 12px; }
+.wa-meta-label svg { flex-shrink: 0; }
+.wa-identity-name { font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.wa-brand { display: inline-flex; align-items: center; gap: 7px; margin-top: auto; padding-top: 14px; font-size: 13px; font-weight: 600; letter-spacing: -.25px; }
+.wa-brand img { display: block; width: 28px; height: 28px; object-fit: contain; }
+.wa-illustration { width: 89px; height: 81px; margin: 3px auto 0; position: relative; flex: 0 0 auto; }
+/* One illustration serves all three operations: the accent colour and the
+   badge glyph change, and the card body shows what happens to the record. */
+.wa-record { position: absolute; width: 61px; height: 70px; border: 1px solid var(--line-strong); border-radius: 7px; box-shadow: var(--soft-shadow); }
+.wa-record-back { left: 23px; top: 0; background: var(--wa-accent-soft); transform: rotate(9deg); }
+.wa-record-front { left: 5px; top: 7px; background: var(--wa-surface); transform: rotate(-6deg); padding: 11px 9px; }
+.wa-record-heading { width: 21px; height: 4px; border-radius: 2px; background: var(--muted); margin-bottom: 8px; }
+.wa-record-line { width: 34px; height: 3px; border-radius: 2px; background: var(--line-strong); margin-top: 5px; }
+.wa-record-short { width: 25px; }
+.wa-record-edit { display: flex; align-items: center; gap: 4px; width: 42px; height: 13px; padding: 4px; border-radius: 3px; margin-top: 8px; background: var(--wa-accent-soft); }
+.wa-record-edit span { height: 3px; border-radius: 2px; }
+.wa-record-edit span:first-child { width: 10px; background: var(--line-strong); }
+.wa-record-edit span:last-child { width: 20px; background: var(--wa-accent); }
+/* Insert: the new row lands as a dashed slot at the bottom of the card. */
+.wa-record-newrow { display: flex; align-items: center; gap: 3px; width: 42px; height: 13px; margin-top: 8px; padding: 0 4px; border: 1px dashed color-mix(in srgb, var(--wa-accent) 52%, transparent); border-radius: 3px; background: var(--wa-accent-soft); }
+.wa-record-newrow svg { flex: 0 0 auto; color: var(--wa-accent); }
+.wa-record-newrow span { flex: 1 1 auto; height: 3px; border-radius: 2px; background: color-mix(in srgb, var(--wa-accent) 45%, transparent); }
+/* Delete: the matching row is struck through. */
+.wa-record-removed { position: relative; opacity: .55; }
+.wa-record-removed::after { content: ""; position: absolute; left: -1px; right: -1px; top: 50%; height: 1.4px; margin-top: -.7px; border-radius: 1px; background: var(--wa-accent); transform: rotate(-7deg); }
+.wa-record-badge { display: grid; place-items: center; position: absolute; width: 26px; height: 26px; right: 0; bottom: 0; border: 1px solid #6195fe; border-radius: 7px; color: #fff; background: linear-gradient(145deg, #2e75ff, #1458e5 72%); box-shadow: var(--soft-shadow); animation: wa-badge-drift 5.5s ease-in-out infinite; }
+.wa-record-badge svg { display: block; }
+.wa-record-badge-delete { border-color: #ff9aa2; background: linear-gradient(145deg, #f2566a, #c31b2e 72%); }
+:root.dark .wa-record-badge-delete { border-color: #ff8b95; background: linear-gradient(145deg, #ff5b6c, #c01f31 72%); }
+.wa-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--wa-workspace); }
+.wa-heading { padding: 18px 20px 13px; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: 0 0 auto; }
+.wa-heading h1 { margin: 0; font-size: 19px; line-height: 1.4; font-weight: 600; letter-spacing: -.4px; }
+.wa-close { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); display: grid; place-items: center; flex-shrink: 0; }
+.wa-close:hover { color: var(--ink); background: var(--wa-soft); }
+.wa-body { padding: 0 20px 16px; overflow-y: auto; overflow-x: hidden; min-height: 0; flex: 1 1 auto; overscroll-behavior: contain; }
+/* Initial focus lands here instead of on the close button, so Enter cannot
+   reject by accident. The region is not in the tab order, so no ring is needed. */
+.wa-body:focus { outline: none; }
+.write-approval-window code { padding: 0; border: 0; background: none; color: inherit; font: 11px/1.6 "Cascadia Code", "Consolas", monospace; overflow-wrap: anywhere; white-space: pre-wrap; }
+.wa-target { margin-bottom: 13px; }
+.wa-target > code { font-size: 13px; }
+.wa-predicate { display: flex; flex-wrap: wrap; gap: 3px 7px; font-size: 12px; color: var(--muted); margin-top: 4px; }
+.wa-predicate code { color: var(--ink); }
+.wa-link { display: inline-flex; align-items: center; gap: 4px; border: 0; padding: 3px 0; color: var(--blue); font-size: 12px; background: transparent; }
+.wa-diff { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
+.wa-diff th { text-align: center; font-size: 12px; font-weight: 400; color: var(--muted); background: var(--wa-soft); padding: 7px 3px; }
+.wa-diff th:first-child { width: 32%; text-align: left; padding-left: 10px; border-radius: 6px 0 0 6px; }
+.wa-diff th:last-child { border-radius: 0 6px 6px 0; }
+.wa-diff td { text-align: center; font-variant-numeric: tabular-nums; padding: 8px 3px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; vertical-align: top; }
+.wa-diff td:first-child { text-align: left; padding-left: 10px; }
+.wa-old { color: var(--muted); }
+.wa-new { display: inline-block; max-width: 100%; padding: 1px 5px; background: var(--wa-blue-soft); color: var(--blue); border-radius: 4px; font-weight: 500; }
+/* A delete lists only the matching primary key, so its two-column diff keeps a
+   wider label column than the three-column before/after diff. */
+.wa-diff-key th:first-child { width: 40%; }
+/* Columns the database fills in itself, listed compactly under the diff. */
+.wa-notes { margin-top: 10px; font-size: 12px; color: var(--muted); }
+.wa-note-list { display: grid; gap: 2px; margin: 4px 0 0; padding: 0; list-style: none; }
+.wa-note-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; overflow-wrap: anywhere; }
+.wa-note-list code { color: var(--ink); }
+.wa-read-note, .wa-meta { font-size: 12px; color: var(--muted); }
+.wa-read-note { margin-top: 10px; }
+.wa-details { margin-top: 13px; }
+.wa-details summary { display: flex; align-items: center; gap: 6px; width: fit-content; font-size: 12px; color: var(--blue); list-style: none; border-radius: 4px; cursor: pointer; }
+.wa-details summary::-webkit-details-marker { display: none; }
+.wa-chevron { transition: transform .15s; }
+.wa-details[open] .wa-chevron { transform: rotate(90deg); }
+.wa-detail-content { background: var(--wa-soft); padding: 12px; border-radius: 8px; font-size: 12px; margin-top: 10px; overflow-wrap: anywhere; }
+.wa-detail-content pre { margin: 10px 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.65 "Cascadia Code", "Consolas", monospace; color: var(--ink); }
+.wa-expiry { margin-top: 12px; }
+.wa-notice { margin: 10px 0; padding: 9px 10px; border-radius: 7px; background: var(--wa-soft); color: var(--amber); font-size: 12px; overflow-wrap: anywhere; }
+.wa-notice .wa-link { margin-left: 8px; }
+/* Informational table facts: the .wa-notice look, stacked tightly. Must follow
+   .wa-notice so the compact spacing wins at equal specificity. */
+.wa-warning { margin: 6px 0 0; padding: 6px 9px; }
+.wa-footer { padding: 10px 20px 16px; border-top: 1px solid var(--line); flex: 0 0 auto; }
+.wa-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.wa-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 7px 13px; border: 1px solid var(--line); border-radius: 7px; background: var(--wa-surface); color: var(--ink); font-size: 12px; font-weight: 600; line-height: 1.4; }
+.wa-button:hover { background: var(--wa-soft); border-color: var(--line-strong); }
+.wa-primary, .wa-primary:hover { color: #fff; border-color: #6195fe; background: linear-gradient(145deg, #2e75ff, #1458e5 72%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .26), 0 7px 18px rgba(27, 91, 225, .22); }
+/* The approve action turns red with the rest of the delete window. */
+.write-approval-window.is-delete .wa-primary { border-color: #ff97a0; background: linear-gradient(145deg, #e8455a, #c0182c 72%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .24), 0 7px 18px rgba(198, 25, 44, .22); }
+:root.dark .write-approval-window.is-delete .wa-primary { border-color: #ff8b95; background: linear-gradient(145deg, #f0525f, #b81b2c 72%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .20), 0 7px 18px rgba(0, 0, 0, .34); }
+.write-approval-window.is-delete .wa-read-note { color: var(--wa-accent); }
+.write-approval-window.is-delete .wa-diff th { background: color-mix(in srgb, var(--wa-accent) 9%, transparent); }
+.write-approval-window.is-delete .wa-diff-key td:last-child code { color: var(--wa-accent); }
+.write-approval-window button:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; }
+.write-approval-window button:focus-visible, .wa-details summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.wa-result { color: var(--muted); font-size: 12px; margin-bottom: 8px; overflow-wrap: anywhere; }
+@keyframes wa-badge-drift { 0%, 100% { transform: translateY(0) rotate(5deg); } 50% { transform: translateY(-2px) rotate(0deg); } }
+@media (prefers-reduced-motion: reduce) { .wa-record-badge { animation: none; } .wa-chevron { transition: none; } }
+@media (max-height: 390px) { .wa-context { gap: 10px; padding: 12px; } .wa-illustration { height: 60px; transform: scale(.75); transform-origin: top center; } .wa-heading { padding: 10px 16px; } .wa-footer { padding: 8px 16px; } }

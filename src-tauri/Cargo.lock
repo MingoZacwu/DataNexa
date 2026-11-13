@@ -1021,7 +1021,7 @@ dependencies = [
 
 [[package]]
 name = "datanexa"
-version = "0.8.4-beta"
+version = "0.9.0-alpha"
 dependencies = [
  "aes-gcm",
  "anyhow",

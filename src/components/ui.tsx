@@ -4,10 +4,11 @@ import clsx from "clsx";
 import { AlertTriangle, CheckCircle2, Clipboard, Info, Plus, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
-import type { I18nMessages } from "../i18n";
+import type { I18nMessages, Locale } from "../i18n";
 import type { AuditEvent } from "../types";
 import type { ToastMessage } from "../app/types";
-import { statusLabel, statusTone, toolDisplayName } from "../app/utils";
+import { auditStatusLabel, auditStatusTone, toolDisplayName } from "../app/utils";
+import { auditReasonText } from "../features/audit/audit-write-text";
 
 function formatCompactEventTimestamp(timestamp: string) {
   const date = new Date(timestamp);
@@ -22,7 +23,7 @@ function formatCompactEventTimestamp(timestamp: string) {
     : { year: "numeric", month: "2-digit", day: "2-digit" });
 }
 
-export function EventList({ t, events, onSelect }: { t: I18nMessages; events: AuditEvent[]; onSelect?: (event: AuditEvent) => void }) {
+export function EventList({ t, locale, events, onSelect }: { t: I18nMessages; locale: Locale; events: AuditEvent[]; onSelect?: (event: AuditEvent) => void }) {
   if (events.length === 0) {
     return <div className="empty-state compact">{t.audit.emptyCompact}</div>;
   }
@@ -31,10 +32,10 @@ export function EventList({ t, events, onSelect }: { t: I18nMessages; events: Au
     <div className="event-list">
       {events.map((event) => (
         <button type="button" className="event-item" key={event.id} onClick={() => onSelect?.(event)}>
-          <span className={clsx("event-dot", statusTone(event.status))} />
+          <span className={clsx("event-dot", auditStatusTone(event))} />
           <time dateTime={event.timestamp} title={new Date(event.timestamp).toLocaleString()}>{formatCompactEventTimestamp(event.timestamp)}</time>
-          <span>{event.reason ?? toolDisplayName(t, event.tool)}</span>
-          <StatusPill tone={statusTone(event.status)} label={statusLabel(t, event.status)} />
+          <span>{auditReasonText(locale, event) ?? toolDisplayName(t, event.tool)}</span>
+          <StatusPill tone={auditStatusTone(event)} label={auditStatusLabel(t, event, locale)} />
         </button>
       ))}
     </div>

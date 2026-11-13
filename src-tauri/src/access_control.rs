@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
@@ -14,6 +15,7 @@ const TOKEN_NAME_MAX_CHARS: usize = 80;
 #[derive(Debug, Clone)]
 pub struct AccessIdentity {
     pub token_id: String,
+    pub authentication_fingerprint: String,
     pub denied_connections: Vec<String>,
     pub denied_tools: Vec<String>,
 }
@@ -28,6 +30,13 @@ pub struct AccessTokenInfo {
     pub last_used_at: Option<DateTime<Utc>>,
     pub denied_connections: Vec<String>,
     pub denied_tools: Vec<String>,
+    pub write_grants: Vec<WriteGrant>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WriteGrant {
+    pub connection_id: String,
+    pub operation: String,
 }
 
 #[derive(Debug, Clone)]
@@ -87,9 +96,35 @@ impl AccessControlStore {
         .execute(&self.pool)
         .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_access_tokens_secret ON access_tokens(secret) WHERE secret IS NOT NULL").execute(&self.pool).await?;
-        sqlx::query("PRAGMA user_version=1")
-            .execute(&self.pool)
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&self.pool)
             .await?;
+        if version > 3 {
+            return Err(anyhow::anyhow!("unsupported access-control schema version"));
+        }
+        let mut migration = self.pool.begin().await?;
+        sqlx::query("CREATE TABLE IF NOT EXISTS token_write_grants (token_id TEXT NOT NULL, connection_id TEXT NOT NULL, operation TEXT NOT NULL CHECK(operation IN ('insert','update')), PRIMARY KEY(token_id,connection_id,operation), FOREIGN KEY(token_id) REFERENCES access_tokens(id) ON DELETE CASCADE)")
+            .execute(&mut *migration).await?;
+        if version < 3 {
+            // A third write operation (single-row DELETE) needs a wider CHECK
+            // constraint; SQLite cannot alter one in place, so the table is
+            // rebuilt with its rows preserved. The operation set is validated in
+            // Rust as well, so the constraint is defence in depth only.
+            sqlx::query("CREATE TABLE token_write_grants_v3 (token_id TEXT NOT NULL, connection_id TEXT NOT NULL, operation TEXT NOT NULL CHECK(operation IN ('insert','update','delete')), PRIMARY KEY(token_id,connection_id,operation), FOREIGN KEY(token_id) REFERENCES access_tokens(id) ON DELETE CASCADE)")
+                .execute(&mut *migration).await?;
+            sqlx::query("INSERT OR IGNORE INTO token_write_grants_v3 (token_id,connection_id,operation) SELECT token_id,connection_id,operation FROM token_write_grants WHERE operation IN ('insert','update')")
+                .execute(&mut *migration).await?;
+            sqlx::query("DROP TABLE token_write_grants")
+                .execute(&mut *migration)
+                .await?;
+            sqlx::query("ALTER TABLE token_write_grants_v3 RENAME TO token_write_grants")
+                .execute(&mut *migration)
+                .await?;
+        }
+        sqlx::query("PRAGMA user_version=3")
+            .execute(&mut *migration)
+            .await?;
+        migration.commit().await?;
         restrict_file_permissions(&self.path)?;
 
         if let Some(secret) = config
@@ -147,6 +182,7 @@ impl AccessControlStore {
             result.push(AccessTokenInfo {
                 denied_connections: self.denied_connections(&row.0).await?,
                 denied_tools: self.denied_tools(&row.0).await?,
+                write_grants: self.write_grants(&row.0).await?,
                 id: row.0,
                 name: row.1,
                 enabled: row.2,
@@ -254,6 +290,10 @@ impl AccessControlStore {
             .bind(id)
             .execute(&mut *tx)
             .await?;
+        sqlx::query("DELETE FROM token_write_grants WHERE token_id=?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         crate::debug_log::info("access", format_args!("access token deleted (id={id})"));
         Ok(())
@@ -333,6 +373,124 @@ impl AccessControlStore {
         Ok(())
     }
 
+    pub async fn write_grants(&self, id: &str) -> anyhow::Result<Vec<WriteGrant>> {
+        let rows = sqlx::query_as::<_, (String, String)>(
+            "SELECT connection_id,operation FROM token_write_grants WHERE token_id=? ORDER BY connection_id,operation",
+        )
+        .bind(id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(connection_id, operation)| WriteGrant {
+                connection_id,
+                operation,
+            })
+            .collect())
+    }
+
+    pub async fn allows_write(
+        &self,
+        id: &str,
+        connection_id: &str,
+        operation: &str,
+    ) -> anyhow::Result<bool> {
+        if !matches!(operation, "insert" | "update" | "delete") {
+            return Ok(false);
+        }
+        let allowed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM access_tokens t JOIN token_write_grants g ON g.token_id=t.id WHERE t.id=? AND t.enabled=1 AND t.deleted_at_ms IS NULL AND g.connection_id=? AND g.operation=? AND NOT EXISTS (SELECT 1 FROM token_denied_connections d WHERE d.token_id=t.id AND d.connection_id=g.connection_id) AND NOT EXISTS (SELECT 1 FROM token_denied_tools d WHERE d.token_id=t.id AND d.tool_name='datanexa_submit_write')")
+            .bind(id).bind(connection_id).bind(operation).fetch_one(&self.pool).await?;
+        Ok(allowed == 1)
+    }
+
+    pub async fn allows_write_status(&self, id: &str) -> anyhow::Result<bool> {
+        let allowed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM access_tokens t WHERE t.id=? AND t.enabled=1 AND t.deleted_at_ms IS NULL AND NOT EXISTS (SELECT 1 FROM token_denied_tools d WHERE d.token_id=t.id AND d.tool_name='datanexa_get_write_status')")
+            .bind(id).fetch_one(&self.pool).await?;
+        Ok(allowed == 1)
+    }
+
+    pub async fn set_write_allowed(
+        &self,
+        id: &str,
+        connection_id: &str,
+        operation: &str,
+        allowed: bool,
+    ) -> anyhow::Result<()> {
+        self.ensure_active(id).await?;
+        if !matches!(operation, "insert" | "update" | "delete") {
+            return Err(anyhow::anyhow!("unsupported write operation"));
+        }
+        if allowed {
+            sqlx::query("INSERT OR IGNORE INTO token_write_grants (token_id,connection_id,operation) VALUES (?,?,?)")
+                .bind(id).bind(connection_id).bind(operation).execute(&self.pool).await?;
+        } else {
+            sqlx::query("DELETE FROM token_write_grants WHERE token_id=? AND connection_id=? AND operation=?")
+                .bind(id).bind(connection_id).bind(operation).execute(&self.pool).await?;
+        }
+        self.touch(id).await?;
+        crate::debug_log::info("access", format_args!("write permission changed (id={id}, connection_id={connection_id}, operation={operation}, allowed={allowed})"));
+        Ok(())
+    }
+
+    pub async fn replace_connection_write_grants(
+        &self,
+        connection_id: &str,
+        grants: &[(String, bool, bool, bool)],
+    ) -> anyhow::Result<()> {
+        let mut transaction = self.pool.begin().await?;
+        sqlx::query("DELETE FROM token_write_grants WHERE connection_id=?")
+            .bind(connection_id)
+            .execute(&mut *transaction)
+            .await?;
+        for (token_id, insert, update, delete) in grants {
+            let exists: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM access_tokens WHERE id=? AND deleted_at_ms IS NULL",
+            )
+            .bind(token_id)
+            .fetch_one(&mut *transaction)
+            .await?;
+            if exists != 1 {
+                return Err(anyhow::anyhow!(
+                    "an access token changed; reload the write configuration"
+                ));
+            }
+            for (operation, allowed) in [("insert", *insert), ("update", *update), ("delete", *delete)]
+            {
+                if allowed {
+                    sqlx::query("INSERT INTO token_write_grants (token_id,connection_id,operation) VALUES (?,?,?)")
+                        .bind(token_id).bind(connection_id).bind(operation).execute(&mut *transaction).await?;
+                }
+            }
+            sqlx::query("UPDATE access_tokens SET updated_at_ms=? WHERE id=?")
+                .bind(Utc::now().timestamp_millis())
+                .bind(token_id)
+                .execute(&mut *transaction)
+                .await?;
+        }
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    pub async fn clear_connection_write_grants(&self, connection_id: &str) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM token_write_grants WHERE connection_id=?")
+            .bind(connection_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn authentication_matches(
+        &self,
+        id: &str,
+        fingerprint: &str,
+    ) -> anyhow::Result<bool> {
+        let secret: Option<String> = sqlx::query_scalar("SELECT secret FROM access_tokens WHERE id=? AND enabled=1 AND deleted_at_ms IS NULL AND secret IS NOT NULL")
+            .bind(id).fetch_optional(&self.pool).await?;
+        Ok(secret.map(zeroize::Zeroizing::new).is_some_and(|secret| {
+            format!("{:x}", Sha256::digest(secret.as_bytes())) == fingerprint
+        }))
+    }
+
     pub async fn authenticate(&self, secret: &str) -> anyhow::Result<Option<AccessIdentity>> {
         if secret.is_empty() {
             return Ok(None);
@@ -365,6 +523,7 @@ impl AccessControlStore {
         tx.commit().await?;
         Ok(Some(AccessIdentity {
             token_id,
+            authentication_fingerprint: format!("{:x}", Sha256::digest(secret.as_bytes())),
             denied_connections,
             denied_tools,
         }))

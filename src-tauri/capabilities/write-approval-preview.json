@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "write-approval-preview",
+  "description": "Demonstration-only approval window without database or real approval access",
+  "windows": ["write-approval-preview"],
+  "permissions": [
+    "allow-ready-write-approval-preview",
+    "allow-close-write-approval-preview",
+    "allow-drag-write-approval-preview",
+    "allow-set-window-material-theme",
+    "allow-log-frontend-event"
+  ]
+}
