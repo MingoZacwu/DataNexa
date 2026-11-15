@@ -9,6 +9,7 @@ import type { WriteOperation, WriteOperationStatus } from "./types";
 const zhCN = {
   // Navigation and page-level labels.
   title: "受控写入",
+  titleBadge: "预览",
   openCenter: "打开受控写入",
 
   // Connections column.
@@ -158,6 +159,7 @@ type WriteMessages = { [K in keyof typeof zhCN]: K extends "statusLabels" ? Reco
 
 const en: WriteMessages = {
   title: "Restricted writes",
+  titleBadge: "Beta",
   openCenter: "Open restricted writes",
 
   connections: "Connections",

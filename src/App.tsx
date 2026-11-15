@@ -1232,6 +1232,7 @@ function App() {
             <header className="topbar">
               <div className="page-title-block">
                 <h1>{viewTitle(t, activeView)}</h1>
+                {activeView === "write-center" && <span className="page-title-badge">{writeMessages[locale].titleBadge}</span>}
               </div>
               <div className="top-actions">
                 {snapshot && activeView === "audit" && (

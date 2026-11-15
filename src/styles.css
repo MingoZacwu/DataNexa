@@ -457,6 +457,28 @@ p {
   font-weight: 700;
 }
 
+.page-title-block {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.page-title-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--blue) 20%, transparent);
+  border-radius: 999px;
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 8%, transparent);
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 700;
+}
+
 .top-actions {
   display: flex;
   align-items: center;
