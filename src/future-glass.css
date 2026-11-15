@@ -1722,6 +1722,73 @@ textarea:focus-visible,
   font-family: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
 }
 
+/* The restricted-write tools are one capability, so the group root carries the
+   only switch and the three tools hang below it on dashed branches. */
+.tool-group-root::after {
+  content: "";
+  position: absolute;
+  left: 31px;
+  top: calc(50% + 17px);
+  bottom: 0;
+  border-left: 1px dashed color-mix(in srgb, var(--muted) 45%, transparent);
+}
+
+.tool-tree {
+  margin-left: 31px;
+  padding-bottom: 8px;
+}
+
+.tool-tree-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 11px;
+  min-height: 70px;
+  padding: 10px 14px 10px 26px;
+  border-bottom: 1px solid var(--line);
+  transition: background 160ms ease;
+}
+
+.tool-tree-item:last-child {
+  border-bottom: 0;
+}
+
+.tool-tree-item:hover {
+  background: color-mix(in srgb, var(--blue) 5%, transparent);
+}
+
+.tool-tree-item::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-left: 1px dashed color-mix(in srgb, var(--muted) 45%, transparent);
+}
+
+.tool-tree-item:last-child::before {
+  bottom: calc(100% - 35px);
+}
+
+.tool-tree-item::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 35px;
+  width: 22px;
+  border-top: 1px dashed color-mix(in srgb, var(--muted) 45%, transparent);
+}
+
+.tool-tree-item.disabled .tool-icon {
+  opacity: .55;
+  filter: grayscale(1);
+}
+
+.tool-tree-item.disabled strong {
+  color: var(--muted);
+}
+
 .tool-card {
   position: relative;
   grid-template-columns: 34px minmax(0, 1fr) auto;
@@ -3456,6 +3523,7 @@ textarea:focus {
 .help-route:last-child {
   animation-delay: 120ms;
 }
+
 
 @keyframes help-rise {
   from {

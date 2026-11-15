@@ -9,6 +9,7 @@ import type { AuditEvent } from "../types";
 import type { ToastMessage } from "../app/types";
 import { auditStatusLabel, auditStatusTone, toolDisplayName } from "../app/utils";
 import { auditReasonText } from "../features/audit/audit-write-text";
+import { writeToolName } from "../write-i18n";
 
 function formatCompactEventTimestamp(timestamp: string) {
   const date = new Date(timestamp);
@@ -34,7 +35,7 @@ export function EventList({ t, locale, events, onSelect }: { t: I18nMessages; lo
         <button type="button" className="event-item" key={event.id} onClick={() => onSelect?.(event)}>
           <span className={clsx("event-dot", auditStatusTone(event))} />
           <time dateTime={event.timestamp} title={new Date(event.timestamp).toLocaleString()}>{formatCompactEventTimestamp(event.timestamp)}</time>
-          <span>{auditReasonText(locale, event) ?? toolDisplayName(t, event.tool)}</span>
+          <span>{auditReasonText(locale, event) ?? writeToolName(locale, event.tool) ?? toolDisplayName(t, event.tool)}</span>
           <StatusPill tone={auditStatusTone(event)} label={auditStatusLabel(t, event, locale)} />
         </button>
       ))}

@@ -1,7 +1,7 @@
-import { Columns3, Database, ListTree, Rows3, ShieldCheck, Terminal, Workflow, Wrench, type LucideIcon } from "lucide-react";
+import { Columns3, Database, ListChecks, ListTree, Rows3, Send, ShieldCheck, Target, Terminal, Workflow, Wrench, type LucideIcon } from "lucide-react";
 import { useCallback, useLayoutEffect, useRef, type UIEvent as ReactUIEvent } from "react";
 import { formatMessage, type I18nMessages, type Locale } from "../i18n";
-import { auditWriteStatusLabel } from "../features/audit/audit-write-text";
+import { auditWriteStatusPillLabel } from "../features/audit/audit-write-text";
 import type { AuditEvent, ConnectionDiagnostics, DatabaseType, McpToolInfo } from "../types";
 import type { View } from "./types";
 
@@ -78,7 +78,10 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
   datanexa_sample_rows: Rows3,
   datanexa_execute_readonly_sql: Terminal,
   datanexa_explain_sql: Workflow,
-  datanexa_policy_check: ShieldCheck
+  datanexa_policy_check: ShieldCheck,
+  datanexa_submit_write: Send,
+  datanexa_list_write_targets: Target,
+  datanexa_get_write_status: ListChecks
 };
 
 export function toolIcon(name: string): LucideIcon {
@@ -126,8 +129,8 @@ export function auditStatusTone(event: AuditEvent): ReturnType<typeof statusTone
 }
 
 export function auditStatusLabel(t: I18nMessages, event: AuditEvent, locale: Locale) {
-  if (event.write_status) return auditWriteStatusLabel(locale, event.write_status);
-  if (event.outcome_unknown) return auditWriteStatusLabel(locale, "unknown");
+  if (event.write_status) return auditWriteStatusPillLabel(locale, event.write_status);
+  if (event.outcome_unknown) return auditWriteStatusPillLabel(locale, "unknown");
   return statusLabel(t, event.status);
 }
 

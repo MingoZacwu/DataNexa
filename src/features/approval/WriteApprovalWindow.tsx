@@ -1,9 +1,9 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { Check, ChevronRight, Code2, Database, KeyRound, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Check, ChevronRight, Code2, Database, KeyRound, MessageSquare, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import brandLogoUrl from "../../../resources/datanexa.png";
-import { detectLocale, normalizeLocale } from "../../i18n";
+import { detectLocale, formatMessage, normalizeLocale } from "../../i18n";
 import { detectThemeMode, resolveTheme, systemTheme } from "../../app/theme";
 import { api } from "../../lib/tauri";
 import type { WriteApprovalDto, WriteStatus, WriteValue } from "../../types";
@@ -16,7 +16,7 @@ function previewApproval(): WriteApprovalDto {
     request: {
       request_id: "preview-only-request", connection_id: "preview-only-connection", token_id: "preview-only-token",
       operation: "update", schema: "public", table: "inventory_demo", status: "pending",
-      created_at: new Date(now).toISOString(), expires_at: new Date(now + 5 * 60 * 1000).toISOString(), revision: 1
+      created_at: new Date(now).toISOString(), expires_at: new Date(now + 120 * 1000).toISOString(), revision: 1
     },
     connection_name: "Demo Inventory", token_name: "Preview Agent",
     primary_key: { item_id: { type: "text", value: "DEMO-042" } },
@@ -70,6 +70,7 @@ export function WriteApprovalWindow({ previewMode: preview }: { previewMode: boo
   // Unknown state falls back to the neutral update illustration.
   const illustration = operation === "insert" ? "insert" : operation === "delete" ? "delete" : "update";
   const expiresAt = request ? Date.parse(request.expires_at) : NaN;
+  const remainingSeconds = Number.isFinite(expiresAt) ? Math.max(0, Math.ceil((expiresAt - now) / 1000)) : 0;
   const expired = Boolean(request?.status === "pending" && (!Number.isFinite(expiresAt) || now >= expiresAt));
   const canDecide = Boolean(request?.status === "pending" && available && !expired && !busy && !fetchFailed && (preview || readyRequestId === request.request_id));
   const displayStatus = expired ? "expired" : request?.status;
@@ -257,6 +258,16 @@ export function WriteApprovalWindow({ previewMode: preview }: { previewMode: boo
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [close]);
 
+  // One window reviews exactly one request. When the request ends without a
+  // click (the countdown rejects it, or permissions are revoked), release the
+  // window after the user has had a moment to read the result. Otherwise the
+  // stale binding would hide every later approval request.
+  useEffect(() => {
+    if (preview || !approval || ["pending", "executing", "committing"].includes(approval.request.status)) return;
+    const timer = window.setTimeout(() => { void close(); }, 4000);
+    return () => window.clearTimeout(timer);
+  }, [approval?.request.status, close, preview]);
+
   async function decide(approve: boolean) {
     const current = currentRef.current;
     if (actionRef.current || !current || current.request.status !== "pending" || !canDecide || Date.now() >= Date.parse(current.request.expires_at)) return;
@@ -344,6 +355,16 @@ export function WriteApprovalWindow({ previewMode: preview }: { previewMode: boo
               <div className="wa-target"><code>{request?.schema}.{request?.table}</code>
                 {Object.keys(approval.primary_key).length > 0 && <div className="wa-predicate">{t.primaryKey} {Object.entries(approval.primary_key).map(([column, value]) => <code key={column}>{column} = {valueText(value)}</code>)}</div>}
               </div>
+              {/* The agent's reason is a primary input to the decision, so it is
+                  shown in its own block instead of inside the SQL disclosure. */}
+              <div className="wa-reason">
+                <div className="wa-reason-head">
+                  <span className="wa-reason-title"><MessageSquare size={13} />{t.requestReason}</span>
+                  <span className="wa-reason-sep" aria-hidden="true">·</span>
+                  <span className="wa-reason-trust">{t.untrustedInput}</span>
+                </div>
+                <p>{approval.reason || t.noReason}</p>
+              </div>
               {operation === "delete" ? (
                 // A delete is identified by the complete primary key only, so the
                 // diff lists those columns instead of a before/after pair.
@@ -366,16 +387,15 @@ export function WriteApprovalWindow({ previewMode: preview }: { previewMode: boo
                 </div>
               )}
               {approval.warnings?.map((code) => <p className="wa-notice wa-warning" key={code}>{writeWarningText(locale, code)}</p>)}
+              {/* SQL and the request ID stay optional detail; the reason above
+                  already carries the part the decision depends on. */}
               <details className="wa-details" key={request?.request_id}>
                 <summary><ChevronRight className="wa-chevron" size={12} /><Code2 size={14} />{t.details}</summary>
                 <div className="wa-detail-content">
-                  <div className="wa-meta-label">{t.agentReason}</div>
-                  <p>{approval.reason || t.noReason}</p>
                   <pre>{approval.sql}</pre>
                   <div className="wa-meta">{t.requestId}: <code>{request?.request_id}</code></div>
                 </div>
               </details>
-              <p className="wa-meta wa-expiry">{t.expires}: {Number.isFinite(expiresAt) ? new Date(expiresAt).toLocaleString(locale) : "—"}</p>
               {statusHint && <p className="wa-notice" role="status">{statusHint}</p>}
               {(request?.error_code || request?.error_message) && <div className="wa-notice" role="status"><code>{request.error_code}</code><p>{diagnosticCodes(request.error_message)}</p>{request.error_message && <p>{auditReasonText(locale, { reason: request.error_message, reason_code: request.error_code })}</p>}</div>}
               {request?.affected_rows != null && <p className="wa-meta">{t.affectedRows}: {request.affected_rows}</p>}
@@ -384,9 +404,18 @@ export function WriteApprovalWindow({ previewMode: preview }: { previewMode: boo
           {error && <div className="wa-notice" role="alert"><p>{t[error]}{error === "readyError" && <button type="button" className="wa-link" onClick={() => { setError(null); setReadyRetry((value) => value + 1); }}>{t.retry}</button>}</p>{errorDetail && <><code>{diagnosticCodes(errorDetail)}</code><details><summary>{t.serverDetail}</summary><pre>{auditReasonText(locale, { reason: errorDetail })}</pre></details></>}</div>}
         </div>
         <footer className="wa-footer">
-          <div className="wa-result" role="status" aria-live="polite">{previewResult ? t[previewResult] : displayStatus ? t.statusLabels[displayStatus] : t.empty}</div>
+          {/* "Pending approval" adds nothing while the request is actionable;
+              only outcomes that explain the disabled buttons stay visible. */}
+          {(previewResult || (displayStatus && displayStatus !== "pending")) && (
+            <div className="wa-result" role="status" aria-live="polite">{previewResult ? t[previewResult] : displayStatus ? t.statusLabels[displayStatus] : t.empty}</div>
+          )}
           {request?.status === "pending" && <div className="wa-actions">
-            <button type="button" className="wa-button" disabled={!canDecide} onClick={() => void decide(false)}><X size={14} />{t.reject}</button>
+            <button type="button" className="wa-button" disabled={!canDecide} onClick={() => void decide(false)}>
+              <X size={14} />
+              <span>{t.reject}{Number.isFinite(expiresAt) && !expired && (
+                <span className={`wa-reject-timer${remainingSeconds <= 5 ? " is-urgent" : ""}`}>{formatMessage(t.rejectCountdown, { seconds: remainingSeconds })}</span>
+              )}</span>
+            </button>
             <button type="button" className="wa-button wa-primary" disabled={!canDecide} onClick={() => void decide(true)}><Check size={14} />{approveLabel}</button>
           </div>}
           {preview && request && !activeStatuses.has(request.status) && <button type="button" className="wa-button" onClick={() => { setCurrent(previewApproval()); setAvailable(true); setPreviewResult(null); }}>{t.previewReset}</button>}

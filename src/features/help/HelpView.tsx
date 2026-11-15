@@ -14,6 +14,7 @@ export function HelpView({
   onOpenHelp: () => void;
   onOpenIssues: () => void;
 }) {
+
   return (
     <section className="help-page" aria-labelledby="help-title">
       <header className="help-masthead">

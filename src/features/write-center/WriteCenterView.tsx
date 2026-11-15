@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatMessage, type Locale } from "../../i18n";
 import { api, isTauri } from "../../lib/tauri";
 import type { AppSnapshot, ConnectionConfig, WriteGrantInput, WriteOperation, WriteSchema, WriteTable, WriteTarget } from "../../types";
-import { writeErrorText, writeMessages, writeReasonDetail } from "../../write-i18n";
+import { writeErrorText, writeMessages, writeReasonDetail, writeToolsEnabled } from "../../write-i18n";
 import { DATABASE_LOGOS } from "../../app/assets";
 import { IconTooltip, StatusPill, SwitchField } from "../../components/ui";
 import "./write-center.css";
@@ -67,7 +67,7 @@ function makeDraft(snapshot: AppSnapshot, connection: ConnectionConfig): WriteDr
   };
 }
 
-export function WriteCenterView({ locale, snapshot, drafts, onDraftsChange, selectedId, onSelectedIdChange, onSnapshot, onOpenAccess, onOpenTools }: {
+export function WriteCenterView({ locale, snapshot, drafts, onDraftsChange, selectedId, onSelectedIdChange, onSnapshot, onOpenAccess }: {
   locale: Locale;
   snapshot: AppSnapshot;
   drafts: WriteDrafts;
@@ -76,9 +76,9 @@ export function WriteCenterView({ locale, snapshot, drafts, onDraftsChange, sele
   onSelectedIdChange: (id: string) => void;
   onSnapshot: (snapshot: AppSnapshot) => void;
   onOpenAccess: () => void;
-  onOpenTools: () => void;
 }) {
   const t = writeMessages[locale];
+  const writeToolsOn = writeToolsEnabled(snapshot.tools);
   const connections = snapshot.config.connections;
   const selected = connections.find((connection) => connection.id === selectedId)
     ?? connections.find((connection) => connection.type !== "jdbc")
@@ -120,14 +120,17 @@ export function WriteCenterView({ locale, snapshot, drafts, onDraftsChange, sele
     setTablesExpanded(false);
   }, [selected?.id]);
 
+  // The global switch closes the picker too; it must not stay open over a
+  // disabled panel.
+  useEffect(() => {
+    if (!writeToolsOn) setPickerOpen(false);
+  }, [writeToolsOn]);
+
   // Autosave timers must not fire after the view is gone.
   useEffect(() => () => {
     for (const timer of Object.values(timerRef.current)) window.clearTimeout(timer);
   }, []);
 
-  const submitToolEnabled = snapshot.tools.some(
-    (tool) => tool.name === "datanexa_submit_write" && tool.enabled
-  );
   const authenticationReady = snapshot.config.server.require_token;
   const jdbc = selected?.type === "jdbc";
   const pendingApprovals = snapshot.pending_write_approvals;
@@ -251,7 +254,7 @@ export function WriteCenterView({ locale, snapshot, drafts, onDraftsChange, sele
 
   return (
     <>
-      <section className="connections-workbench write-workbench">
+      <section className={clsx("connections-workbench", "write-workbench", !writeToolsOn && "write-off")}>
         <div className="panel connection-browser">
           <div className="data-list-header">
             <span>{t.connections}</span>
@@ -311,7 +314,7 @@ export function WriteCenterView({ locale, snapshot, drafts, onDraftsChange, sele
                 </div>
                 <div className="write-actions">
                   {pendingApprovals > 0 && isTauri && (
-                    <button type="button" className="button ghost" onClick={() => void openApproval()}>
+                    <button type="button" className="button ghost" disabled={!writeToolsOn} onClick={() => void openApproval()}>
                       <ShieldCheck size={15} />{t.openApproval}
                       <span className="write-pending-count">{pendingApprovals}</span>
                     </button>
@@ -337,7 +340,8 @@ export function WriteCenterView({ locale, snapshot, drafts, onDraftsChange, sele
                 )
                 : (
                   <div className="write-scroll page-scroll-list">
-                    <div className="write-body">
+                    <fieldset className="write-fieldset" disabled={!writeToolsOn}>
+                      <div className="write-body">
                     <section className="write-section">
                       <h3>{t.writeSection}</h3>
                       <SwitchField
@@ -345,18 +349,13 @@ export function WriteCenterView({ locale, snapshot, drafts, onDraftsChange, sele
                         tooltip={t.allowWritesHint}
                         checked={draft.enabled}
                         // Turning writes off must stay possible even when the
-                        // connection is paused or the submit tool is disabled;
-                        // only granting new access needs those preconditions.
-                        disabled={(!selected.enabled || !submitToolEnabled) && !draft.enabled}
+                        // connection is paused; only granting new access needs
+                        // that precondition. The global switch disables the
+                        // whole panel through the fieldset instead.
+                        disabled={!selected.enabled && !draft.enabled}
                         onCheckedChange={(checked) => updateDraft(selected.id, (current) => ({ ...current, enabled: checked }))}
                       />
                       {!selected.enabled && <p className="field-note">{t.paused}</p>}
-                      {!submitToolEnabled && (
-                        <p className="field-note">
-                          {t.submitToolDisabled}
-                          <button type="button" className="write-inline-link" onClick={onOpenTools}>{t.openTools}</button>
-                        </p>
-                      )}
                     </section>
 
                     <section className="write-section">
@@ -455,7 +454,8 @@ export function WriteCenterView({ locale, snapshot, drafts, onDraftsChange, sele
                     {approvalError && (
                       <div className="wc-notice" role="status">{approvalError}</div>
                     )}
-                    </div>
+                      </div>
+                    </fieldset>
                   </div>
                 )}
             </>
@@ -665,9 +665,12 @@ function TablePicker({ locale, connection, selected, open, onClose, onChange }: 
                   type="button"
                   key={`${target.schema}.${target.table}`}
                   className={clsx("write-picker-row", checked && "selected", !writable && "disabled")}
-                  disabled={!writable && !checked}
+                  // A natively disabled button swallows hover and focus events
+                  // in WebKit, which would leave the reason tooltip unreachable.
+                  // Keep the row interactive instead and ignore its activation.
+                  aria-disabled={!writable && !checked}
                   aria-pressed={checked}
-                  onClick={() => onChange(target, !checked)}
+                  onClick={() => { if (writable || checked) onChange(target, !checked); }}
                 >
                   <span className={clsx("write-picker-check", checked && "checked")} aria-hidden="true">
                     {checked && <Check size={12} />}
@@ -680,7 +683,7 @@ function TablePicker({ locale, connection, selected, open, onClose, onChange }: 
                       ))
                       : (
                         <IconTooltip label={writeReasonDetail(locale, target)}>
-                          <span className="write-unwritable" title={writeReasonDetail(locale, target)}>
+                          <span className="write-unwritable">
                             <StatusPill tone="slate" label={t.notWritable} />
                           </span>
                         </IconTooltip>

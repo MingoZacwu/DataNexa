@@ -3367,6 +3367,22 @@ pre {
   gap: 10px;
 }
 
+/* The trust note rides on the heading line, as in the approval window, rather
+   than trailing the agent's wording as a separate disclaimer. */
+.detail-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.detail-section-sep,
+.detail-section-hint {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 400;
+}
+
 .detail-section h3 {
   font-size: 16px;
 }
@@ -3581,6 +3597,10 @@ pre {
    arrow is an SVG fill, which cannot run backdrop-filter, so a frosted panel
    would never match it — see future-glass.css for the shared solid colour. */
 .tooltip {
+  /* Radix copies this computed z-index onto the fixed popper wrapper. Without
+     it the tooltip paints below dialog overlays (z-index 1000) and their
+     backdrop blur, so hints opened from a dialog appear behind it. */
+  z-index: 1100;
   max-width: min(320px, calc(100vw - 24px));
   padding: 7px 9px;
   border-radius: 8px;

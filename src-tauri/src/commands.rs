@@ -13,8 +13,9 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::audit::AuditStatus;
 use crate::config::{
-    clamp_with_log, default_max_result_bytes, default_port, is_known_tool, AppConfig,
-    ConfigLoadFailure, ConnectionConfig, DbKind, ServerConfig, SettingsConfig, WriteTable,
+    clamp_with_log, default_max_result_bytes, default_port, is_known_tool, is_write_tool,
+    set_tool_enabled, AppConfig, ConfigLoadFailure, ConnectionConfig, DbKind, ServerConfig,
+    SettingsConfig, WriteTable,
 };
 use crate::db::ConnectionDiagnostics;
 use crate::debug_log;
@@ -1293,9 +1294,9 @@ pub async fn set_mcp_tool_enabled(
 
     commit_config(state.inner(), |config| {
         config.normalize();
-        if let Some(tool) = config.tools.iter_mut().find(|tool| tool.name == name) {
-            tool.enabled = enabled;
-        }
+        // The three restricted-write tools are one capability; a toggle on any
+        // of them changes the whole group.
+        set_tool_enabled(&mut config.tools, &name, enabled);
         Ok(())
     })
     .await
@@ -1303,7 +1304,10 @@ pub async fn set_mcp_tool_enabled(
 
     crate::debug_log::info(
         "settings",
-        format_args!("MCP tool enabled state changed (tool={name}, enabled={enabled})"),
+        format_args!(
+            "MCP tool enabled state changed (tool={name}, enabled={enabled}, write_group={})",
+            is_write_tool(&name)
+        ),
     );
 
     snapshot(state.inner()).await.map_err(to_client_error)

@@ -10,9 +10,263 @@
  * after this file, so a single-class rule would lose the cascade to
  * `.connections-workbench` and `.page-scroll-list`.
  */
+
+/* The rim and the indicator share one accent: the same green. The light is an
+   edge of that colour, not a washed-out tint of it. */
+:root {
+  --write-glow: var(--green);
+}
+
+:root:not(.dark) {
+  --write-glow: var(--green);
+}
+
 .connections-workbench.write-workbench {
   grid-template-columns: minmax(288px, 0.46fr) minmax(500px, 1.54fr);
   min-height: 0;
+}
+
+/* The switch lives in the topbar beside refresh. Its outer rounded rectangle is
+   the whole switch: no inner border, no label. The lever is centered by equal
+   insets at both ends, so the on position mirrors the off position. */
+.write-top-switch {
+  --lever-face: color-mix(in srgb, var(--ink) 12%, transparent);
+  --lever-face-hover: color-mix(in srgb, var(--ink) 15%, transparent);
+  --lever-face-on: color-mix(in srgb, var(--ink) 15%, transparent);
+  --lever-face-on-hover: color-mix(in srgb, var(--ink) 18%, transparent);
+  --lever-edge: color-mix(in srgb, var(--ink) 8%, transparent);
+  --lever-bottom-shadow: rgba(0, 0, 0, 0.10);
+  --lever-drop-shadow: rgba(0, 0, 0, 0.18);
+  position: relative;
+  isolation: isolate;
+  flex: 0 0 auto;
+  width: 58px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  box-shadow: inset 0 1px 0 var(--glass-edge);
+  backdrop-filter: blur(16px);
+  cursor: pointer;
+  transition: border-color 200ms ease, background 200ms ease, box-shadow 200ms ease;
+}
+
+/* On white, a grey lever reads as a dirty block. The light theme turns it into
+   a pale glass tab that separates by its edge and shadow instead of by weight. */
+:root:not(.dark) .write-top-switch {
+  --lever-face: var(--surface-muted);
+  --lever-face-hover: color-mix(in srgb, var(--surface-muted) 82%, #ffffff);
+  --lever-face-on: var(--surface-muted);
+  --lever-face-on-hover: color-mix(in srgb, var(--surface-muted) 82%, #ffffff);
+  --lever-edge: rgba(62, 79, 105, 0.14);
+  --lever-bottom-shadow: rgba(0, 0, 0, 0.04);
+  --lever-drop-shadow: rgba(29, 45, 70, 0.12);
+}
+
+.write-top-switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.write-top-switch:hover:not(:disabled) .write-top-switch-lever {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.05) 48%, rgba(0, 0, 0, 0.07)),
+    var(--lever-face-hover);
+}
+
+.write-top-switch.on:hover:not(:disabled) .write-top-switch-lever {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0.06) 48%, rgba(0, 0, 0, 0.07)),
+    var(--lever-face-on-hover);
+}
+
+/* The lever is neutral, but not flat: a glass sheen on top and a thin inner
+   shadow give it the weight of a physical slider without turning green. */
+.write-top-switch-lever {
+  position: absolute;
+  z-index: 2;
+  top: 6px;
+  left: 6px;
+  width: 22px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.04) 48%, rgba(0, 0, 0, 0.06)),
+    var(--lever-face);
+  box-shadow:
+    inset 0 0 0 1px var(--lever-edge),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -1px 1px var(--lever-bottom-shadow),
+    0 1px 2px var(--lever-drop-shadow);
+  transition:
+    transform 220ms cubic-bezier(0.3, 1.15, 0.5, 1),
+    background 180ms ease;
+}
+
+/* The indicator keeps its original raised-bar shape; green is reserved for the
+   lit state. */
+.write-top-switch-lever i {
+  width: 3px;
+  height: 9px;
+  border-radius: 1.5px;
+  background: color-mix(in srgb, var(--muted) 58%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.20);
+  transition: background 180ms ease, box-shadow 180ms ease;
+}
+
+.write-top-switch.on .write-top-switch-lever {
+  transform: translateX(22px);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.20), rgba(255, 255, 255, 0.05) 48%, rgba(0, 0, 0, 0.06)),
+    var(--lever-face-on);
+}
+
+.write-top-switch.on .write-top-switch-lever i {
+  background: var(--green);
+  box-shadow:
+    0 0 10px color-mix(in srgb, var(--green) 80%, transparent),
+    0 0 3px var(--green),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+/* Edge light borrowed from an active audit filter: a bright rim that fades
+   across the control, plus a blurred outer glow. Mirrored so the half under
+   the lever is the lit half. */
+.write-top-switch::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset: -1px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  pointer-events: none;
+  opacity: 0;
+  background:
+    linear-gradient(var(--surface-strong), var(--surface-strong)) padding-box,
+    linear-gradient(270deg,
+      var(--write-glow) 0%,
+      color-mix(in srgb, var(--write-glow) 70%, transparent) 24%,
+      color-mix(in srgb, var(--write-glow) 34%, transparent) 46%,
+      color-mix(in srgb, var(--write-glow) 10%, transparent) 64%,
+      transparent 80%) border-box;
+  box-shadow:
+    4px 0 10px color-mix(in srgb, var(--write-glow) 40%, transparent),
+    2px -2px 7px color-mix(in srgb, var(--write-glow) 16%, transparent),
+    2px 2px 7px color-mix(in srgb, var(--write-glow) 16%, transparent);
+  transition: opacity 220ms ease;
+}
+
+.write-top-switch.on::before {
+  opacity: 1;
+}
+
+.write-top-switch::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: -4px;
+  border-radius: 12px;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(270deg,
+    color-mix(in srgb, var(--write-glow) 50%, transparent) 0%,
+    color-mix(in srgb, var(--write-glow) 18%, transparent) 38%,
+    transparent 74%);
+  filter: blur(6px);
+  transition: opacity 240ms ease;
+}
+
+.write-top-switch.on::after {
+  opacity: 0.82;
+}
+
+/* The light does not stop at the switch. The refresh group sits on the lit
+   side, so only its border catches the glow: bright at the shared edge, fading
+   to the right. The interior stays untouched. */
+.write-top-switch + .top-icon-actions {
+  position: relative;
+  isolation: isolate;
+  transition: box-shadow 240ms ease;
+}
+
+.write-top-switch + .top-icon-actions > * {
+  position: relative;
+  z-index: 2;
+}
+
+.write-top-switch + .top-icon-actions::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset: -1px;
+  padding: 1px;
+  border-radius: 9px;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--write-glow) 42%, transparent) 0%,
+    color-mix(in srgb, var(--write-glow) 12%, transparent) 30%,
+    transparent 62%);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  transition: opacity 240ms ease;
+}
+
+.write-top-switch.on + .top-icon-actions {
+  box-shadow:
+    inset 0 1px 0 var(--glass-edge),
+    -4px 0 10px -4px color-mix(in srgb, var(--write-glow) 24%, transparent);
+}
+
+.write-top-switch.on + .top-icon-actions::before {
+  opacity: 1;
+}
+
+/* The pale light surface swallows a thin green edge, so the light theme gives
+   the spill a little more weight. Still border-only: the interior stays clean. */
+:root:not(.dark) .write-top-switch.on + .top-icon-actions {
+  box-shadow:
+    inset 0 1px 0 var(--glass-edge),
+    -5px 0 14px -3px color-mix(in srgb, var(--write-glow) 36%, transparent);
+}
+
+:root:not(.dark) .write-top-switch.on + .top-icon-actions::before {
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--write-glow) 70%, transparent) 0%,
+    color-mix(in srgb, var(--write-glow) 26%, transparent) 32%,
+    transparent 64%);
+}
+
+/* A disabled fieldset makes every control in the panel inert, including the
+   Radix switches and the grant beads, without dimming the labels that explain
+   the configuration. Its chrome is reset so it is only a semantic wrapper. */
+.write-fieldset {
+  display: block;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.write-fieldset:disabled {
+  pointer-events: none;
+}
+
+/* A coloured grant must not look clickable while the whole panel is locked. */
+.write-fieldset:disabled .write-grant {
+  opacity: .45;
+}
+
+/* Per-connection write flags stay configured, but they are inert while the
+   page switch is off. */
+.write-workbench.write-off .write-badge-mark {
+  opacity: .35;
 }
 
 .write-inspector {
@@ -900,6 +1154,10 @@
   cursor: default;
   opacity: .7;
 }
+
+/* The row stays hoverable so its reason tooltip can open, but a blocked row
+   must not look like a selectable one. */
+.write-picker-row[aria-disabled="true"]:hover { background: transparent; }
 
 /* The reason is a tooltip on the badge itself, so a blocked row stays one line
    and the explanation appears exactly where the eye already is. */

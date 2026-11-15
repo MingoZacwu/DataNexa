@@ -11,8 +11,6 @@ export type AuditFilters = {
   connection: string;
   status: string;
   token: string;
-  operation: string;
-  search: string;
 };
 
 export interface ToastMessage {

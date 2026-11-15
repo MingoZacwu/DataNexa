@@ -11,6 +11,7 @@ import { api, WRONG_PASSWORD_ERROR } from "./lib/tauri";
 import { useAppUpdater } from "./lib/updater";
 import type { AppSnapshot, AuditEvent, ConnectionConfig, DatabaseType, ImportJdbcDriverInput, InstallJdbcDriverInput, JdbcCacheSelection, JdbcInstallProgress, JdbcRuntimeInstallProgress, JdbcStatus, JdbcStorageStatus, PolicyCheckResult, ServerConfig, SettingsConfig } from "./types";
 import { WriteCenterView, type WriteDrafts } from "./features/write-center/WriteCenterView";
+import { isWriteTool, WRITE_GROUP_TOOL, writeMessages, writeToolName, writeToolsEnabled } from "./write-i18n";
 import { detectThemeMode, persistThemeMode, resolveTheme, systemTheme } from "./app/theme";
 import { hasSeenBackgroundRunTip, markBackgroundRunTip } from "./app/tips";
 import type { AuditFilters, EffectiveTheme, SettingsTab, ThemeMode, ToastMessage, ToastTone, View } from "./app/types";
@@ -84,7 +85,7 @@ function App() {
   const [policyResult, setPolicyResult] = useState<PolicyCheckResult | null>(null);
   const [selectedAudit, setSelectedAudit] = useState<AuditEvent | null>(null);
   const [auditFilterOpen, setAuditFilterOpen] = useState(false);
-  const [auditFilters, setAuditFilters] = useState<AuditFilters>({ from: "", to: "", tool: "", connection: "", status: "", token: "", operation: "", search: "" });
+  const [auditFilters, setAuditFilters] = useState<AuditFilters>({ from: "", to: "", tool: "", connection: "", status: "", token: "" });
   const [selectedTokenId, setSelectedTokenId] = useState("");
   const [createTokenRequest, setCreateTokenRequest] = useState(0);
   const [promptTokenDialogOpen, setPromptTokenDialogOpen] = useState(false);
@@ -1102,16 +1103,20 @@ function App() {
     }
   }
 
-  async function setToolEnabled(name: string, enabled: boolean) {
+  async function setToolEnabled(name: string, enabled: boolean, options?: { silent?: boolean }) {
     beginBusy("tools");
     try {
       applySnapshot(await api.setMcpToolEnabled(name, enabled));
-      pushToast(
-        formatMessage(enabled ? t.toast.toolEnabled : t.toast.toolDisabled, {
-          tool: toolDisplayName(t, name)
-        }),
-        "info"
-      );
+      if (!options?.silent) {
+        pushToast(
+          formatMessage(enabled ? t.toast.toolEnabled : t.toast.toolDisabled, {
+            // The three write tools move together, so the toast names the group
+            // rather than whichever tool carried the click.
+            tool: isWriteTool(name) ? writeMessages[locale].title : writeToolName(locale, name) ?? toolDisplayName(t, name)
+          }),
+          "info"
+        );
+      }
     } catch (error) {
       showError(error);
     } finally {
@@ -1137,6 +1142,7 @@ function App() {
   const enabledConnections = connections.filter((connection) => connection.enabled).length;
   const serverEndpoint = snapshot?.server_status.endpoint ?? "http://127.0.0.1:17321/mcp";
   const requireToken = snapshot?.config.server.require_token ?? true;
+  const writeToolsOn = snapshot ? writeToolsEnabled(snapshot.tools) : false;
   const recentEvents = snapshot?.audit_events.slice(0, 8) ?? [];
   const availableUpdateVersion = updater.state.kind === "available" ? updater.state.version : null;
   const showUpdateReminder = availableUpdateVersion !== null && dismissedUpdateVersion !== availableUpdateVersion;
@@ -1238,7 +1244,7 @@ function App() {
                     {showAuditClear && (
                       <span className={clsx("audit-clear-action", !hasAuditFilters && "leaving")}>
                         <IconTooltip label={t.audit.clearFilter}>
-                          <button type="button" className="icon-button" onClick={() => setAuditFilters({ from: "", to: "", tool: "", connection: "", status: "", token: "", operation: "", search: "" })} aria-label={t.audit.clearFilter}>
+                          <button type="button" className="icon-button" onClick={() => setAuditFilters({ from: "", to: "", tool: "", connection: "", status: "", token: "" })} aria-label={t.audit.clearFilter}>
                             <X size={17} />
                           </button>
                         </IconTooltip>
@@ -1250,6 +1256,21 @@ function App() {
                   <div className="top-icon-actions">
                     <LanguageSwitcher t={t} locale={locale} disabled={isBusy("settings")} onChange={(next) => void changeLocale(next)} />
                   </div>
+                )}
+                {snapshot && activeView === "write-center" && (
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={writeToolsOn}
+                    aria-label={writeMessages[locale].gateToggle}
+                    className={clsx("write-top-switch", writeToolsOn && "on")}
+                    disabled={isBusy("tools")}
+                    // The switch itself shows the state; a toast would only
+                    // cover the control it came from.
+                    onClick={() => void setToolEnabled(WRITE_GROUP_TOOL, !writeToolsOn, { silent: true })}
+                  >
+                    <span className="write-top-switch-lever" aria-hidden="true"><i /></span>
+                  </button>
                 )}
                 {activeView !== "help" && (
                   <div className={clsx("top-icon-actions", activeView === "connections" && emergencyDisconnect && "emergency-active")}>
@@ -1347,7 +1368,7 @@ function App() {
                 {activeView === "access" && <AccessControlView t={t} locale={locale} tokens={snapshot.access_tokens} connections={connections} tools={snapshot.tools} requireToken={requireToken} busy={isBusy("access")} selectedId={selectedTokenId} onSelectedIdChange={setSelectedTokenId} createRequest={createTokenRequest} onCreateRequestHandled={() => setCreateTokenRequest(0)} onEnableAuthentication={() => void enableTokenAuthentication()} onCreate={createAccessToken} onRename={renameAccessToken} onToggle={(id, enabled) => void updateAccess(() => api.setAccessTokenEnabled(id, enabled), enabled ? t.access.tokenEnabled : t.access.tokenDisabled)} onRotate={rotateAccessToken} onDelete={deleteAccessToken} onCopyPrompt={(id) => void copyPromptForToken(id)} onConnectionAllowed={(tokenId, connectionId, allowed) => void updateAccess(() => api.setTokenConnectionAllowed(tokenId, connectionId, allowed), t.access.permissionUpdated)} onToolAllowed={(tokenId, toolName, allowed) => void updateAccess(() => api.setTokenToolAllowed(tokenId, toolName, allowed), t.access.permissionUpdated)} />}
                 {activeView === "tools" && <ToolsView t={t} locale={locale} tools={snapshot.tools} busy={isBusy("tools")} onToggle={setToolEnabled} />}
                 {activeView === "audit" && <AuditView t={t} locale={locale} events={snapshot.audit_events} tokens={snapshot.access_tokens} tools={snapshot.tools} connections={snapshot.config.connections} filters={auditFilters} onFiltersChange={setAuditFilters} filterOpen={auditFilterOpen} onFilterOpenChange={setAuditFilterOpen} onSelect={setSelectedAudit} />}
-                {activeView === "write-center" && <WriteCenterView locale={locale} snapshot={snapshot} drafts={writeDrafts} onDraftsChange={setWriteDrafts} selectedId={writeConnectionId} onSelectedIdChange={setWriteConnectionId} onSnapshot={applySnapshot} onOpenAccess={() => setActiveView("access")} onOpenTools={() => setActiveView("tools")} />}
+                {activeView === "write-center" && <WriteCenterView locale={locale} snapshot={snapshot} drafts={writeDrafts} onDraftsChange={setWriteDrafts} selectedId={writeConnectionId} onSelectedIdChange={setWriteConnectionId} onSnapshot={applySnapshot} onOpenAccess={() => setActiveView("access")} />}
                 {activeView === "settings" && (
                   <SettingsView
                     t={t}

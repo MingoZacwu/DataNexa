@@ -105,6 +105,8 @@ export interface AuditEvent {
   schema?: string | null;
   table?: string | null;
   reason_code?: string | null;
+  /** Agent-supplied business reason. Untrusted text; display only. */
+  request_reason?: string | null;
   write_status?: WriteOperationStatus | null;
   revision?: number | null;
   updated_at?: string | null;

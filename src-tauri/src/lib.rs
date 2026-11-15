@@ -140,11 +140,19 @@ pub(crate) fn apply_system_material(
 
     #[cfg(target_os = "macos")]
     {
+        // The approval windows round their content in CSS; the vibrancy view
+        // behind the transparent sidebar must use the same radius or its
+        // square corners show through the rounded window edge.
+        let radius = matches!(
+            window.label(),
+            write_approval::WINDOW_LABEL | write_approval::PREVIEW_WINDOW_LABEL
+        )
+        .then_some(12.0);
         window_vibrancy::apply_vibrancy(
             window,
             window_vibrancy::NSVisualEffectMaterial::Sidebar,
             None,
-            None,
+            radius,
         )
         .map_err(|error| error.to_string())?;
         return Ok(true);

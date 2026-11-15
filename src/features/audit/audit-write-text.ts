@@ -8,76 +8,53 @@ export const auditWriteStatuses: WriteOperationStatus[] = [
 
 const zhCN = {
   operation: "操作",
-  insert: "插入 · INSERT",
-  update: "更新 · UPDATE",
-  delete: "删除 · DELETE",
   target: "目标表",
-  requestId: "请求编号",
-  attemptId: "尝试编号",
-  noRequest: "未创建写入请求",
   reasonCode: "错误代码",
-  stage: "阶段",
-  stageUnavailable: "未记录具体阶段",
-  revision: "状态版本",
+  requestReason: "请求说明",
   updatedAt: "最近更新",
-  nextStep: "下一步",
   outcome: "执行结果",
   outcomeUnknown: "结果未知。必须人工核查，请勿自动重试或换新幂等键提交。",
   affectedRows: "影响行数",
   notReported: "尚未报告",
-  search: "搜索",
-  searchPlaceholder: "目标表、错误代码、请求编号或安全原因",
-  submitTool: "提交受限写入",
-  statusTool: "查询写入状态",
-  incomplete: "未记录完整写入状态，请使用原请求编号查询。勿据此认定成功或重新提交。",
-  stageLabels: {
-    submission: "提交校验", preparation: "准备预览", preparation_or_approval: "准备预览 / 等待审批",
-    approval: "本机审批", execution: "事务执行", commit: "事务提交", rollback: "事务回滚", recovery: "恢复核对"
-  },
+  incomplete: "未记录完整写入状态。请勿据此认定成功或重新提交。",
   nextSteps: {
     pending: "在本机审批窗口核对目标和变更；未批准前不会执行。请等待或拒绝，不要重复提交。",
-    executing: "等待事务执行完成，并使用原请求编号查询状态。不要重复提交。",
-    committing: "等待提交结果，使用原请求编号查询。当前不能认定成功，请勿重试。",
+    executing: "等待事务执行完成，状态会自动更新。不要重复提交。",
+    committing: "等待提交结果，状态会自动更新。当前不能认定成功，请勿重试。",
     committed: "事务已确认提交。需要核对时可只读查询目标记录，不要重复执行。",
     rolled_back: "事务已确认回滚。先处理原因，再重新准备预览并逐项审批。",
     rejected: "请求未获准执行。检查原因并修正权限、配置或请求后，重新发起审批。",
-    expired: "审批时限已过，本次请求不会执行。仍需操作时，重新准备并审批新请求。",
+    expired: "审批倒计时结束，请求已自动拒绝，不会执行。仍需操作时，重新准备并审批新请求。",
     cancelled: "本次请求已取消。检查权限或配置变更；仍需操作时重新准备并审批。",
     failed: "先处理安全错误并核查请求状态，不要自动重试或更换幂等键。",
-    unknown: "人工核查数据库结果，并使用原请求编号跟踪状态。不要自动重试或更换幂等键。"
+    unknown: "请人工核查数据库结果并跟踪该请求状态。不要自动重试或更换幂等键。"
   } satisfies Record<WriteOperationStatus, string>
 };
 
 type AuditWriteText = {
-  [K in keyof typeof zhCN]: K extends "nextSteps" ? Record<WriteOperationStatus, string>
-    : K extends "stageLabels" ? Record<keyof typeof zhCN.stageLabels, string> : string;
+  [K in keyof typeof zhCN]: K extends "nextSteps" ? Record<WriteOperationStatus, string> : string;
 };
 
 const en: AuditWriteText = {
-  operation: "Operation", insert: "Insert · INSERT", update: "Update · UPDATE", delete: "Delete · DELETE",
-  target: "Target table", requestId: "Request ID", attemptId: "Attempt ID", noRequest: "No write request was created",
-  reasonCode: "Error code", stage: "Stage", stageUnavailable: "Exact stage was not recorded", revision: "Revision",
-  updatedAt: "Last updated", nextStep: "Next step", outcome: "Execution outcome",
+  operation: "Operation",
+  target: "Target table",
+  reasonCode: "Error code",
+  requestReason: "Request reason",
+  updatedAt: "Last updated", outcome: "Execution outcome",
   outcomeUnknown: "The outcome is unknown. Verify manually; do not retry automatically or use a new idempotency key.",
-  affectedRows: "Affected rows", notReported: "Not reported yet", search: "Search",
-  searchPlaceholder: "Target table, error code, request ID or safe reason",
-  submitTool: "Submit restricted write", statusTool: "Get write status",
-  incomplete: "A complete write status was not recorded. Query the original request ID; do not infer success or resubmit.",
-  stageLabels: {
-    submission: "Submission validation", preparation: "Preview preparation", preparation_or_approval: "Preparation / awaiting approval",
-    approval: "Local approval", execution: "Transaction execution", commit: "Transaction commit", rollback: "Transaction rollback", recovery: "Recovery verification"
-  },
+  affectedRows: "Affected rows", notReported: "Not reported yet",
+  incomplete: "A complete write status was not recorded. Do not infer success or resubmit.",
   nextSteps: {
     pending: "Review the target and changes in the local approval window. Nothing executes before approval. Wait or reject; do not resubmit.",
-    executing: "Wait for execution to finish and query the original request ID. Do not resubmit.",
-    committing: "Wait for the commit result and query the original request ID. Success is not yet confirmed; do not retry.",
+    executing: "Wait for execution to finish; the status updates automatically. Do not resubmit.",
+    committing: "Wait for the commit result; the status updates automatically. Success is not yet confirmed; do not retry.",
     committed: "The transaction was confirmed committed. Use a readonly query if verification is needed; do not repeat the write.",
     rolled_back: "The transaction was confirmed rolled back. Resolve the cause, then prepare a new preview and approval.",
     rejected: "Execution was not authorized. Resolve the permission, configuration or request issue before requesting a new approval.",
-    expired: "Approval expired and this request will not execute. Prepare and approve a new request if still needed.",
+    expired: "The approval countdown ended and the request was rejected automatically. Prepare and approve a new request if still needed.",
     cancelled: "This request was cancelled. Review permission or configuration changes before preparing a new approval.",
     failed: "Resolve the safe error and verify the request status. Do not retry automatically or switch idempotency keys.",
-    unknown: "Verify the database outcome manually and track the original request ID. Do not retry automatically or switch idempotency keys."
+    unknown: "Verify the database outcome manually and track this request. Do not retry automatically or switch idempotency keys."
   }
 };
 
@@ -110,7 +87,7 @@ const reasonCopy: Record<string, { "zh-CN": string; en: string }> = {
   write_not_found: { "zh-CN": "未找到可访问的写入请求。", en: "The write request was not found." },
   stale_approval: { "zh-CN": "该审批版本已不再处于待处理状态。", en: "This approval revision is no longer pending." },
   approval_not_ready: { "zh-CN": "写入预览尚未准备好，不能审批。", en: "The write preview is not ready for approval." },
-  approval_expired: { "zh-CN": "本机审批请求已过期。", en: "The local approval request expired." },
+  approval_expired: { "zh-CN": "审批倒计时已结束，请求已自动拒绝。", en: "The approval countdown ended and the request was rejected automatically." },
   approval_unavailable: { "zh-CN": "无法打开本机审批窗口。", en: "The local approval window could not be opened." },
   write_cancelled: { "zh-CN": "写入请求已取消。", en: "The write request was cancelled." },
 
@@ -170,8 +147,8 @@ const nextStepsByCode: Record<string, { "zh-CN": string; en: string }> = {
     en: "Review the connection, table definition and driver capability described above. Do not bypass safeguards or switch to arbitrary write SQL."
   },
   pending_limit: {
-    "zh-CN": "先处理现有待审批请求；使用已有请求编号查询状态，不要重复提交。",
-    en: "Resolve existing pending approvals first. Query existing request IDs rather than resubmitting."
+    "zh-CN": "先处理现有待审批请求，不要重复提交。",
+    en: "Resolve existing pending approvals first rather than resubmitting."
   },
   invalid_write_request: {
     "zh-CN": "按结构化请求约定检查字段、标识符、值类型和完整主键；修正后再提交审批。",
@@ -196,8 +173,25 @@ export function auditWriteStatusLabel(locale: Locale, status: string) {
   return (writeMessages[locale].statusLabels as Record<string, string>)[status] ?? status;
 }
 
-export function auditWriteStageLabel(locale: Locale, stage?: string | null) {
-  return stage ? (auditWriteText[locale].stageLabels as Record<string, string>)[stage] ?? stage : auditWriteText[locale].stageUnavailable;
+/** Two-character pills for the audit status column; other locales keep the descriptive labels. */
+const auditWriteStatusPillLabels: Partial<Record<Locale, Record<WriteOperationStatus, string>>> = {
+  "zh-CN": {
+    pending: "待审",
+    rejected: "拒绝",
+    expired: "超时",
+    cancelled: "取消",
+    executing: "执行",
+    committing: "提交",
+    committed: "完成",
+    rolled_back: "回滚",
+    failed: "失败",
+    unknown: "未知"
+  }
+};
+
+export function auditWriteStatusPillLabel(locale: Locale, status: string) {
+  const labels = auditWriteStatusPillLabels[locale];
+  return labels?.[status as WriteOperationStatus] ?? auditWriteStatusLabel(locale, status);
 }
 
 export function auditWriteNextStep(locale: Locale, event: AuditEvent) {

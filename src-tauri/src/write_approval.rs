@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tokio::sync::Mutex;
@@ -9,6 +10,9 @@ use crate::write_operations::{WriteApprovalDto, WriteDecision, WriteOperationSta
 pub const WINDOW_LABEL: &str = "write-approval";
 pub const PREVIEW_WINDOW_LABEL: &str = "write-approval-preview";
 const CHANGED_EVENT: &str = "write-approval-changed";
+/// A window that never reports ready stays hidden while still owning the bound
+/// request. Recover instead of leaving every later open call a silent no-op.
+const READY_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 pub struct ApprovalWindowState {
@@ -42,8 +46,12 @@ fn trusted_window_url(url: &tauri::Url, dev_url: Option<&tauri::Url>) -> bool {
                 && url.host_str() == Some("tauri.localhost")));
     let development_origin =
         cfg!(debug_assertions) && dev_url.is_some_and(|dev| dev.origin() == url.origin());
+    // Tauri resolves `WebviewUrl::App("index.html")` to the app root and omits
+    // the index.html suffix. On macOS that root is `tauri://localhost` with an
+    // empty path, while Windows normalizes it to `http://tauri.localhost/`.
+    // Both spellings are the same trusted asset; anything else is a navigation.
     (local_asset || development_origin)
-        && matches!(url.path(), "/" | "/index.html")
+        && matches!(url.path(), "" | "/" | "/index.html")
         && url.username().is_empty()
         && url.password().is_none()
         && url.query().is_none()
@@ -66,7 +74,17 @@ fn validate_caller(window: &WebviewWindow, expected_label: &str) -> Result<(), S
 fn build_window(app: &AppHandle, label: &str) -> Result<WebviewWindow, String> {
     let dev_url = app.config().build.dev_url.clone();
     WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
-        .on_navigation(move |url| trusted_window_url(url, dev_url.as_ref()))
+        .on_navigation(move |url| {
+            let trusted = trusted_window_url(url, dev_url.as_ref());
+            if !trusted {
+                // Never log the URL itself: it can carry query data.
+                crate::debug_log::warn(
+                    "write_approval",
+                    format_args!("Blocked an untrusted navigation in the approval window"),
+                );
+            }
+            trusted
+        })
         .title("DataNexa Write Approval")
         // Wide enough for a before/after diff of two full values per row and for
         // readable SQL; the layout itself is unchanged.
@@ -119,6 +137,19 @@ fn destroy_window(window: &WebviewWindow, session: &mut ApprovalSession) -> Resu
     Ok(())
 }
 
+fn spawn_ready_watchdog(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(READY_TIMEOUT).await;
+        if close_unready_bound(&app).await.is_err() {
+            crate::debug_log::warn(
+                "write_approval",
+                format_args!("Unable to recover an approval window that never became ready"),
+            );
+        }
+    });
+}
+
 pub async fn show_write_approval(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<Arc<AppState>>().inner().clone();
     if state
@@ -152,6 +183,7 @@ pub async fn show_write_approval(app: &AppHandle) -> Result<(), String> {
     }
     build_window(app, WINDOW_LABEL)?;
     session.window_open = true;
+    spawn_ready_watchdog(app);
     Ok(())
 }
 
@@ -389,6 +421,78 @@ async fn close_bound(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Recover a window that was created but never announced readiness. The
+/// approval command refuses to reveal such a window, so nothing would appear
+/// while the request keeps the window registered. Cancel the request and
+/// remove the window; a later request opens a fresh one.
+///
+/// The readiness check and the teardown share the session lock, so a window
+/// that becomes ready late is never closed.
+async fn close_unready_bound(app: &AppHandle) -> Result<(), String> {
+    let state = app.state::<Arc<AppState>>().inner().clone();
+    let controller = app.state::<ApprovalWindowState>();
+    let mut session = controller.session.lock().await;
+    if session.closing || session.ready {
+        return Ok(());
+    }
+    crate::debug_log::warn(
+        "write_approval",
+        format_args!(
+            "Approval window did not become ready within {}s; cancelling the request",
+            READY_TIMEOUT.as_secs()
+        ),
+    );
+    // The page may never have reached `get_write_approval`, so the session may
+    // have no binding yet; the manager still knows which request created it.
+    let mut request_id = session
+        .bound
+        .as_ref()
+        .map(|bound| bound.request.request_id.clone());
+    if request_id.is_none() {
+        request_id = state
+            .writes
+            .current_approval()
+            .await
+            .map_err(|error| error.message)?
+            .map(|approval| approval.request.request_id);
+    }
+    let cancellation = async {
+        let Some(request_id) = request_id else {
+            return Ok(());
+        };
+        let status = state.writes.approval_status(&request_id).await?;
+        if pending(&status) {
+            state
+                .writes
+                .decide(
+                    state.clone(),
+                    request_id,
+                    status.revision,
+                    WriteDecision::Cancel,
+                )
+                .await?;
+        }
+        Ok::<(), crate::write::WriteError>(())
+    }
+    .await;
+    if cancellation.is_err() {
+        crate::debug_log::warn(
+            "write_approval",
+            format_args!("Unable to cancel the request of an unready approval window"),
+        );
+    }
+    session.bound = None;
+    session.ready = false;
+    if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
+        destroy_window(&window, &mut session)?;
+    } else {
+        session.closing = false;
+        session.window_open = false;
+        crate::sync_dock_visibility(app);
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn close_write_approval(window: WebviewWindow) -> Result<(), String> {
     validate_caller(&window, WINDOW_LABEL)?;
@@ -493,3 +597,50 @@ pub fn native_close_requested(app: &AppHandle) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::trusted_window_url;
+
+    fn url(value: &str) -> tauri::Url {
+        tauri::Url::parse(value).unwrap()
+    }
+
+    #[test]
+    fn trusts_the_app_root_on_every_platform() {
+        // macOS resolves the app root to `tauri://localhost` without a path;
+        // Windows normalizes the same root to `http://tauri.localhost/`.
+        assert!(trusted_window_url(&url("tauri://localhost"), None));
+        assert!(trusted_window_url(&url("tauri://localhost/"), None));
+        assert!(trusted_window_url(&url("tauri://localhost/index.html"), None));
+        assert!(trusted_window_url(&url("http://tauri.localhost/"), None));
+        assert!(trusted_window_url(
+            &url("https://tauri.localhost/index.html"),
+            None
+        ));
+    }
+
+    #[test]
+    fn rejects_other_paths_credentials_and_foreign_origins() {
+        assert!(!trusted_window_url(&url("tauri://localhost/evil"), None));
+        assert!(!trusted_window_url(&url("tauri://localhost/?q=1"), None));
+        assert!(!trusted_window_url(&url("tauri://localhost/#top"), None));
+        assert!(!trusted_window_url(&url("tauri://user@localhost/"), None));
+        assert!(!trusted_window_url(&url("https://example.com/"), None));
+        assert!(!trusted_window_url(&url("http://localhost/"), None));
+    }
+
+    #[test]
+    fn trusts_the_configured_dev_origin_only_in_debug_builds() {
+        let dev = url("http://localhost:1420/");
+        assert_eq!(
+            trusted_window_url(&url("http://localhost:1420/"), Some(&dev)),
+            cfg!(debug_assertions)
+        );
+        assert!(!trusted_window_url(
+            &url("http://localhost:1420/other"),
+            Some(&dev)
+        ));
+    }
+}
+

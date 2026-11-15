@@ -31,6 +31,7 @@ import type {
   WriteStatus
 } from "../types";
 import { formatMessage, messages, type Locale } from "../i18n";
+import { isWriteTool } from "../write-i18n";
 import { systemTheme } from "../app/theme";
 import { mockWriteSchemas, mockWriteTables } from "./write-mock";
 
@@ -81,12 +82,12 @@ const mockTools: McpToolInfo[] = [
   {
     name: "datanexa_list_write_targets",
     description: "Read the configured write targets available to the current authenticated token.",
-    enabled: true
+    enabled: false
   },
   {
     name: "datanexa_get_write_status",
     description: "Read a write request status summary for the current token.",
-    enabled: true
+    enabled: false
   }
 ];
 
@@ -456,7 +457,8 @@ function withSettings(settings: SettingsConfig, applyAutoStart: boolean): AppSna
 }
 
 function withToolEnabled(name: string, enabled: boolean): AppSnapshot {
-  const tools = mockSnapshot.tools.map((tool) => (tool.name === name ? { ...tool, enabled } : tool));
+  // The write tools are one group, so the preview mirrors the backend rule.
+  const tools = mockSnapshot.tools.map((tool) => (tool.name === name || (isWriteTool(name) && isWriteTool(tool.name)) ? { ...tool, enabled } : tool));
   return {
     ...mockSnapshot,
     tools,

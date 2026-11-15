@@ -89,8 +89,10 @@ pub struct WriteRequest {
     pub reason: Option<String>,
 }
 
-// These values may contain personal data. The manager must redact audit/log
-// output and protect previews in transit and at rest; never log this structure.
+// These values may contain personal data. The manager must protect previews in
+// transit and at rest, and must never log this structure. The audit projection
+// renders them into the statement as literals unless SQL-literal redaction is
+// enabled.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WriteChange {
@@ -139,6 +141,24 @@ impl PreparedWrite {
 
     fn resolved(&self) -> &ResolvedWrite {
         &self.resolved
+    }
+
+    /// Statement for the audit projection. Identifiers are quoted and bound
+    /// values are rendered as literals unless the user enabled SQL-literal
+    /// redaction, in which case the placeholder statement is kept. Execution
+    /// always uses `preview.sql` with bound parameters, never this string.
+    pub fn audit_sql(&self, redact_literals: bool) -> String {
+        if redact_literals {
+            self.preview.sql.clone()
+        } else {
+            write_sql(
+                &self.connection.kind,
+                &self.request,
+                &self.resolved,
+                &self.metadata,
+                SqlValueStyle::Literals,
+            )
+        }
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1009,6 +1029,46 @@ fn validate_identifier(identifier: &str) -> Result<()> {
     Ok(())
 }
 
+/// Structural checks that must happen before a request is registered for
+/// approval. They do not depend on the connection configuration, so the
+/// submission path can reject an incomplete request before it creates an
+/// approval record or a new revision.
+pub(crate) fn validate_submission(request: &WriteRequest) -> Result<()> {
+    if !valid_idempotency_key(&request.idempotency_key) {
+        return Err(WriteError::new(
+            "invalid_request",
+            "The idempotency key is empty, too long, or contains unsupported characters.",
+        ));
+    }
+    validate_reason(request.reason.as_deref())
+}
+
+pub(crate) fn valid_idempotency_key(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= 128
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.:".contains(&byte))
+}
+
+fn validate_reason(reason: Option<&str>) -> Result<()> {
+    match reason {
+        Some(reason) if reason.trim().is_empty() => Err(WriteError::new(
+            "reason_required",
+            "A non-empty reason is required for every write request.",
+        )),
+        Some(reason) if reason.len() > 1024 || reason.contains('\0') => Err(WriteError::new(
+            "request_limit",
+            "The reason must not contain NUL and must not exceed 1024 bytes.",
+        )),
+        Some(_) => Ok(()),
+        None => Err(WriteError::new(
+            "reason_required",
+            "A non-empty reason is required for every write request.",
+        )),
+    }
+}
+
 fn validate_request(config: &ConnectionConfig, request: &WriteRequest) -> Result<()> {
     if !config.enabled || config.id != request.connection_id {
         return Err(WriteError::new(
@@ -1033,23 +1093,13 @@ fn validate_request(config: &ConnectionConfig, request: &WriteRequest) -> Result
             "UPDATE requires at least one column value.",
         ));
     }
-    if request.connection_id.len() > 128
-        || request.idempotency_key.is_empty()
-        || request.idempotency_key.len() > 128
-        || !request
-            .idempotency_key
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.:".contains(&byte))
-        || request
-            .reason
-            .as_ref()
-            .is_some_and(|reason| reason.len() > 1024 || reason.contains('\0'))
-    {
+    if request.connection_id.len() > 128 {
         return Err(WriteError::new(
             "request_limit",
-            "Connection, idempotency-key, or reason limits were exceeded.",
+            "The connection_id exceeds its size limit.",
         ));
     }
+    validate_submission(request)?;
     for (name, value) in request.values.iter().chain(request.primary_key.iter()) {
         validate_identifier(name)?;
         if let WriteValue::Text(text) = value {
@@ -1100,20 +1150,77 @@ fn placeholder(kind: &DbKind, position: usize, column: Option<&Column>) -> Strin
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SqlValueStyle {
+    /// Bind parameters at execution time. This is the statement shown to the
+    /// approver and stored in the audit log when literal redaction is enabled.
+    Placeholders,
+    /// Literal values for the audit projection only. Never executed.
+    Literals,
+}
+
+/// Renders one request value as a SQL literal for the audit log. Values are
+/// already validated against their column type, so numbers are safe to embed
+/// verbatim; text is quoted for the target dialect.
+fn literal_value(kind: &DbKind, value: &WriteValue) -> String {
+    match value {
+        WriteValue::Null => "NULL".to_string(),
+        WriteValue::Boolean(true) => "TRUE".to_string(),
+        WriteValue::Boolean(false) => "FALSE".to_string(),
+        WriteValue::Number(number) => number.clone(),
+        WriteValue::Text(text) => match kind {
+            // MySQL treats a backslash as an escape character by default.
+            DbKind::Mysql => format!("'{}'", text.replace('\\', "\\\\").replace('\'', "''")),
+            _ => format!("'{}'", text.replace('\'', "''")),
+        },
+    }
+}
+
+fn value_token(
+    kind: &DbKind,
+    position: usize,
+    column: Option<&Column>,
+    value: &WriteValue,
+    style: SqlValueStyle,
+) -> String {
+    match style {
+        SqlValueStyle::Placeholders => placeholder(kind, position, column),
+        SqlValueStyle::Literals => {
+            let rendered = literal_value(kind, value);
+            match kind {
+                DbKind::Postgres => {
+                    let cast = column
+                        .and_then(|column| column.kind.pg_cast())
+                        .unwrap_or("text");
+                    format!("{rendered}::{cast}")
+                }
+                _ => rendered,
+            }
+        }
+    }
+}
+
 fn predicate(
     kind: &DbKind,
     primary_key: &BTreeMap<String, WriteValue>,
     offset: usize,
     metadata: &Metadata,
+    style: SqlValueStyle,
 ) -> String {
     primary_key
-        .keys()
+        .iter()
         .enumerate()
-        .map(|(index, name)| {
+        .map(|(index, (name, value))| {
             format!(
                 "{} = {}",
                 quote(kind, name),
-                placeholder(kind, offset + index + 1, metadata.column(name))
+                value_token(
+                    kind,
+                    offset + index + 1,
+                    metadata.column(name),
+                    value,
+                    style
+                )
             )
         })
         .collect::<Vec<_>>()
@@ -1132,6 +1239,7 @@ fn write_sql(
     request: &WriteRequest,
     resolved: &ResolvedWrite,
     metadata: &Metadata,
+    style: SqlValueStyle,
 ) -> String {
     match request.operation {
         WriteOperation::Insert if resolved.values.is_empty() => format!(
@@ -1150,9 +1258,15 @@ fn write_sql(
                 .join(", "),
             resolved
                 .values
-                .keys()
+                .iter()
                 .enumerate()
-                .map(|(index, name)| placeholder(kind, index + 1, metadata.column(name)))
+                .map(|(index, (name, value))| value_token(
+                    kind,
+                    index + 1,
+                    metadata.column(name),
+                    value,
+                    style
+                ))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
@@ -1161,23 +1275,29 @@ fn write_sql(
             target(kind, request),
             resolved
                 .values
-                .keys()
+                .iter()
                 .enumerate()
-                .map(|(index, name)| {
+                .map(|(index, (name, value))| {
                     format!(
                         "{} = {}",
                         quote(kind, name),
-                        placeholder(kind, index + 1, metadata.column(name))
+                        value_token(kind, index + 1, metadata.column(name), value, style)
                     )
                 })
                 .collect::<Vec<_>>()
                 .join(", "),
-            predicate(kind, &resolved.primary_key, resolved.values.len(), metadata)
+            predicate(
+                kind,
+                &resolved.primary_key,
+                resolved.values.len(),
+                metadata,
+                style
+            )
         ),
         WriteOperation::Delete => format!(
             "DELETE FROM {} WHERE {}",
             target(kind, request),
-            predicate(kind, &resolved.primary_key, 0, metadata)
+            predicate(kind, &resolved.primary_key, 0, metadata, style)
         ),
     }
 }
@@ -1206,7 +1326,7 @@ fn select_sql(
             .collect::<Vec<_>>()
             .join(", "),
         target(kind, request),
-        predicate(kind, primary_key, 0, metadata),
+        predicate(kind, primary_key, 0, metadata, SqlValueStyle::Placeholders),
         if locked && !matches!(kind, DbKind::Sqlite) {
             " FOR UPDATE"
         } else {
@@ -1587,7 +1707,7 @@ pub async fn prepare(
                     ));
                 }
                 WritePreview {
-                    sql: write_sql(&config.kind, &request, &resolved, &metadata),
+                    sql: write_sql(&config.kind, &request, &resolved, &metadata, SqlValueStyle::Placeholders),
                     changes: request
                         .values
                         .iter()
@@ -1614,7 +1734,7 @@ pub async fn prepare(
                     ));
                 };
                 WritePreview {
-                    sql: write_sql(&config.kind, &request, &resolved, &metadata),
+                    sql: write_sql(&config.kind, &request, &resolved, &metadata, SqlValueStyle::Placeholders),
                     changes: request
                         .values
                         .iter()
@@ -1641,7 +1761,7 @@ pub async fn prepare(
                     ));
                 }
                 WritePreview {
-                    sql: write_sql(&config.kind, &request, &resolved, &metadata),
+                    sql: write_sql(&config.kind, &request, &resolved, &metadata, SqlValueStyle::Placeholders),
                     changes: resolved
                         .primary_key
                         .iter()
@@ -1850,4 +1970,172 @@ fn column_signature(columns: &[Column]) -> String {
             })
             .collect::<Vec<_>>(),
     )
+}
+
+#[cfg(test)]
+mod sql_tests {
+    use super::*;
+
+    fn column(name: &str, declared: &str, kind: ColumnKind, primary_key: bool) -> Column {
+        Column {
+            name: name.to_string(),
+            declared: declared.to_string(),
+            kind,
+            nullable: !primary_key,
+            primary_key,
+            generated: false,
+            auto_increment: false,
+            has_default: false,
+            on_update: false,
+        }
+    }
+
+    fn metadata() -> Metadata {
+        let columns = vec![
+            column(
+                "name",
+                "text",
+                ColumnKind::Text {
+                    max_bytes: MAX_TEXT_BYTES,
+                    format: TextFormat::Plain,
+                },
+                false,
+            ),
+            column(
+                "id",
+                "bigint",
+                ColumnKind::Integer {
+                    min: i128::MIN,
+                    max: i128::MAX,
+                },
+                true,
+            ),
+        ];
+        Metadata {
+            fingerprint: column_signature(&columns),
+            columns,
+            warnings: Vec::new(),
+        }
+    }
+
+    fn update_request() -> WriteRequest {
+        WriteRequest {
+            connection_id: "connection-1".to_string(),
+            operation: WriteOperation::Update,
+            target_id: None,
+            schema: "public".to_string(),
+            table: "account".to_string(),
+            values: BTreeMap::from([(
+                "name".to_string(),
+                WriteValue::Text("O'Brien\\stock".to_string()),
+            )]),
+            primary_key: BTreeMap::from([("id".to_string(), WriteValue::Number("42".to_string()))]),
+            idempotency_key: "key-1".to_string(),
+            reason: Some("Reconcile stock.".to_string()),
+        }
+    }
+
+    #[test]
+    fn placeholders_remain_the_execution_statement() {
+        let metadata = metadata();
+        let request = update_request();
+        let resolved = metadata.plan(&request).expect("plan");
+        assert_eq!(
+            write_sql(
+                &DbKind::Postgres,
+                &request,
+                &resolved,
+                &metadata,
+                SqlValueStyle::Placeholders,
+            ),
+            "UPDATE \"public\".\"account\" SET \"name\" = $1::text WHERE \"id\" = $2::int8"
+        );
+    }
+
+    #[test]
+    fn literal_audit_sql_renders_bound_values() {
+        let metadata = metadata();
+        let request = update_request();
+        let resolved = metadata.plan(&request).expect("plan");
+        assert_eq!(
+            write_sql(
+                &DbKind::Postgres,
+                &request,
+                &resolved,
+                &metadata,
+                SqlValueStyle::Literals,
+            ),
+            "UPDATE \"public\".\"account\" SET \"name\" = 'O''Brien\\stock'::text WHERE \"id\" = 42::int8"
+        );
+        // MySQL treats a backslash as an escape character, so it is doubled.
+        assert_eq!(
+            write_sql(
+                &DbKind::Mysql,
+                &request,
+                &resolved,
+                &metadata,
+                SqlValueStyle::Literals,
+            ),
+            "UPDATE `public`.`account` SET `name` = 'O''Brien\\\\stock' WHERE `id` = 42"
+        );
+    }
+
+    #[test]
+    fn redaction_keeps_the_placeholder_statement() {
+        let metadata = metadata();
+        let request = update_request();
+        let resolved = metadata.plan(&request).expect("plan");
+        assert_eq!(
+            write_sql(
+                &DbKind::Sqlite,
+                &request,
+                &resolved,
+                &metadata,
+                SqlValueStyle::Placeholders,
+            ),
+            "UPDATE \"public\".\"account\" SET \"name\" = ? WHERE \"id\" = ?"
+        );
+    }
+}
+
+#[cfg(test)]
+mod submission_tests {
+    use super::*;
+
+    fn request(reason: Option<&str>) -> WriteRequest {
+        WriteRequest {
+            connection_id: "connection-1".to_string(),
+            operation: WriteOperation::Insert,
+            target_id: None,
+            schema: "public".to_string(),
+            table: "account".to_string(),
+            values: BTreeMap::from([("name".to_string(), WriteValue::Text("example".to_string()))]),
+            primary_key: BTreeMap::new(),
+            idempotency_key: "key-1".to_string(),
+            reason: reason.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn submission_requires_a_non_empty_reason() {
+        assert_eq!(
+            validate_submission(&request(None)).unwrap_err().code,
+            "reason_required"
+        );
+        assert_eq!(
+            validate_submission(&request(Some("   "))).unwrap_err().code,
+            "reason_required"
+        );
+        assert!(validate_submission(&request(Some("Reconcile stock."))).is_ok());
+    }
+
+    #[test]
+    fn submission_rejects_invalid_idempotency_keys() {
+        let mut invalid = request(Some("Reconcile stock."));
+        invalid.idempotency_key = "not allowed".to_string();
+        assert_eq!(
+            validate_submission(&invalid).unwrap_err().code,
+            "invalid_request"
+        );
+    }
 }

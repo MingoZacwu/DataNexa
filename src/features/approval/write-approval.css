@@ -76,6 +76,15 @@
   box-shadow: var(--shadow);
 }
 
+/* A borderless, transparent macOS window has square corners. The preview card
+   above already rounds itself; the native window needs the same radius on its
+   content or it renders as a hard square. Windows applies its own DWM
+   rounding, so this stays scoped to platforms without it. */
+:root[data-platform="macos"] .write-approval-window,
+:root[data-platform="other"] .write-approval-window {
+  border-radius: 12px;
+}
+
 .wa-context {
   display: flex;
   flex-direction: column;
@@ -93,7 +102,7 @@
 .wa-meta-label { display: flex; align-items: center; gap: 5px; margin-bottom: 4px; color: var(--muted); font-size: 12px; }
 .wa-meta-label svg { flex-shrink: 0; }
 .wa-identity-name { font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
-.wa-brand { display: inline-flex; align-items: center; gap: 7px; margin-top: auto; padding-top: 14px; font-size: 13px; font-weight: 600; letter-spacing: -.25px; }
+.wa-brand { display: inline-flex; align-items: center; justify-content: center; gap: 7px; margin-top: auto; padding-top: 14px; font-size: 13px; font-weight: 600; letter-spacing: -.25px; }
 .wa-brand img { display: block; width: 28px; height: 28px; object-fit: contain; }
 .wa-illustration { width: 89px; height: 81px; margin: 3px auto 0; position: relative; flex: 0 0 auto; }
 /* One illustration serves all three operations: the accent colour and the
@@ -133,6 +142,18 @@
 .wa-target > code { font-size: 13px; }
 .wa-predicate { display: flex; flex-wrap: wrap; gap: 3px 7px; font-size: 12px; color: var(--muted); margin-top: 4px; }
 .wa-predicate code { color: var(--ink); }
+/* The agent's reason is a primary input to the decision, so it gets its own
+   callout above the diff; SQL stays optional detail below. */
+.wa-reason { margin: 0 0 13px; padding: 9px 11px 10px; border-left: 2px solid var(--wa-accent); border-radius: 6px; background: var(--wa-soft); }
+/* Both halves of the label share one font size and one centre line; only the
+   weight and colour differ, so the helper never looks like a smaller footnote
+   dropping below the title. */
+.wa-reason-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 4px; }
+.wa-reason-title { display: inline-flex; align-items: center; gap: 5px; color: var(--ink); font-size: 12px; font-weight: 600; }
+.wa-reason-title svg { flex-shrink: 0; color: var(--muted); }
+.wa-reason-sep { color: var(--muted); font-size: 12px; }
+.wa-reason-trust { color: var(--muted); font-size: 12px; font-weight: 400; }
+.wa-reason p { margin: 0; font-size: 12px; color: var(--ink); overflow-wrap: anywhere; white-space: pre-wrap; }
 .wa-link { display: inline-flex; align-items: center; gap: 4px; border: 0; padding: 3px 0; color: var(--blue); font-size: 12px; background: transparent; }
 .wa-diff { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
 .wa-diff th { text-align: center; font-size: 12px; font-weight: 400; color: var(--muted); background: var(--wa-soft); padding: 7px 3px; }
@@ -158,8 +179,12 @@
 .wa-chevron { transition: transform .15s; }
 .wa-details[open] .wa-chevron { transform: rotate(90deg); }
 .wa-detail-content { background: var(--wa-soft); padding: 12px; border-radius: 8px; font-size: 12px; margin-top: 10px; overflow-wrap: anywhere; }
-.wa-detail-content pre { margin: 10px 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.65 "Cascadia Code", "Consolas", monospace; color: var(--ink); }
-.wa-expiry { margin-top: 12px; }
+.wa-detail-content pre { margin: 0 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.65 "Cascadia Code", "Consolas", monospace; color: var(--ink); }
+/* The approval is intentionally short-lived, so the reject button itself
+   carries the countdown: the automatic rejection stays predictable without a
+   separate footer banner. tabular-nums keeps the label from jittering. */
+.wa-reject-timer { margin-left: 3px; font-variant-numeric: tabular-nums; }
+.wa-reject-timer.is-urgent { color: var(--amber); font-weight: 700; }
 .wa-notice { margin: 10px 0; padding: 9px 10px; border-radius: 7px; background: var(--wa-soft); color: var(--amber); font-size: 12px; overflow-wrap: anywhere; }
 .wa-notice .wa-link { margin-left: 8px; }
 /* Informational table facts: the .wa-notice look, stacked tightly. Must follow

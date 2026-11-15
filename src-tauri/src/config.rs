@@ -405,6 +405,11 @@ pub const WRITE_SUBMIT_TOOL: &str = "datanexa_submit_write";
 pub const WRITE_STATUS_TOOL: &str = "datanexa_get_write_status";
 pub const WRITE_TARGETS_TOOL: &str = "datanexa_list_write_targets";
 
+/// The restricted-write tools only work as a set: submit a write, discover its
+/// targets, and poll its status. Enabling or disabling any one of them applies
+/// to the whole group.
+pub const WRITE_TOOL_NAMES: [&str; 3] = [WRITE_SUBMIT_TOOL, WRITE_STATUS_TOOL, WRITE_TARGETS_TOOL];
+
 pub const MCP_TOOL_NAMES: [&str; 10] = [
     "datanexa_list_connections",
     "datanexa_get_schema",
@@ -419,11 +424,15 @@ pub const MCP_TOOL_NAMES: [&str; 10] = [
 ];
 
 pub fn default_tool_enabled(name: &str) -> bool {
-    is_known_tool(name) && name != WRITE_SUBMIT_TOOL
+    is_known_tool(name) && !is_write_tool(name)
 }
 
 pub fn is_known_tool(name: &str) -> bool {
     MCP_TOOL_NAMES.contains(&name)
+}
+
+pub fn is_write_tool(name: &str) -> bool {
+    WRITE_TOOL_NAMES.contains(&name)
 }
 
 pub fn is_tool_enabled(tools: &[ToolConfig], name: &str) -> bool {
@@ -432,6 +441,17 @@ pub fn is_tool_enabled(tools: &[ToolConfig], name: &str) -> bool {
         .find(|tool| tool.name == name)
         .map(|tool| tool.enabled)
         .unwrap_or_else(|| default_tool_enabled(name))
+}
+
+/// Applies a Tools-page toggle. Toggling any restricted-write tool changes the
+/// whole group, because the capability is unusable when one leg is missing.
+pub fn set_tool_enabled(tools: &mut [ToolConfig], name: &str, enabled: bool) {
+    let group = is_write_tool(name);
+    for tool in tools.iter_mut() {
+        if tool.name == name || (group && is_write_tool(&tool.name)) {
+            tool.enabled = enabled;
+        }
+    }
 }
 
 pub fn normalize_tool_configs(tools: &mut Vec<ToolConfig>) {
@@ -446,6 +466,19 @@ pub fn normalize_tool_configs(tools: &mut Vec<ToolConfig>) {
                 enabled: default_tool_enabled(name),
             });
         }
+    }
+
+    // The group is usable only when every write tool is on. A hand-edited or
+    // legacy config with a partial set is normalized to "off", which keeps the
+    // conservative default and matches the single switch on the Tools page.
+    let write_enabled = WRITE_TOOL_NAMES.iter().all(|name| {
+        tools
+            .iter()
+            .find(|tool| tool.name == *name)
+            .is_some_and(|tool| tool.enabled)
+    });
+    for tool in tools.iter_mut().filter(|tool| is_write_tool(&tool.name)) {
+        tool.enabled = write_enabled;
     }
 }
 
@@ -796,6 +829,75 @@ require_token = true
         config
             .normalize_and_validate()
             .expect("matching credential reference is valid");
+    }
+
+    #[test]
+    fn write_tools_are_enabled_and_disabled_as_one_group() {
+        let mut config = AppConfig::default();
+        for name in WRITE_TOOL_NAMES {
+            assert!(
+                !is_tool_enabled(&config.tools, name),
+                "the write group starts off"
+            );
+        }
+
+        set_tool_enabled(&mut config.tools, WRITE_TARGETS_TOOL, true);
+        config.normalize();
+        for name in WRITE_TOOL_NAMES {
+            assert!(
+                is_tool_enabled(&config.tools, name),
+                "{name} follows the group"
+            );
+        }
+
+        // A partially written config is normalized conservatively: one leg off
+        // means the capability is unusable, so the whole group is off.
+        config
+            .tools
+            .iter_mut()
+            .find(|tool| tool.name == WRITE_STATUS_TOOL)
+            .expect("status tool is present")
+            .enabled = false;
+        config.normalize();
+        for name in WRITE_TOOL_NAMES {
+            assert!(
+                !is_tool_enabled(&config.tools, name),
+                "{name} turns off with the group"
+            );
+        }
+    }
+
+    #[test]
+    fn toggling_any_write_tool_applies_to_the_whole_group() {
+        let mut config = AppConfig::default();
+        for name in WRITE_TOOL_NAMES {
+            set_tool_enabled(&mut config.tools, name, true);
+            for sibling in WRITE_TOOL_NAMES {
+                assert!(
+                    is_tool_enabled(&config.tools, sibling),
+                    "{sibling} is on after toggling {name} on"
+                );
+            }
+            set_tool_enabled(&mut config.tools, name, false);
+            for sibling in WRITE_TOOL_NAMES {
+                assert!(
+                    !is_tool_enabled(&config.tools, sibling),
+                    "{sibling} is off after toggling {name} off"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn non_write_tools_stay_independent() {
+        let mut config = AppConfig::default();
+        set_tool_enabled(&mut config.tools, "datanexa_execute_readonly_sql", false);
+        config.normalize();
+        assert!(!is_tool_enabled(
+            &config.tools,
+            "datanexa_execute_readonly_sql"
+        ));
+        assert!(is_tool_enabled(&config.tools, "datanexa_policy_check"));
     }
 
     #[test]
