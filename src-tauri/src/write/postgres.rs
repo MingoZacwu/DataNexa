@@ -147,7 +147,7 @@ pub(super) async fn metadata(
         ));
     }
     let indexes = sqlx::query(
-        "SELECT i.indkey::text AS keys FROM pg_catalog.pg_index \
+        "SELECT i.indkey::text AS keys FROM pg_catalog.pg_index i \
          WHERE i.indrelid = $1::oid AND i.indisprimary LIMIT 2",
     )
     .bind(oid)
