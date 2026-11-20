@@ -1,6 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import clsx from "clsx";
-import { Cable, Database, MoreVertical, PenLine, Power, SearchCheck, Trash2, X } from "lucide-react";
+import { Cable, Database, MoreVertical, PenLine, Power, RotateCcw, SearchCheck, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { formatMessage, type I18nMessages, type Locale } from "../../i18n";
@@ -9,6 +9,15 @@ import type { ConnectionConfig, DatabaseType, JdbcDriverBundle } from "../../typ
 import { DATABASE_LOGOS } from "../../app/assets";
 import { defaultPort } from "../../app/utils";
 import { Field, FormSection, IconTooltip, StatusPill } from "../../components/ui";
+
+const DATABASE_TYPE_OPTIONS: DatabaseType[] = ["sqlite", "mysql", "postgres", "jdbc"];
+
+const DATABASE_TYPE_LABELS: Record<DatabaseType, string> = {
+  sqlite: "SQLite",
+  mysql: "MySQL",
+  postgres: "PostgreSQL",
+  jdbc: "JDBC"
+};
 
 export function ConnectionsView({
   t,
@@ -161,37 +170,62 @@ export function ConnectionDialog({
               <Field label={t.connectionDialog.name} span>
                 <input value={editing.name} onChange={(event) => onEditingChange({ ...editing, name: event.target.value })} required />
               </Field>
-              <Field label={t.connectionDialog.databaseType}>
-                <select
-                  value={editing.type}
-                  onChange={(event) => {
-                    const type = event.target.value as DatabaseType;
-                    onEditingChange({
-                      ...editing,
-                      type,
-                      database: type === "jdbc" ? "" : editing.database,
-                      host: type === "jdbc" ? null : editing.host,
-                      port: defaultPort(type),
-                      ssl_mode: type === "sqlite" || type === "jdbc" ? null : editing.ssl_mode ?? "prefer",
-                      jdbc_bundle_id: type === "jdbc" ? editing.jdbc_bundle_id ?? jdbcDrivers[0]?.bundle_id ?? null : null,
-                      jdbc_url: type === "jdbc" ? editing.jdbc_url ?? "" : null,
-                      jdbc_driver_class: type === "jdbc" ? editing.jdbc_driver_class ?? null : null
-                    });
-                  }}
-                >
-                  <option value="sqlite">SQLite</option>
-                  <option value="mysql">MySQL</option>
-                  <option value="postgres">PostgreSQL</option>
-                  <option value="jdbc">JDBC</option>
-                </select>
-              </Field>
+              <div className="field span-all">
+                <span>{t.connectionDialog.databaseType}</span>
+                <div className="db-type-grid" role="radiogroup" aria-label={t.connectionDialog.databaseType}>
+                  {DATABASE_TYPE_OPTIONS.map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      role="radio"
+                      aria-checked={editing.type === type}
+                      className={clsx("db-type-option", editing.type === type && "selected")}
+                      onClick={() => {
+                        if (type === editing.type) return;
+                        onEditingChange({
+                          ...editing,
+                          type,
+                          database: type === "jdbc" ? "" : editing.database,
+                          host: type === "jdbc" ? null : editing.host,
+                          port: defaultPort(type),
+                          ssl_mode: type === "sqlite" || type === "jdbc" ? null : editing.ssl_mode ?? "prefer",
+                          jdbc_bundle_id: type === "jdbc" ? editing.jdbc_bundle_id ?? jdbcDrivers[0]?.bundle_id ?? null : null,
+                          jdbc_url: type === "jdbc" ? editing.jdbc_url ?? "" : null,
+                          jdbc_driver_class: type === "jdbc" ? editing.jdbc_driver_class ?? null : null
+                        });
+                      }}
+                    >
+                      <span className="db-type-logo">
+                        {DATABASE_LOGOS[type]
+                          ? <img src={DATABASE_LOGOS[type]} alt="" aria-hidden="true" />
+                          : <Database size={16} aria-hidden="true" />}
+                      </span>
+                      <span className="db-type-name">{DATABASE_TYPE_LABELS[type]}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </FormSection>
 
-            <FormSection title={t.connectionDialog.address}>
+            <FormSection title={t.connectionDialog.connectionInfo}>
               {editing.type === "sqlite" ? (
-                <Field label={t.connectionDialog.databaseFile} span>
-                  <input value={editing.database} onChange={(event) => onEditingChange({ ...editing, database: event.target.value })} placeholder="E:/data/app.db" required />
-                </Field>
+                <>
+                  <Field label={t.connectionDialog.databaseFile} span>
+                    <input value={editing.database} onChange={(event) => onEditingChange({ ...editing, database: event.target.value })} placeholder="E:/data/app.db" required />
+                  </Field>
+                  {editing.credential_ref && (
+                    <PasswordField
+                      t={t}
+                      value={password}
+                      saved
+                      inputDisabled
+                      clearPassword={clearPassword}
+                      busy={busy}
+                      onChange={onPasswordChange}
+                      onClearChange={onClearPasswordChange}
+                    />
+                  )}
+                </>
               ) : editing.type === "jdbc" ? (
                 <>
                   <Field label={t.connectionDialog.jdbcDriver} span>
@@ -200,7 +234,7 @@ export function ConnectionDialog({
                       onChange={(event) => onEditingChange({ ...editing, jdbc_bundle_id: event.target.value || null })}
                       required
                     >
-                      <option value="">{t.connectionDialog.jdbcDriverPlaceholder}</option>
+                      <option value="" disabled>{t.connectionDialog.jdbcDriverPlaceholder}</option>
                       {jdbcDrivers.map((driver) => (
                         <option key={driver.bundle_id} value={driver.bundle_id}>{driver.display_name} · {driver.source === "local" ? t.settings.localDriver : driver.maven_coordinate}</option>
                       ))}
@@ -218,14 +252,22 @@ export function ConnectionDialog({
                   <Field label={t.connectionDialog.username}>
                     <input value={editing.username ?? ""} onChange={(event) => onEditingChange({ ...editing, username: event.target.value })} />
                   </Field>
-                  <Field label={t.connectionDialog.jdbcDriverClass}>
+                  <PasswordField
+                    t={t}
+                    value={password}
+                    saved={Boolean(editing.credential_ref)}
+                    clearPassword={clearPassword}
+                    busy={busy}
+                    onChange={onPasswordChange}
+                    onClearChange={onClearPasswordChange}
+                  />
+                  <Field label={t.connectionDialog.jdbcDriverClass} span>
                     <input
                       value={editing.jdbc_driver_class ?? ""}
                       onChange={(event) => onEditingChange({ ...editing, jdbc_driver_class: event.target.value || null })}
                       placeholder={t.connectionDialog.jdbcDriverClassPlaceholder}
                     />
                   </Field>
-                  <p className="field-note span-all">{t.connectionDialog.jdbcPreviewNotice}</p>
                 </>
               ) : (
                 <>
@@ -238,41 +280,30 @@ export function ConnectionDialog({
                   <Field label={t.connectionDialog.database}>
                     <input value={editing.database} onChange={(event) => onEditingChange({ ...editing, database: event.target.value })} required />
                   </Field>
-                  <Field label={t.connectionDialog.username}>
-                    <input value={editing.username ?? ""} onChange={(event) => onEditingChange({ ...editing, username: event.target.value })} />
-                  </Field>
-                  <Field label={t.connectionDialog.sslMode} span>
+                  <Field label={t.connectionDialog.sslMode}>
                     <select value={editing.ssl_mode ?? "prefer"} onChange={(event) => onEditingChange({ ...editing, ssl_mode: event.target.value })}>
                       <option value="disable">{t.connectionDialog.sslDisable}</option>
                       <option value="prefer">{t.connectionDialog.sslPrefer}</option>
                       <option value="require">{t.connectionDialog.sslRequire}</option>
                     </select>
                   </Field>
+                  <Field label={t.connectionDialog.username}>
+                    <input value={editing.username ?? ""} onChange={(event) => onEditingChange({ ...editing, username: event.target.value })} />
+                  </Field>
+                  <PasswordField
+                    t={t}
+                    value={password}
+                    saved={Boolean(editing.credential_ref)}
+                    clearPassword={clearPassword}
+                    busy={busy}
+                    onChange={onPasswordChange}
+                    onClearChange={onClearPasswordChange}
+                  />
                 </>
               )}
             </FormSection>
 
-            <FormSection title={t.connectionDialog.credentialsAndLimits}>
-              <Field label={t.connectionDialog.password}>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(event) => onPasswordChange(event.target.value)}
-                  disabled={clearPassword}
-                  placeholder={editing.credential_ref ? t.connectionDialog.keepExistingPassword : t.connectionDialog.saveToVault}
-                />
-              </Field>
-              <div className="credential-action-field">
-                <button
-                  type="button"
-                  className={clsx("button ghost credential-clear-button", clearPassword && "pending")}
-                  disabled={!editing.credential_ref || busy || clearPassword}
-                  onClick={() => onClearPasswordChange(true)}
-                >
-                  <Trash2 size={15} />
-                  {t.connectionDialog.clearSavedCredential}
-                </button>
-              </div>
+            <FormSection title={t.connectionDialog.limits}>
               <Field label={t.connectionDialog.maxRows}>
                 <input type="number" min={1} max={5000} value={editing.max_rows} onChange={(event) => onEditingChange({ ...editing, max_rows: Number(event.target.value) })} />
               </Field>
@@ -285,9 +316,6 @@ export function ConnectionDialog({
               <Field label={t.connectionDialog.maxResultBytes}>
                 <input type="number" min={64} max={8192} step={64} value={Math.round(editing.max_result_bytes / 1024)} onChange={(event) => onEditingChange({ ...editing, max_result_bytes: Number(event.target.value) * 1024 })} />
               </Field>
-              <p className="field-note span-all">
-                {formatMessage(t.connectionDialog.currentCredential, { credential: editing.credential_ref ?? t.connectionDialog.credentialNotSaved })}
-              </p>
             </FormSection>
             </div>
 
@@ -305,6 +333,60 @@ export function ConnectionDialog({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+function PasswordField({
+  t,
+  value,
+  saved,
+  clearPassword,
+  busy,
+  inputDisabled,
+  onChange,
+  onClearChange
+}: {
+  t: I18nMessages;
+  value: string;
+  saved: boolean;
+  clearPassword: boolean;
+  busy: boolean;
+  inputDisabled?: boolean;
+  onChange: (value: string) => void;
+  onClearChange: (pending: boolean) => void;
+}) {
+  const placeholder = clearPassword
+    ? t.connectionDialog.clearPasswordPending
+    : saved ? t.connectionDialog.keepExistingPassword : t.connectionDialog.enterPassword;
+  const actionLabel = clearPassword ? t.connectionDialog.cancelClearCredential : t.connectionDialog.clearSavedCredential;
+
+  return (
+    <div className="field">
+      <span>{t.connectionDialog.password}</span>
+      <div className={clsx("credential-input-wrap", clearPassword && "pending")}>
+        <input
+          type="password"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          disabled={clearPassword || inputDisabled}
+          placeholder={placeholder}
+          autoComplete="new-password"
+        />
+        {saved && (
+          <IconTooltip label={actionLabel}>
+            <button
+              type="button"
+              className="credential-clear-icon"
+              aria-label={actionLabel}
+              disabled={busy}
+              onClick={() => onClearChange(!clearPassword)}
+            >
+              {clearPassword ? <RotateCcw size={14} /> : <Trash2 size={14} />}
+            </button>
+          </IconTooltip>
+        )}
+      </div>
+    </div>
   );
 }
 
