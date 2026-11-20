@@ -7,8 +7,9 @@ import { formatMessage, type I18nMessages, type Locale } from "../../i18n";
 import { writeMessages } from "../../write-i18n";
 import type { ConnectionConfig, DatabaseType, JdbcDriverBundle } from "../../types";
 import { DATABASE_LOGOS } from "../../app/assets";
-import { defaultPort } from "../../app/utils";
+import { defaultPort, updateScrollFade, useScrollFade } from "../../app/utils";
 import { Field, FormSection, IconTooltip, StatusPill } from "../../components/ui";
+import { suggestJdbcUrl } from "./jdbc-templates";
 
 const DATABASE_TYPE_OPTIONS: DatabaseType[] = ["sqlite", "mysql", "postgres", "jdbc"];
 
@@ -145,6 +146,8 @@ export function ConnectionDialog({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onClose: () => void;
 }) {
+  const scrollFadeRef = useScrollFade();
+
   if (!editing) return null;
 
   return (
@@ -165,7 +168,7 @@ export function ConnectionDialog({
           </div>
 
           <form className="connection-form" onSubmit={onSubmit}>
-            <div className="connection-form-scroll">
+            <div className="connection-form-scroll" ref={scrollFadeRef} onScroll={updateScrollFade}>
             <FormSection title={t.connectionDialog.basicInfo}>
               <Field label={t.connectionDialog.name} span>
                 <input value={editing.name} onChange={(event) => onEditingChange({ ...editing, name: event.target.value })} required />
@@ -182,6 +185,9 @@ export function ConnectionDialog({
                       className={clsx("db-type-option", editing.type === type && "selected")}
                       onClick={() => {
                         if (type === editing.type) return;
+                        const bundleId = type === "jdbc"
+                          ? editing.jdbc_bundle_id ?? jdbcDrivers[0]?.bundle_id ?? null
+                          : null;
                         onEditingChange({
                           ...editing,
                           type,
@@ -189,8 +195,10 @@ export function ConnectionDialog({
                           host: type === "jdbc" ? null : editing.host,
                           port: defaultPort(type),
                           ssl_mode: type === "sqlite" || type === "jdbc" ? null : editing.ssl_mode ?? "prefer",
-                          jdbc_bundle_id: type === "jdbc" ? editing.jdbc_bundle_id ?? jdbcDrivers[0]?.bundle_id ?? null : null,
-                          jdbc_url: type === "jdbc" ? editing.jdbc_url ?? "" : null,
+                          jdbc_bundle_id: bundleId,
+                          jdbc_url: type === "jdbc"
+                            ? suggestJdbcUrl(editing.jdbc_url, jdbcDrivers.find((driver) => driver.bundle_id === bundleId))
+                            : null,
                           jdbc_driver_class: type === "jdbc" ? editing.jdbc_driver_class ?? null : null
                         });
                       }}
@@ -214,16 +222,22 @@ export function ConnectionDialog({
                     <input value={editing.database} onChange={(event) => onEditingChange({ ...editing, database: event.target.value })} placeholder="E:/data/app.db" required />
                   </Field>
                   {editing.credential_ref && (
-                    <PasswordField
-                      t={t}
-                      value={password}
-                      saved
-                      inputDisabled
-                      clearPassword={clearPassword}
-                      busy={busy}
-                      onChange={onPasswordChange}
-                      onClearChange={onClearPasswordChange}
-                    />
+                    <div className="field span-all">
+                      <span>{t.connectionDialog.password}</span>
+                      <div className="readonly-row">
+                        <span className={clsx("readonly-value", clearPassword && "pending")}>
+                          {clearPassword ? t.connectionDialog.clearPasswordPending : t.connectionDialog.passwordStored}
+                        </span>
+                        <button
+                          type="button"
+                          className="text-button"
+                          disabled={busy}
+                          onClick={() => onClearPasswordChange(!clearPassword)}
+                        >
+                          {clearPassword ? t.connectionDialog.cancelClearCredential : t.connectionDialog.clearCredentialShort}
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </>
               ) : editing.type === "jdbc" ? (
@@ -231,7 +245,20 @@ export function ConnectionDialog({
                   <Field label={t.connectionDialog.jdbcDriver} span>
                     <select
                       value={editing.jdbc_bundle_id ?? ""}
-                      onChange={(event) => onEditingChange({ ...editing, jdbc_bundle_id: event.target.value || null })}
+                      onChange={(event) => {
+                        const bundleId = event.target.value || null;
+                        const bundle = jdbcDrivers.find((driver) => driver.bundle_id === bundleId);
+                        const keepsClass = Boolean(
+                          editing.jdbc_driver_class
+                            && bundle?.driver_classes.includes(editing.jdbc_driver_class)
+                        );
+                        onEditingChange({
+                          ...editing,
+                          jdbc_bundle_id: bundleId,
+                          jdbc_url: suggestJdbcUrl(editing.jdbc_url, bundle),
+                          jdbc_driver_class: keepsClass ? editing.jdbc_driver_class : null
+                        });
+                      }}
                       required
                     >
                       <option value="" disabled>{t.connectionDialog.jdbcDriverPlaceholder}</option>
@@ -240,6 +267,12 @@ export function ConnectionDialog({
                       ))}
                     </select>
                   </Field>
+                  <DriverClassField
+                    t={t}
+                    bundle={jdbcDrivers.find((driver) => driver.bundle_id === editing.jdbc_bundle_id)}
+                    value={editing.jdbc_driver_class ?? null}
+                    onChange={(value) => onEditingChange({ ...editing, jdbc_driver_class: value })}
+                  />
                   <Field label={t.connectionDialog.jdbcUrl} span>
                     <input
                       value={editing.jdbc_url ?? ""}
@@ -261,13 +294,6 @@ export function ConnectionDialog({
                     onChange={onPasswordChange}
                     onClearChange={onClearPasswordChange}
                   />
-                  <Field label={t.connectionDialog.jdbcDriverClass} span>
-                    <input
-                      value={editing.jdbc_driver_class ?? ""}
-                      onChange={(event) => onEditingChange({ ...editing, jdbc_driver_class: event.target.value || null })}
-                      placeholder={t.connectionDialog.jdbcDriverClassPlaceholder}
-                    />
-                  </Field>
                 </>
               ) : (
                 <>
@@ -342,7 +368,6 @@ function PasswordField({
   saved,
   clearPassword,
   busy,
-  inputDisabled,
   onChange,
   onClearChange
 }: {
@@ -351,7 +376,6 @@ function PasswordField({
   saved: boolean;
   clearPassword: boolean;
   busy: boolean;
-  inputDisabled?: boolean;
   onChange: (value: string) => void;
   onClearChange: (pending: boolean) => void;
 }) {
@@ -368,7 +392,7 @@ function PasswordField({
           type="password"
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          disabled={clearPassword || inputDisabled}
+          disabled={clearPassword}
           placeholder={placeholder}
           autoComplete="new-password"
         />
@@ -376,7 +400,7 @@ function PasswordField({
           <IconTooltip label={actionLabel}>
             <button
               type="button"
-              className="credential-clear-icon"
+              className="field-inline-icon credential-clear-icon"
               aria-label={actionLabel}
               disabled={busy}
               onClick={() => onClearChange(!clearPassword)}
@@ -385,6 +409,84 @@ function PasswordField({
             </button>
           </IconTooltip>
         )}
+      </div>
+    </div>
+  );
+}
+
+function DriverClassField({
+  t,
+  bundle,
+  value,
+  onChange
+}: {
+  t: I18nMessages;
+  bundle: JdbcDriverBundle | undefined;
+  value: string | null;
+  onChange: (value: string | null) => void;
+}) {
+  const classes = bundle?.driver_classes ?? [];
+  const [manual, setManual] = useState(Boolean(value));
+
+  if (classes.length === 0) {
+    return (
+      <div className="field span-all">
+        <span>{t.connectionDialog.jdbcDriverClass}</span>
+        <input value={value ?? ""} onChange={(event) => onChange(event.target.value || null)} placeholder={t.connectionDialog.jdbcDriverClassPlaceholder} />
+        <p className="field-note">{t.connectionDialog.driverClassNotReported}</p>
+      </div>
+    );
+  }
+
+  if (classes.length > 1) {
+    return (
+      <div className="field span-all">
+        <span>{t.connectionDialog.jdbcDriverClass}</span>
+        <select value={value ?? ""} onChange={(event) => onChange(event.target.value || null)}>
+          <option value="">{t.connectionDialog.driverClassAutoOption}</option>
+          {classes.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
+      </div>
+    );
+  }
+
+  const detected = classes[0];
+
+  if (!manual) {
+    return (
+      <div className="field span-all">
+        <span>{t.connectionDialog.jdbcDriverClass}</span>
+        <div className="readonly-row">
+          <code className="driver-class-name" title={detected}>{detected}</code>
+          <StatusPill tone="green" label={t.connectionDialog.driverClassAutoDetected} />
+          <button type="button" className="text-button" onClick={() => setManual(true)}>
+            {t.connectionDialog.driverClassManual}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="field span-all">
+      <span>{t.connectionDialog.jdbcDriverClass}</span>
+      <div className="field-inline-wrap">
+        <input value={value ?? ""} onChange={(event) => onChange(event.target.value || null)} placeholder={detected} />
+        <IconTooltip label={t.connectionDialog.driverClassRestoreAuto}>
+          <button
+            type="button"
+            className="field-inline-icon restore-icon"
+            aria-label={t.connectionDialog.driverClassRestoreAuto}
+            onClick={() => {
+              onChange(null);
+              setManual(false);
+            }}
+          >
+            <RotateCcw size={14} />
+          </button>
+        </IconTooltip>
       </div>
     </div>
   );

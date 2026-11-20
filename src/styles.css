@@ -2971,22 +2971,78 @@ pre {
   text-overflow: ellipsis;
 }
 
-.credential-input-wrap {
+.readonly-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: var(--control-height);
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-strong) 62%, transparent);
+}
+
+.readonly-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.readonly-value.pending {
+  color: var(--red);
+}
+
+.driver-class-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.text-button {
+  padding: 0;
+  border: 0;
+  color: var(--blue);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.text-button:hover {
+  text-decoration: underline;
+}
+
+.readonly-row .text-button {
+  margin-left: auto;
+}
+
+.credential-input-wrap,
+.field-inline-wrap {
   position: relative;
   min-width: 0;
 }
 
-.credential-input-wrap input {
+.credential-input-wrap input,
+.field-inline-wrap input {
   width: 100%;
   padding-right: 34px;
 }
 
 .credential-input-wrap input::-ms-reveal,
-.credential-input-wrap input::-ms-clear {
+.field-inline-wrap input::-ms-reveal,
+.credential-input-wrap input::-ms-clear,
+.field-inline-wrap input::-ms-clear {
   display: none;
 }
 
-.credential-clear-icon {
+.field-inline-icon {
   position: absolute;
   top: 50%;
   right: 5px;
@@ -3002,18 +3058,28 @@ pre {
   background: transparent;
 }
 
+.field-inline-icon:hover:not(:disabled) {
+  color: var(--ink);
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.field-inline-icon:disabled {
+  opacity: 0.45;
+}
+
 .credential-clear-icon:hover:not(:disabled) {
   color: var(--red);
   background: rgba(229, 72, 77, 0.1);
 }
 
+.restore-icon:hover:not(:disabled) {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 12%, transparent);
+}
+
 .credential-input-wrap.pending .credential-clear-icon {
   color: var(--red);
   background: rgba(229, 72, 77, 0.12);
-}
-
-.credential-clear-icon:disabled {
-  opacity: 0.45;
 }
 
 .audit-table {

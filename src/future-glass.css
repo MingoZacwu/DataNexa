@@ -2762,6 +2762,34 @@ textarea:focus {
   background: transparent;
 }
 
+/* Fade the form edge that still has content behind it; the scrollbar column is
+   masked separately so the thumb never fades with the content. */
+.connection-form-scroll {
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 24px), transparent 100%), linear-gradient(#000, #000);
+  -webkit-mask-position: left top, right top;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: calc(100% - 5px) 100%, 5px 100%;
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 24px), transparent 100%), linear-gradient(#000, #000);
+  mask-position: left top, right top;
+  mask-repeat: no-repeat;
+  mask-size: calc(100% - 5px) 100%, 5px 100%;
+}
+
+.connection-form-scroll.scroll-past-start:not(.scroll-at-end) {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%), linear-gradient(#000, #000);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%), linear-gradient(#000, #000);
+}
+
+.connection-form-scroll.scroll-past-start.scroll-at-end {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 100%), linear-gradient(#000, #000);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 100%), linear-gradient(#000, #000);
+}
+
+.connection-form-scroll.scroll-at-end:not(.scroll-past-start) {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
 .connection-form footer {
   flex: 0 0 auto;
   margin-top: 12px;
