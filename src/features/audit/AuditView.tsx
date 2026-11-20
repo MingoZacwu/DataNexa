@@ -7,7 +7,7 @@ import type { AccessTokenInfo, AuditEvent, ConnectionConfig, McpToolInfo } from 
 import type { AuditFilters } from "../../app/types";
 import { auditStatusLabel, auditStatusTone, statusLabel, toolDisplayName } from "../../app/utils";
 import { StatusPill } from "../../components/ui";
-import { auditReasonText, auditWriteNextStep, auditWriteStatusLabel, auditWriteStatuses, auditWriteText } from "./audit-write-text";
+import { auditReasonText, auditStatusFilterMatches, auditWriteStatusGroupLabel, auditWriteStatusGroups, auditWriteNextStep, auditWriteText } from "./audit-write-text";
 import { writeMessages, writeToolName } from "../../write-i18n";
 
 const AUDIT_PAGE_SIZE = 50;
@@ -91,7 +91,7 @@ export function AuditView({ t, locale, events, tokens, tools, connections, filte
   const filteredEvents = events.filter((event) => {
     const date = new Date(event.timestamp);
     const tokenKey = event.token_id ?? event.access_source;
-    const statusMatches = !filters.status || event.status === filters.status || event.write_status === filters.status;
+    const statusMatches = auditStatusFilterMatches(filters.status, event);
     return (!from || date >= from) && (!to || date <= to) && (!filters.tool || event.tool === filters.tool)
       && (!filters.connection || (event.connection_id ?? "") === filters.connection)
       && statusMatches && (!filters.token || tokenKey === filters.token);
@@ -180,7 +180,11 @@ export function AuditView({ t, locale, events, tokens, tools, connections, filte
               <label><span>{t.audit.to}</span><AuditDateField t={t} value={draftFilters.to} minDate={draftFrom} onChange={(to) => setDraftFilters({ ...draftFilters, to })} /></label>
               <label><span>{t.audit.tool}</span><select value={draftFilters.tool} onChange={(event) => setDraftFilters({ ...draftFilters, tool: event.target.value })}><option value="">{t.audit.all}</option>{toolOptions.map((tool) => <option key={tool} value={tool}>{auditToolLabel(t, locale, tool)}</option>)}</select></label>
               <label><span>{t.audit.connection}</span><select value={draftFilters.connection} onChange={(event) => setDraftFilters({ ...draftFilters, connection: event.target.value })}><option value="">{t.audit.all}</option>{connections.map((connection) => <option key={connection.id} value={connection.id}>{connection.name}</option>)}</select></label>
-              <label><span>{t.audit.status}</span><select value={draftFilters.status} onChange={(event) => setDraftFilters({ ...draftFilters, status: event.target.value })}><option value="">{t.audit.all}</option>{(["allowed", "denied", "error", "timeout", "truncated"] as AuditEvent["status"][]).map((status) => <option key={status} value={status}>{statusLabel(t, status)}</option>)}{auditWriteStatuses.map((status) => <option key={status} value={status}>{auditWriteStatusLabel(locale, status)}</option>)}</select></label>
+              <label><span>{t.audit.status}</span><select value={draftFilters.status} onChange={(event) => setDraftFilters({ ...draftFilters, status: event.target.value })}>
+                <option value="">{t.audit.all}</option>
+                <optgroup label={t.audit.statusAccessGroup}>{(["allowed", "denied", "error", "timeout", "truncated"] as AuditEvent["status"][]).map((status) => <option key={status} value={status}>{statusLabel(t, status)}</option>)}</optgroup>
+                <optgroup label={t.audit.statusWriteGroup}>{auditWriteStatusGroups.map((group) => <option key={group.value} value={group.value}>{auditWriteStatusGroupLabel(locale, group.value)}</option>)}</optgroup>
+              </select></label>
               <label><span>{t.access.tokens}</span><select value={draftFilters.token} onChange={(event) => setDraftFilters({ ...draftFilters, token: event.target.value })}><option value="">{t.audit.all}</option>{auditTokenOptions(t, tokens, events).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
             </div>
             {invalidDateRange && <p className="audit-filter-error">{t.audit.invalidDateRange}</p>}

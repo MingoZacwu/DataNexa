@@ -265,7 +265,9 @@ const zhCN = {
     elapsedRows: "耗时 / 行数",
     elapsedRowsValue: "{elapsed}ms / {rows} 行",
     reason: "原因",
-    noSql: "这条日志没有 SQL 文本。"
+    noSql: "这条日志没有 SQL 文本。",
+    statusAccessGroup: "访问",
+    statusWriteGroup: "写入"
   },
   settings: {
     general: "通用",
@@ -869,6 +871,8 @@ const en: I18nMessages = {
     elapsedRowsValue: "{elapsed}ms / {rows} rows",
     reason: "Reason",
     noSql: "This log entry has no SQL text.",
+    statusAccessGroup: "Access",
+    statusWriteGroup: "Writes",
     filter: "Filter",
     clearFilter: "Clear filter",
     filterTitle: "Filter audit log",

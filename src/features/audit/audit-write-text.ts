@@ -2,9 +2,36 @@ import type { Locale } from "../../i18n";
 import type { AuditEvent, WriteOperationStatus } from "../../types";
 import { writeMessages, writeReasonText } from "../../write-i18n";
 
-export const auditWriteStatuses: WriteOperationStatus[] = [
-  "pending", "executing", "committing", "committed", "rolled_back", "rejected", "expired", "cancelled", "failed", "unknown"
+/**
+ * Filter buckets for the audit status dropdown. The write lifecycle keeps ten
+ * precise states for the row pills, but a reader only distinguishes four
+ * outcomes, so the filter groups them. `unknown` stays separate: it means the
+ * database result must be verified, not that the write failed.
+ */
+export const auditWriteStatusGroups: { value: string; statuses: WriteOperationStatus[] }[] = [
+  { value: "write_in_flight", statuses: ["pending", "executing", "committing"] },
+  { value: "write_committed", statuses: ["committed"] },
+  { value: "write_not_applied", statuses: ["rejected", "expired", "cancelled", "rolled_back", "failed"] },
+  { value: "write_unknown", statuses: ["unknown"] }
 ];
+
+const auditWriteGroupLabels: Record<Locale, Record<string, string>> = {
+  "zh-CN": { write_in_flight: "进行中", write_committed: "已提交", write_not_applied: "未生效", write_unknown: "结果未知" },
+  en: { write_in_flight: "In progress", write_committed: "Committed", write_not_applied: "Not applied", write_unknown: "Unknown outcome" }
+};
+
+export function auditWriteStatusGroupLabel(locale: Locale, value: string) {
+  return auditWriteGroupLabels[locale][value] ?? value;
+}
+
+/** A filter value is either an access status or one write group. */
+export function auditStatusFilterMatches(filter: string, event: Pick<AuditEvent, "status" | "write_status" | "outcome_unknown">) {
+  if (!filter) return true;
+  const group = auditWriteStatusGroups.find((candidate) => candidate.value === filter);
+  if (!group) return event.status === filter;
+  const status = event.write_status ?? (event.outcome_unknown ? "unknown" : null);
+  return status !== null && group.statuses.includes(status);
+}
 
 const zhCN = {
   operation: "操作",

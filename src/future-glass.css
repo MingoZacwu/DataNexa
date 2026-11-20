@@ -1164,6 +1164,15 @@ textarea:focus-visible,
   scrollbar-gutter: stable;
 }
 
+/* The status dot paints a 4px halo outside its own box. The scroll container
+   clips at its padding edge, so reserve room on the left and pull the box back
+   (with matched extra width) to keep the dot aligned with the panel title. */
+.logs-panel .event-list {
+  padding-left: 6px;
+  margin-left: -6px;
+  width: calc(100% + 6px);
+}
+
 .connections-panel .compact-list,
 .logs-panel .event-list {
   align-content: start;
