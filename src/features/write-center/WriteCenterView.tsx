@@ -543,6 +543,11 @@ function TablePicker({ locale, connection, selected, open, onClose, onChange }: 
   const [reload, setReload] = useState(0);
   const [truncated, setTruncated] = useState(false);
   const requestId = useRef(0);
+  // The schema strip is one scrolling line: chips never wrap, so a connection
+  // with many databases keeps the dialog's height for the table list instead of
+  // pushing it down.
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  const chipRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   // A different connection must never keep showing the previous catalogue, even
   // for one frame: the schema and table state are cleared before the first read.
@@ -614,6 +619,39 @@ function TablePicker({ locale, connection, selected, open, onClose, onChange }: 
     return targets.filter((target) => target.table.toLocaleLowerCase().includes(term));
   }, [targets, search]);
 
+  // Whatever selects a schema — the first listing, a connection switch, or a
+  // click — its chip has to be reachable, so bring it back into the strip.
+  // Rect math rather than scrollIntoView: that would also scroll the ancestors
+  // of this scrollport, i.e. the dialog.
+  useEffect(() => {
+    const strip = stripRef.current;
+    const chip = schema ? chipRefs.current[schema] : null;
+    if (!open || !strip || !chip) return;
+    const stripBox = strip.getBoundingClientRect();
+    const chipBox = chip.getBoundingClientRect();
+    if (chipBox.left < stripBox.left) strip.scrollLeft -= stripBox.left - chipBox.left;
+    else if (chipBox.right > stripBox.right) strip.scrollLeft += chipBox.right - stripBox.right;
+  }, [open, schema, schemas]);
+
+  // A mouse wheel only reports a vertical delta while the strip moves sideways.
+  // React registers wheel listeners as passive, so preventDefault needs a native
+  // listener; trackpads already send deltaX and are left alone. At either end of
+  // the strip the wheel falls through, so the dialog still scrolls normally.
+  useEffect(() => {
+    const strip = stripRef.current;
+    if (!open || !strip) return;
+    const onWheel = (event: WheelEvent) => {
+      const limit = strip.scrollWidth - strip.clientWidth;
+      if (limit <= 0 || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+      const next = Math.min(limit, Math.max(0, strip.scrollLeft + event.deltaY));
+      if (next === strip.scrollLeft) return;
+      strip.scrollLeft = next;
+      event.preventDefault();
+    };
+    strip.addEventListener("wheel", onWheel, { passive: false });
+    return () => strip.removeEventListener("wheel", onWheel);
+  }, [open]);
+
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
       <Dialog.Portal>
@@ -630,17 +668,21 @@ function TablePicker({ locale, connection, selected, open, onClose, onChange }: 
           </div>
 
           <div className="write-picker-toolbar">
-            <div className="write-picker-schemas">
-              {schemas.map((entry) => (
-                <button
-                  type="button"
-                  key={entry.name}
-                  className={clsx("write-schema-chip", entry.name === schema && "active")}
-                  onClick={() => setSchema(entry.name)}
-                >
-                  <Database size={14} />{entry.name}
-                </button>
-              ))}
+            <div className="write-picker-strip" ref={stripRef}>
+              <div className="write-picker-schemas">
+                {schemas.map((entry) => (
+                  <button
+                    type="button"
+                    key={entry.name}
+                    ref={(node) => { chipRefs.current[entry.name] = node; }}
+                    className={clsx("write-schema-chip", entry.name === schema && "active")}
+                    aria-pressed={entry.name === schema}
+                    onClick={() => setSchema(entry.name)}
+                  >
+                    <Database size={14} />{entry.name}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="write-picker-search">
               <Search size={15} />

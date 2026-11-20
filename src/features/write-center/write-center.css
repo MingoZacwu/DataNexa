@@ -1054,14 +1054,59 @@
   padding: 0 18px 12px;
 }
 
+/* One line of schema chips. A connection can expose dozens of databases, so the
+   strip scrolls sideways instead of wrapping: the dialog's height stays with the
+   table list. The bar below is the only affordance, and it matches the app's
+   other scroll containers, so it already reads as "this moves sideways"; the
+   wheel is translated by script so a mouse does not have to aim at the bar. The
+   4px inset is cancelled by an equal negative margin, so a chip's focus outline
+   is not clipped while the chips still line up with the search field below. */
+.write-picker-strip {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  padding: 4px;
+  margin: -4px;
+}
+
+/* Same bar as the page scroll containers, laid on its side: the transparent
+   border insets the thumb so it reads as a 4px capsule rather than a gutter.
+   On Chromium (WebView2) styling this pseudo-element also opts out of overlay
+   scrollbars, so the bar is drawn at rest — this strip has nothing else to
+   advertise that it moves. `scrollbar-width` is deliberately not set, because
+   that would disable these rules. On WebKit the pseudo-element does not apply
+   and the OS overlay bar is used, exactly as for every other scroll container
+   in the app. */
+.write-picker-strip::-webkit-scrollbar {
+  height: 10px;
+}
+
+.write-picker-strip::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(100, 116, 139, 0.34);
+  background-clip: padding-box;
+}
+
+.write-picker-strip::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.5);
+  background-clip: padding-box;
+}
+
+.write-picker-strip::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 .write-picker-schemas {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
+  width: max-content;
 }
 
 .write-schema-chip {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 6px;
   min-height: 30px;
@@ -1072,6 +1117,7 @@
   color: var(--ink);
   font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
   cursor: pointer;
 }
 

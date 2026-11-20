@@ -1495,8 +1495,23 @@ textarea:focus-visible,
 
 .inspector-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 12px 16px 16px;
+}
+
+.inspector-actions .button {
+  flex: 1 1 auto;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.inspector-actions .button svg {
+  flex: 0 0 auto;
+}
+
+.inspector-actions .inspector-action-wide {
+  flex: 1 1 100%;
 }
 
 .server-console {

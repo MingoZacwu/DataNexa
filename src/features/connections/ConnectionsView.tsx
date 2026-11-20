@@ -96,9 +96,9 @@ export function ConnectionsView({
               <div className={selected.type === "jdbc" ? undefined : "inspector-grid-wide"}><dt>{t.connectionDialog.maxResultBytes}</dt><dd>{Math.round(selected.max_result_bytes / 1024)} KiB</dd></div>
             </dl>
             <div className="inspector-actions">
-              <button type="button" className="button ghost" onClick={() => onOpenWriteCenter(selected.id)}><PenLine size={15} />{wt.openCenter}</button>
               <button type="button" className="button soft" disabled={busy || !selected.enabled || !migrationReady} onClick={() => onTest(selected.id)}><Cable size={15} />{t.connections.test}</button>
               <button type="button" className="button ghost" disabled={busy || !selected.enabled || selected.type === "jdbc"} onClick={() => onDiagnose(selected.id)}><SearchCheck size={15} />{t.connections.diagnose}</button>
+              <button type="button" className="button ghost inspector-action-wide" onClick={() => onOpenWriteCenter(selected.id)}><PenLine size={15} />{wt.openCenter}</button>
             </div>
           </>
         ) : <div className="empty-state">{t.connections.empty}</div>}
