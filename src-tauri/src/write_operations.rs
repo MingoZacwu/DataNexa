@@ -255,6 +255,7 @@ impl WriteManager {
         authentication_fingerprint: String,
     ) -> Result<WriteStatus, WriteError> {
         let manager = self.clone();
+        let token_id_for_log = token_id.clone();
         // Durable insertion and in-memory ownership must not be interrupted by
         // a disconnected HTTP caller, including while SQLite finishes an await.
         // The admission work is bounded so a slow authorization or metadata
@@ -269,11 +270,33 @@ impl WriteManager {
         )
         .await
         .map_err(|_| unknown_error("submit_timeout"))?
-        .map_err(|_| error("internal_error"))??;
+        .map_err(|_| error("internal_error"))?;
+        match &submitted {
+            Ok(status) => crate::debug_log::info(
+                "write",
+                format_args!(
+                    "write request accepted (request_id={}, token_id={}, connection_id={}, operation={}, target={}.{}, status={:?})",
+                    status.request_id,
+                    status.token_id,
+                    status.connection_id,
+                    status.operation.as_str(),
+                    status.schema,
+                    status.table,
+                    status.status
+                ),
+            ),
+            Err(failure) => crate::debug_log::warn(
+                "write",
+                format_args!(
+                    "write request rejected (token_id={token_id_for_log}, code={})",
+                    failure.code
+                ),
+            ),
+        }
         // Return the receipt immediately. The approval decision is observed
         // through `get_write_status`, optionally with a bounded `wait_ms`; the
         // request stays owned by the manager either way.
-        Ok(submitted)
+        submitted
     }
 
     /// Wait until the request reaches a terminal state, or until `budget`
@@ -404,8 +427,22 @@ impl WriteManager {
         }
         if let Some(record) = records.values().find(|record| record.identity == identity) {
             return if record.fingerprint == fingerprint {
+                crate::debug_log::info(
+                    "write",
+                    format_args!(
+                        "write submit replayed by idempotency key (request_id={}, token_id={token_id}, status={:?})",
+                        record.status.request_id, record.status.status
+                    ),
+                );
                 Ok(record.status.clone())
             } else {
+                crate::debug_log::warn(
+                    "write",
+                    format_args!(
+                        "write submit idempotency conflict (token_id={token_id}, connection_id={})",
+                        request.connection_id
+                    ),
+                );
                 Err(error("idempotency_conflict"))
             };
         }
@@ -619,10 +656,15 @@ impl WriteManager {
     ) -> Result<WriteStatus, WriteError> {
         self.expire_pending().await;
         let mut records = self.inner.records.lock().await;
-        let record = records
-            .get_mut(&id)
-            .ok_or_else(|| error("write_not_found"))?;
+        let record = records.get_mut(&id).ok_or_else(|| {
+            crate::debug_log::warn(
+                "write",
+                format_args!("write decision failed (request_id={id}, code=write_not_found)"),
+            );
+            error("write_not_found")
+        })?;
         if record.status.status == WriteOperationStatus::Pending && record.approval_expired() {
+            let token_id = record.status.token_id.clone();
             record.cancellation.cancel();
             let next = next_status(
                 &record.status,
@@ -633,11 +675,24 @@ impl WriteManager {
             self.inner.persist(record, next).await;
             drop(records);
             self.inner.notify();
+            crate::debug_log::warn(
+                "write",
+                format_args!(
+                    "write decision failed (request_id={id}, token_id={token_id}, code=approval_expired)"
+                ),
+            );
             return Err(error("approval_expired"));
         }
         if record.status.revision != revision
             || record.status.status != WriteOperationStatus::Pending
         {
+            crate::debug_log::warn(
+                "write",
+                format_args!(
+                    "write decision failed (request_id={id}, token_id={}, code=stale_approval, status={:?}, revision={})",
+                    record.status.token_id, record.status.status, record.status.revision
+                ),
+            );
             return Err(error("stale_approval"));
         }
         match decision {
@@ -653,6 +708,19 @@ impl WriteManager {
                 let status = record.status.clone();
                 drop(records);
                 self.inner.notify();
+                crate::debug_log::info(
+                    "write",
+                    format_args!(
+                        "write decision applied (request_id={id}, token_id={}, decision={}, status={:?})",
+                        status.token_id,
+                        if matches!(decision, WriteDecision::Reject) {
+                            "reject"
+                        } else {
+                            "cancel"
+                        },
+                        status.status
+                    ),
+                );
                 Ok(status)
             }
             WriteDecision::Approve => {
@@ -660,9 +728,23 @@ impl WriteManager {
                     || !self.inner.journal_healthy.load(Ordering::Acquire)
                     || record.cancellation.is_cancelled()
                 {
+                    crate::debug_log::warn(
+                        "write",
+                        format_args!(
+                            "write approval failed (request_id={id}, token_id={}, code=write_unavailable)",
+                            record.status.token_id
+                        ),
+                    );
                     return Err(error("write_unavailable"));
                 }
                 if record.prepared.is_none() || record.approval.is_none() || record.task_running {
+                    crate::debug_log::warn(
+                        "write",
+                        format_args!(
+                            "write approval failed (request_id={id}, token_id={}, code=approval_not_ready)",
+                            record.status.token_id
+                        ),
+                    );
                     return Err(error("approval_not_ready"));
                 }
                 let prepared = record
@@ -685,6 +767,13 @@ impl WriteManager {
                     let status = record.status.clone();
                     drop(records);
                     self.inner.notify();
+                    crate::debug_log::warn(
+                        "write",
+                        format_args!(
+                            "write approval failed (request_id={id}, token_id={}, code=journal_error)",
+                            status.token_id
+                        ),
+                    );
                     return Ok(status);
                 }
                 record.task_running = true;
@@ -692,6 +781,13 @@ impl WriteManager {
                 let status = record.status.clone();
                 drop(records);
                 self.inner.notify();
+                crate::debug_log::info(
+                    "write",
+                    format_args!(
+                        "write approved, execution started (request_id={id}, token_id={}, connection_id={})",
+                        status.token_id, status.connection_id
+                    ),
+                );
                 let manager = self.clone();
                 tauri::async_runtime::spawn(async move {
                     let outcome = std::panic::AssertUnwindSafe(manager.execute_task(
@@ -720,20 +816,24 @@ impl WriteManager {
     }
 
     pub async fn invalidate_all(&self) -> Result<(), WriteError> {
-        self.invalidate(|_| true).await
+        self.invalidate("all", |_| true).await
     }
 
     pub async fn invalidate_token(&self, token_id: &str) -> Result<(), WriteError> {
-        self.invalidate(|record| record.status.token_id == token_id)
+        self.invalidate("token", |record| record.status.token_id == token_id)
             .await
     }
 
     pub async fn invalidate_connection(&self, connection_id: &str) -> Result<(), WriteError> {
-        self.invalidate(|record| record.status.connection_id == connection_id)
+        self.invalidate("connection", |record| record.status.connection_id == connection_id)
             .await
     }
 
-    async fn invalidate(&self, matches: impl Fn(&WriteRecord) -> bool) -> Result<(), WriteError> {
+    async fn invalidate(
+        &self,
+        scope: &str,
+        matches: impl Fn(&WriteRecord) -> bool,
+    ) -> Result<(), WriteError> {
         let mut records = self.inner.records.lock().await;
         // Cancel every matching task before waiting on the first durable update.
         for record in records.values().filter(|record| matches(record)) {
@@ -742,6 +842,7 @@ impl WriteManager {
             }
         }
         let mut success = true;
+        let mut cancelled_pending = 0usize;
         for record in records.values_mut().filter(|record| matches(record)) {
             if record.status.status == WriteOperationStatus::Pending {
                 let next = next_status(
@@ -750,11 +851,18 @@ impl WriteManager {
                     Some(error("authorization_changed")),
                     None,
                 );
+                cancelled_pending += 1;
                 success &= self.inner.persist(record, next).await;
             }
         }
         drop(records);
         self.inner.notify();
+        crate::debug_log::info(
+            "write",
+            format_args!(
+                "write admission invalidated (scope={scope}, cancelled_pending={cancelled_pending}, journal_ok={success})"
+            ),
+        );
         if success {
             Ok(())
         } else {
@@ -811,9 +919,17 @@ impl WriteManager {
                 } else {
                     (WriteOperationStatus::Expired, "approval_expired")
                 };
+                let request_id = record.status.request_id.clone();
+                let token_id = record.status.token_id.clone();
                 record.cancellation.cancel();
                 let next = next_status(&record.status, state, Some(error(code)), None);
                 self.inner.persist(record, next).await;
+                crate::debug_log::warn(
+                    "write",
+                    format_args!(
+                        "write request no longer pending (request_id={request_id}, token_id={token_id}, reason={code})",
+                    ),
+                );
                 changed = true;
             }
         }
@@ -838,6 +954,14 @@ impl WriteManager {
                 } else {
                     WriteOperationStatus::Failed
                 };
+                crate::debug_log::warn(
+                    "write",
+                    format_args!(
+                        "write preparation failed (request_id={id}, code={}, cancelled={})",
+                        failure.code,
+                        cancellation.is_cancelled()
+                    ),
+                );
                 self.finish_task(id, state, Some(failure), None).await;
             }
             Ok((prepared, approval)) => {
@@ -1004,6 +1128,15 @@ impl WriteManager {
         approval: &ApprovalContext,
         cancellation: &CancellationToken,
     ) -> (WriteOperationStatus, Option<WriteError>, Option<u64>) {
+        let started_at = Instant::now();
+        crate::debug_log::info(
+            "write",
+            format_args!(
+                "write execution started (request_id={id}, connection_id={}, operation={})",
+                prepared.request.connection_id,
+                prepared.request.operation.as_str()
+            ),
+        );
         let before_write = self
             .execution_context(app, id, prepared, approval, cancellation)
             .await;
@@ -1018,6 +1151,14 @@ impl WriteManager {
                 } else {
                     WriteOperationStatus::Failed
                 };
+                crate::debug_log::warn(
+                    "write",
+                    format_args!(
+                        "write execution failed before write (request_id={id}, code={}, elapsed_ms={})",
+                        failure.code,
+                        started_at.elapsed().as_millis()
+                    ),
+                );
                 return (state, Some(sanitize_write_error(failure)), None);
             }
         };
@@ -1039,10 +1180,26 @@ impl WriteManager {
                 } else {
                     WriteOperationStatus::Failed
                 };
+                crate::debug_log::warn(
+                    "write",
+                    format_args!(
+                        "write execution failed (request_id={id}, code={}, outcome_unknown={}, elapsed_ms={})",
+                        failure.code,
+                        failure.outcome_unknown,
+                        started_at.elapsed().as_millis()
+                    ),
+                );
                 return (state, Some(failure), None);
             }
             Err(_) => {
                 cancellation.cancel();
+                crate::debug_log::warn(
+                    "write",
+                    format_args!(
+                        "write execution timed out (request_id={id}, code=execution_timeout, elapsed_ms={})",
+                        started_at.elapsed().as_millis()
+                    ),
+                );
                 return (
                     WriteOperationStatus::Unknown,
                     Some(unknown_error("execution_timeout")),
@@ -1071,6 +1228,13 @@ impl WriteManager {
             None => Err(error("write_not_found")),
         };
         if let Err(failure) = revalidated {
+            crate::debug_log::warn(
+                "write",
+                format_args!(
+                    "write revalidation failed before commit (request_id={id}, code={})",
+                    failure.code
+                ),
+            );
             return rollback(pending, execution_budget(&config), failure).await;
         }
         let commit_gate = {
@@ -1095,12 +1259,29 @@ impl WriteManager {
             } else {
                 error("journal_error")
             };
+            crate::debug_log::warn(
+                "write",
+                format_args!(
+                    "write commit gate refused (request_id={id}, code={}, elapsed_ms={})",
+                    failure.code,
+                    started_at.elapsed().as_millis()
+                ),
+            );
             return rollback(pending, execution_budget(&config), failure).await;
         }
         // The config transaction read guard remains held through commit. A
         // revocation must acquire its write guard before it is acknowledged.
         match timeout(execution_budget(&config), pending.commit()).await {
-            Ok(Ok(affected_rows)) => (WriteOperationStatus::Committed, None, Some(affected_rows)),
+            Ok(Ok(affected_rows)) => {
+                crate::debug_log::info(
+                    "write",
+                    format_args!(
+                        "write committed (request_id={id}, affected_rows={affected_rows}, elapsed_ms={})",
+                        started_at.elapsed().as_millis()
+                    ),
+                );
+                (WriteOperationStatus::Committed, None, Some(affected_rows))
+            }
             Ok(Err(failure)) => {
                 let failure = sanitize_write_error(failure);
                 let state = if failure.outcome_unknown {
@@ -1108,13 +1289,31 @@ impl WriteManager {
                 } else {
                     WriteOperationStatus::Failed
                 };
+                crate::debug_log::warn(
+                    "write",
+                    format_args!(
+                        "write commit failed (request_id={id}, code={}, outcome_unknown={}, elapsed_ms={})",
+                        failure.code,
+                        failure.outcome_unknown,
+                        started_at.elapsed().as_millis()
+                    ),
+                );
                 (state, Some(failure), None)
             }
-            Err(_) => (
-                WriteOperationStatus::Unknown,
-                Some(unknown_error("commit_timeout")),
-                None,
-            ),
+            Err(_) => {
+                crate::debug_log::warn(
+                    "write",
+                    format_args!(
+                        "write commit timed out (request_id={id}, code=commit_timeout, elapsed_ms={})",
+                        started_at.elapsed().as_millis()
+                    ),
+                );
+                (
+                    WriteOperationStatus::Unknown,
+                    Some(unknown_error("commit_timeout")),
+                    None,
+                )
+            }
         }
     }
 
@@ -1195,6 +1394,20 @@ impl WriteManager {
                 let next = next_status(&record.status, state, failure, affected_rows);
                 self.inner.persist(record, next).await;
             }
+            crate::debug_log::info(
+                "write",
+                format_args!(
+                    "write task finished (request_id={id}, token_id={}, status={:?}, code={}, affected_rows={})",
+                    record.status.token_id,
+                    record.status.status,
+                    record.status.error_code.as_deref().unwrap_or("-"),
+                    record
+                        .status
+                        .affected_rows
+                        .map(|rows| rows.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                ),
+            );
             record.prepared = None;
             record.approval = None;
             record.cancellation.cancel();
@@ -1377,6 +1590,8 @@ impl WriteJournal {
         };
         let rows = sqlx::query_as::<_, (String, String, String, String)>("SELECT request_id,identity_digest,request_fingerprint,status_json FROM write_operations ORDER BY rowid DESC").fetch_all(&mut *tx).await?;
         let mut records = BTreeMap::new();
+        let mut recovered_active = 0usize;
+        let mut evicted = 0usize;
         for (id, identity, fingerprint, json) in rows {
             let mut status: WriteStatus = serde_json::from_str(&json)?;
             anyhow::ensure!(
@@ -1390,6 +1605,7 @@ impl WriteJournal {
                     .bind(&id)
                     .execute(&mut *tx)
                     .await?;
+                evicted += 1;
                 continue;
             }
             if !status.status.is_terminal() {
@@ -1403,12 +1619,20 @@ impl WriteJournal {
                         unknown_error("application_restarted"),
                     ),
                 };
+                crate::debug_log::warn(
+                    "write",
+                    format_args!(
+                        "write request recovered as not active after restart (request_id={id}, previous_status={:?}, recovered_status={:?})",
+                        status.status, state
+                    ),
+                );
                 status = next_status(&status, state, Some(failure), None);
                 sqlx::query("UPDATE write_operations SET status_json=? WHERE request_id=?")
                     .bind(serde_json::to_string(&status)?)
                     .bind(&id)
                     .execute(&mut *tx)
                     .await?;
+                recovered_active += 1;
             }
             records.insert(
                 id,
@@ -1428,6 +1652,13 @@ impl WriteJournal {
             );
         }
         tx.commit().await?;
+        crate::debug_log::info(
+            "write",
+            format_args!(
+                "write journal opened (records={}, recovered_active={recovered_active}, evicted={evicted})",
+                records.len()
+            ),
+        );
         Ok((
             Self {
                 pool,

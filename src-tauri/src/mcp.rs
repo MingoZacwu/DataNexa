@@ -1144,14 +1144,27 @@ async fn process_write_tool_call(
     name: &str,
     arguments: Option<Value>,
 ) -> Result<Value, (i32, String)> {
+    let started_at = Instant::now();
     let Some(token_id) = actor.token_id.clone().filter(|_| actor.source == "token") else {
+        crate::debug_log::warn(
+            "write_tool",
+            format_args!("write tool call rejected (tool={name}, code=unauthorized, reason=no access token)"),
+        );
         return Ok(write_error_result(
             "unauthorized",
             "A valid access token is required.",
             false,
         ));
     };
+    crate::debug_log::info(
+        "write_tool",
+        format_args!("write tool call received (tool={name}, token_id={token_id})"),
+    );
     if !state.app.config.read().await.server.require_token {
+        crate::debug_log::warn(
+            "write_tool",
+            format_args!("write tool call rejected (tool={name}, token_id={token_id}, code=unauthorized, reason=token authentication disabled)"),
+        );
         return Ok(write_error_result(
             "unauthorized",
             "Token authentication must be enabled.",
@@ -1159,6 +1172,10 @@ async fn process_write_tool_call(
         ));
     }
     if !tool_enabled(&state.app, name).await {
+        crate::debug_log::warn(
+            "write_tool",
+            format_args!("write tool call rejected (tool={name}, token_id={token_id}, code=tool_disabled)"),
+        );
         return Ok(write_error_result(
             "tool_disabled",
             "This MCP tool is disabled.",
@@ -1166,6 +1183,10 @@ async fn process_write_tool_call(
         ));
     }
     if actor.denied_tools.iter().any(|tool| tool == name) {
+        crate::debug_log::warn(
+            "write_tool",
+            format_args!("write tool call rejected (tool={name}, token_id={token_id}, code=permission_denied, reason=tool denied for token)"),
+        );
         return Ok(write_error_result(
             "permission_denied",
             "This MCP tool is not allowed for this access token.",
@@ -1173,6 +1194,10 @@ async fn process_write_tool_call(
         ));
     }
     let Some(authentication_fingerprint) = actor.authentication_fingerprint.clone() else {
+        crate::debug_log::warn(
+            "write_tool",
+            format_args!("write tool call rejected (tool={name}, token_id={token_id}, code=unauthorized, reason=no authentication fingerprint)"),
+        );
         return Ok(write_error_result(
             "unauthorized",
             "A current authenticated token is required.",
@@ -1186,6 +1211,10 @@ async fn process_write_tool_call(
         .await
         .unwrap_or(false)
     {
+        crate::debug_log::warn(
+            "write_tool",
+            format_args!("write tool call rejected (tool={name}, token_id={token_id}, code=unauthorized, reason=authenticated token no longer current)"),
+        );
         return Ok(write_error_result(
             "unauthorized",
             "The authenticated token is no longer current.",
@@ -1220,9 +1249,10 @@ async fn process_write_tool_call(
         let app = state.app.clone();
         // The manager owns preparation and native presentation independently
         // of the HTTP caller, including if this response is disconnected.
+        let submit_token_id = token_id.clone();
         match tauri::async_runtime::spawn(async move {
             app.writes
-                .submit(app.clone(), token_id, request, authentication_fingerprint)
+                .submit(app.clone(), submit_token_id, request, authentication_fingerprint)
                 .await
         })
         .await
@@ -1252,6 +1282,10 @@ async fn process_write_tool_call(
             .await
             .unwrap_or(false)
         {
+            crate::debug_log::warn(
+                "write_tool",
+                format_args!("write tool call rejected (tool={name}, token_id={token_id}, code=permission_denied, reason=status query not allowed for token)"),
+            );
             return Ok(write_error_result(
                 "permission_denied",
                 "This access token cannot query write status.",
@@ -1313,10 +1347,26 @@ async fn process_write_tool_call(
                     summary.push_str(&format!(" Idempotency key: {key}."));
                 }
             }
+            crate::debug_log::info(
+                "write_tool",
+                format_args!(
+                    "write tool call completed (tool={name}, token_id={token_id}, status={:?}, elapsed_ms={})",
+                    status.status,
+                    started_at.elapsed().as_millis()
+                ),
+            );
             emit_mcp_tool_call_completed(&state.app, false);
             Ok(structured_tool_result_with_text(payload, summary, false))
         }
         Err(error) => {
+            crate::debug_log::warn(
+                "write_tool",
+                format_args!(
+                    "write tool call failed (tool={name}, token_id={token_id}, code={}, elapsed_ms={})",
+                    error.code,
+                    started_at.elapsed().as_millis()
+                ),
+            );
             emit_mcp_tool_call_completed(&state.app, true);
             Ok(write_error_result(
                 &error.code,

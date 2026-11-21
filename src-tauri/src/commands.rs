@@ -697,6 +697,7 @@ pub async fn save_write_configuration(
         .find(|connection| connection.id == connection_id)
         .ok_or_else(|| "Connection not found".to_string())?;
     connection.write_enabled = enabled;
+    let table_count = resolved.len();
     connection.write_tables = resolved;
     candidate
         .normalize_and_validate()
@@ -726,12 +727,25 @@ pub async fn save_write_configuration(
         {
             connection.write_enabled = false;
         }
+        crate::debug_log::warn(
+            "write_config",
+            format_args!(
+                "write grants could not be saved; write access stays disabled (connection_id={connection_id})"
+            ),
+        );
         return Err(format!(
             "Write permissions were not saved; writes remain unavailable. {}",
             to_client_error(error)
         ));
     }
     drop(_guard);
+    crate::debug_log::info(
+        "write_config",
+        format_args!(
+            "write configuration saved (connection_id={connection_id}, enabled={enabled}, tables={table_count}, grants={})",
+            desired.len()
+        ),
+    );
     snapshot(state.inner()).await.map_err(to_client_error)
 }
 

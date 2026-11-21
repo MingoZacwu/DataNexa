@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatMessage, type Locale } from "../../i18n";
 import { api, isTauri } from "../../lib/tauri";
 import type { AppSnapshot, ConnectionConfig, WriteGrantInput, WriteOperation, WriteSchema, WriteTable, WriteTarget } from "../../types";
-import { writeErrorText, writeMessages, writeReasonDetail, writeToolsEnabled } from "../../write-i18n";
+import { pickerFailureKind, pickerFailureTitle, writeErrorText, writeMessages, writeReasonDetail, writeToolsEnabled } from "../../write-i18n";
 import { DATABASE_LOGOS } from "../../app/assets";
 import { IconTooltip, StatusPill, SwitchField } from "../../components/ui";
 import "./write-center.css";
@@ -522,6 +522,41 @@ function TokenGrants({ operations, labels, onLabel, offLabel, grant, tokenName, 
 }
 
 /**
+ * Unplugged-cable illustration for a failed metadata read: the database waits
+ * with its socket open, the cable hangs just out of reach, and the spark marks
+ * the gap. Shapes are colored in CSS from theme variables, so one drawing
+ * serves both modes without any baked-in colors.
+ */
+function PickerFailureArt() {
+  return (
+    <svg className="write-picker-failure-art" viewBox="0 0 220 160" aria-hidden="true" focusable="false">
+      <circle className="pf-backdrop" cx="110" cy="80" r="64" />
+      {/* Database cylinder, centered on the backdrop circle and drawn open at
+          the top so the lid ellipse closes it. */}
+      <path className="pf-body" d="M87 58 v44 a23 9 0 0 0 46 0 v-44" />
+      <ellipse className="pf-disc" cx="110" cy="80" rx="23" ry="9" />
+      <ellipse className="pf-lid" cx="110" cy="58" rx="23" ry="9" />
+      {/* Socket plate on the cylinder's right flank, waiting for the plug. */}
+      <rect className="pf-socket" x="125" y="73" width="14" height="16" rx="4" />
+      <circle className="pf-pin" cx="128.5" cy="77.5" r="1.5" />
+      <circle className="pf-pin" cx="135" cy="84.5" r="1.5" />
+      {/* Cable trailing off the corner, ending in a plug that never reached. */}
+      <path className="pf-cable" d="M210 134 C 180 136 168 125 163 111" />
+      <g transform="translate(158 105) rotate(-40)">
+        <rect className="pf-plug" x="-7.5" y="-10" width="15" height="18" rx="4.5" />
+        <path className="pf-prong" d="M-3.2 -10 v-7.5" />
+        <path className="pf-prong" d="M3.2 -10 v-7.5" />
+      </g>
+      {/* The spark across the gap between socket and prongs. */}
+      <path className="pf-bolt" d="M147 81 l-7 8 h5 l-5.5 9" />
+      <path className="pf-ray" d="M145 77 l-4 -5.5" />
+      <path className="pf-ray" d="M153 85 l5 -3" />
+      <path className="pf-ray" d="M136 105 l-5 3.5" />
+    </svg>
+  );
+}
+
+/**
  * Table picker. Tables arrive with their capability already resolved, so a row
  * only shows what the table supports — no per-table probe.
  */
@@ -696,7 +731,14 @@ function TablePicker({ locale, connection, selected, open, onClose, onChange }: 
           </div>
 
           <div className="write-picker-list page-scroll-list">
-            {error && <div className="wc-notice wc-error" role="alert">{error}</div>}
+            {error && (
+              <div className="write-picker-failure" role="alert">
+                <PickerFailureArt />
+                <p className="write-picker-failure-title">{pickerFailureTitle(locale, pickerFailureKind(error))}</p>
+                <p className="write-picker-failure-detail">{error}</p>
+                <button type="button" className="button" onClick={() => setReload((value) => value + 1)}>{t.pickerFailureRetry}</button>
+              </div>
+            )}
             {!error && loading && targets.length === 0 && <p className="field-note">{t.pickerLoading}</p>}
             {!error && !loading && visible.length === 0 && <p className="field-note">{schemas.length === 0 ? t.pickerNoSchemas : t.pickerEmpty}</p>}
             {visible.map((target) => {

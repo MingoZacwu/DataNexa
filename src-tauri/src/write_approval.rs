@@ -184,6 +184,7 @@ pub async fn show_write_approval(app: &AppHandle) -> Result<(), String> {
     build_window(app, WINDOW_LABEL)?;
     session.window_open = true;
     spawn_ready_watchdog(app);
+    crate::debug_log::info("write_approval", format_args!("approval window opened"));
     Ok(())
 }
 
@@ -221,6 +222,7 @@ pub async fn preview_write_approval(app: AppHandle) -> Result<(), String> {
     // Preview data and simulated decisions remain entirely in the local UI.
     build_window(&app, PREVIEW_WINDOW_LABEL)?;
     session.window_open = true;
+    crate::debug_log::info("write_approval", format_args!("approval preview window opened"));
     Ok(())
 }
 
@@ -341,6 +343,7 @@ pub async fn ready_write_approval(window: WebviewWindow) -> Result<(), String> {
     }
     reveal_ready_window(&window)?;
     session.ready = true;
+    crate::debug_log::info("write_approval", format_args!("approval window ready"));
     Ok(())
 }
 

@@ -1174,6 +1174,110 @@
   padding: 0 18px 8px;
 }
 
+/* A failed metadata read takes over the whole list: centered art, a headline
+   naming the failure class, the raw error in small gray, and a retry. The list
+   is a column flexbox, so margin:auto centers the block in the leftover space. */
+.write-picker-failure {
+  margin: auto;
+  max-width: 420px;
+  padding: 16px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.write-picker-failure-art {
+  width: 172px;
+  height: auto;
+}
+
+.write-picker-failure-title {
+  margin: 16px 0 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.write-picker-failure-detail {
+  margin: 7px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.write-picker-failure .button {
+  margin-top: 16px;
+}
+
+/* Illustration colors ride on theme variables so one drawing serves light and
+   dark: the backdrop blushes red, the database stays blue, the spark is red. */
+.write-picker-failure-art .pf-backdrop {
+  fill: color-mix(in srgb, var(--red) 7%, transparent);
+}
+
+.write-picker-failure-art .pf-body {
+  fill: color-mix(in srgb, var(--blue) 9%, transparent);
+  stroke: color-mix(in srgb, var(--blue) 55%, transparent);
+  stroke-width: 2;
+}
+
+.write-picker-failure-art .pf-disc {
+  fill: none;
+  stroke: color-mix(in srgb, var(--blue) 40%, transparent);
+  stroke-width: 2;
+}
+
+.write-picker-failure-art .pf-lid {
+  fill: color-mix(in srgb, var(--blue) 16%, transparent);
+  stroke: color-mix(in srgb, var(--blue) 55%, transparent);
+  stroke-width: 2;
+}
+
+.write-picker-failure-art .pf-socket {
+  fill: var(--surface-strong);
+  stroke: color-mix(in srgb, var(--blue) 55%, transparent);
+  stroke-width: 2;
+}
+
+.write-picker-failure-art .pf-pin {
+  fill: color-mix(in srgb, var(--blue) 55%, transparent);
+}
+
+.write-picker-failure-art .pf-cable {
+  fill: none;
+  stroke: color-mix(in srgb, var(--muted) 75%, transparent);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.write-picker-failure-art .pf-plug {
+  fill: var(--surface-strong);
+  stroke: color-mix(in srgb, var(--muted) 80%, transparent);
+  stroke-width: 2;
+}
+
+.write-picker-failure-art .pf-prong {
+  stroke: color-mix(in srgb, var(--muted) 80%, transparent);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.write-picker-failure-art .pf-bolt {
+  fill: none;
+  stroke: var(--red);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.write-picker-failure-art .pf-ray {
+  stroke: color-mix(in srgb, var(--red) 65%, transparent);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
 .write-picker-row {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) auto;

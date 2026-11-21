@@ -1,10 +1,10 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Switch from "@radix-ui/react-switch";
 import clsx from "clsx";
-import { ChevronDown, Clipboard, KeyRound, Pencil, Power, RefreshCw, ShieldAlert, Trash2, X } from "lucide-react";
+import { ChevronDown, Clipboard, KeyRound, PenLine, Pencil, Power, RefreshCw, ShieldAlert, Trash2, X } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import type { I18nMessages, Locale } from "../../i18n";
-import { writeToolName } from "../../write-i18n";
+import { isWriteTool, WRITE_GROUP_TOOL, writeMessages, writeToolName } from "../../write-i18n";
 import type { AccessTokenInfo, ConnectionConfig, McpToolInfo } from "../../types";
 import { DATABASE_LOGOS } from "../../app/assets";
 import { toolDisplayName, toolIcon } from "../../app/utils";
@@ -121,11 +121,14 @@ export function AccessControlView({
                   return <PermissionRow key={connection.id} icon={<img src={DATABASE_LOGOS[connection.type]} alt="" />} iconClassName="permission-icon" title={connection.name} detail={connection.enabled ? connection.database : t.access.globallyDisabled} checked={allowed} disabled={busy || !connection.enabled} globallyDisabled={!connection.enabled} label={t.access.allowConnection} onChange={(checked) => onConnectionAllowed(selected.id, connection.id, checked)} />;
                 })}</div>}
                 <PermissionSectionButton active={tab === "tools"} label={t.access.toolPermissions} count={`${allowedTools(selected, tools)} / ${tools.filter((item) => item.enabled).length}`} onClick={() => setTab("tools")} />
-                {tab === "tools" && <div className="access-permission-list page-scroll-list">{tools.map((tool) => {
-                  const allowed = tool.enabled && !selected.denied_tools.includes(tool.name);
-                  const ToolIcon = toolIcon(tool.name);
-                  return <PermissionRow key={tool.name} icon={<ToolIcon size={16} />} iconClassName="tool-icon" title={writeToolName(locale, tool.name) ?? toolDisplayName(t, tool.name)} detail={tool.enabled ? tool.name : t.access.globallyDisabled} checked={allowed} disabled={busy || !tool.enabled} globallyDisabled={!tool.enabled} label={t.access.allowTool} onChange={(checked) => onToolAllowed(selected.id, tool.name, checked)} />;
-                })}</div>}
+                {tab === "tools" && <div className="access-permission-list page-scroll-list">
+                  {tools.filter((tool) => !isWriteTool(tool.name)).map((tool) => {
+                    const allowed = tool.enabled && !selected.denied_tools.includes(tool.name);
+                    const ToolIcon = toolIcon(tool.name);
+                    return <PermissionRow key={tool.name} icon={<ToolIcon size={16} />} iconClassName="tool-icon" title={writeToolName(locale, tool.name) ?? toolDisplayName(t, tool.name)} detail={tool.enabled ? tool.name : t.access.globallyDisabled} checked={allowed} disabled={busy || !tool.enabled} globallyDisabled={!tool.enabled} label={t.access.allowTool} onChange={(checked) => onToolAllowed(selected.id, tool.name, checked)} />;
+                  })}
+                  <WriteToolGroup t={t} locale={locale} tools={tools.filter((tool) => isWriteTool(tool.name))} token={selected} busy={busy} onChange={(checked) => onToolAllowed(selected.id, WRITE_GROUP_TOOL, checked)} />
+                </div>}
               </div>
             </>
           ) : <div className="empty-state access-empty-inspector">{t.access.empty}</div>}
@@ -149,6 +152,37 @@ export function PromptTokenDialog({ t, open, tokens, connections, tools, busy, o
 
 function PermissionRow({ icon, iconClassName, title, detail, checked, disabled, globallyDisabled, label, onChange }: { icon: React.ReactNode; iconClassName: string; title: string; detail: string; checked: boolean; disabled: boolean; globallyDisabled: boolean; label: string; onChange: (checked: boolean) => void }) {
   return <div className={clsx("access-permission-row", disabled && "disabled")}><span className={clsx(iconClassName, globallyDisabled ? "globally-disabled" : !checked && "denied")}>{icon}</span><span className="permission-copy"><strong>{title}</strong><code>{detail}</code></span><Switch.Root className="switch" checked={checked} disabled={disabled} onCheckedChange={onChange} aria-label={`${label}: ${title}`}><Switch.Thumb className="switch-thumb" /></Switch.Root></div>;
+}
+
+/**
+ * The three restricted-write tools are one capability — a token can submit,
+ * discover targets, and poll status or none of those. The group carries the
+ * only switch; the three tools hang below it as read-only members, mirroring
+ * the tree on the Tools page.
+ */
+function WriteToolGroup({ t, locale, tools, token, busy, onChange }: { t: I18nMessages; locale: Locale; tools: McpToolInfo[]; token: AccessTokenInfo; busy: boolean; onChange: (checked: boolean) => void }) {
+  const wt = writeMessages[locale];
+  if (tools.length === 0) return null;
+  const allowed = tools.every((tool) => tool.enabled && !token.denied_tools.includes(tool.name));
+  const globallyOff = tools.every((tool) => !tool.enabled);
+  return (
+    <div className="access-write-group">
+      <div className={clsx("access-permission-row", "access-write-group-row", busy && "disabled")}>
+        <span className={clsx("tool-icon", globallyOff ? "globally-disabled" : !allowed && "denied")}><PenLine size={16} /></span>
+        <span className="permission-copy"><strong>{wt.title}</strong><code>{t.access.writeGroupDetail}</code></span>
+        <Switch.Root className="switch" checked={allowed} disabled={busy || globallyOff} onCheckedChange={onChange} aria-label={wt.groupToggle}><Switch.Thumb className="switch-thumb" /></Switch.Root>
+      </div>
+      {tools.map((tool) => {
+        const ToolIcon = toolIcon(tool.name);
+        return (
+          <div className={clsx("access-write-group-item", !tool.enabled && "disabled")} key={tool.name}>
+            <span className={clsx("tool-icon", !tool.enabled && "globally-disabled")}><ToolIcon size={16} /></span>
+            <span className="permission-copy"><strong>{writeToolName(locale, tool.name) ?? toolDisplayName(t, tool.name)}</strong><code>{tool.enabled ? tool.name : t.access.globallyDisabled}</code></span>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function PermissionSectionButton({ active, label, count, onClick }: { active: boolean; label: string; count: string; onClick: () => void }) {

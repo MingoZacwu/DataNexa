@@ -60,6 +60,10 @@ const zhCN = {
   pickerSelected: "已选",
   pickerNoSchemas: "没有可用的 Schema。",
   pickerTruncated: "表较多，仅显示前 {count} 张。可输入关键字缩小范围。",
+  pickerFailureTimeout: "数据库连接超时",
+  pickerFailureConnection: "数据库连接异常",
+  pickerFailureGeneric: "加载失败",
+  pickerFailureRetry: "重试",
 
   // Table capability.
   notWritable: "不可写",
@@ -204,6 +208,10 @@ const en: WriteMessages = {
   pickerSelected: "Selected",
   pickerNoSchemas: "No schema available.",
   pickerTruncated: "Showing the first {count} tables. Type a filter to narrow the list.",
+  pickerFailureTimeout: "Connection timed out",
+  pickerFailureConnection: "Can't reach the database",
+  pickerFailureGeneric: "Couldn't load the tables",
+  pickerFailureRetry: "Retry",
 
   notWritable: "Not writable",
   warnings: "Notes",
@@ -368,6 +376,24 @@ export function writeWarningText(locale: Locale, code: string): string {
     case "text_primary_key": return copy.warningTextPrimaryKey;
     default: return code;
   }
+}
+
+/** What a failed metadata read probably was, guessed from the raw error text. */
+export type PickerFailureKind = "timeout" | "connection" | "generic";
+
+export function pickerFailureKind(errorText: string): PickerFailureKind {
+  const text = errorText.toLowerCase();
+  if (/timed?\s*out|timeout|超时/.test(text)) return "timeout";
+  if (/connect|refused|unreachable|network|socket|dns|resolver|host|broken pipe|eof|reset|handshake|ssl|tls|denied|offline/.test(text)) return "connection";
+  return "generic";
+}
+
+/** The headline names the failure class; the raw error stays in the small print. */
+export function pickerFailureTitle(locale: Locale, kind: PickerFailureKind): string {
+  const copy = writeMessages[locale];
+  if (kind === "timeout") return copy.pickerFailureTimeout;
+  if (kind === "connection") return copy.pickerFailureConnection;
+  return copy.pickerFailureGeneric;
 }
 
 export function writeErrorText(error: unknown): string {

@@ -382,9 +382,16 @@ function applyMockMutation<T>(name: string, args: Record<string, unknown> | unde
     case "set_token_connection_allowed":
       changeToken((token) => ({ ...token, denied_connections: input.allowed ? token.denied_connections.filter((id) => id !== input.connectionId) : [...new Set([...token.denied_connections, String(input.connectionId)])] }));
       break;
-    case "set_token_tool_allowed":
-      changeToken((token) => ({ ...token, denied_tools: input.allowed ? token.denied_tools.filter((tool) => tool !== input.toolName) : [...new Set([...token.denied_tools, String(input.toolName)])] }));
+    case "set_token_tool_allowed": {
+      // The restricted-write tools flip as one group at the token level too,
+      // mirroring the backend rule in access_control::set_tool_allowed.
+      const toolName = String(input.toolName);
+      const names = isWriteTool(toolName)
+        ? mockSnapshot.tools.filter((tool) => isWriteTool(tool.name)).map((tool) => tool.name)
+        : [toolName];
+      changeToken((token) => ({ ...token, denied_tools: input.allowed ? token.denied_tools.filter((tool) => !names.includes(tool)) : [...new Set([...token.denied_tools, ...names])] }));
       break;
+    }
     case "set_token_write_allowed":
       changeToken((token) => {
         const grants = token.write_grants.filter((grant) => grant.connection_id !== input.connectionId || grant.operation !== input.operation);

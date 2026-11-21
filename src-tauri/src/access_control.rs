@@ -7,7 +7,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
-use crate::config::{AppConfig, ConfigStore, MCP_TOOL_NAMES};
+use crate::config::{AppConfig, ConfigStore, MCP_TOOL_NAMES, WRITE_TOOL_NAMES};
 
 const LEGACY_TOKEN_ID: &str = "legacy-default-token";
 const TOKEN_NAME_MAX_CHARS: usize = 80;
@@ -348,20 +348,30 @@ impl AccessControlStore {
         if !MCP_TOOL_NAMES.contains(&tool) {
             return Err(anyhow::anyhow!("unknown MCP tool"));
         }
-        if allowed {
-            sqlx::query("DELETE FROM token_denied_tools WHERE token_id=? AND tool_name=?")
+        // The three restricted-write tools are one capability at the token
+        // level too: touching any of them flips the whole group, mirroring the
+        // Tools-page rule in config::set_tool_enabled.
+        let names: &[&str] = if WRITE_TOOL_NAMES.contains(&tool) {
+            &WRITE_TOOL_NAMES
+        } else {
+            &[tool]
+        };
+        for name in names {
+            if allowed {
+                sqlx::query("DELETE FROM token_denied_tools WHERE token_id=? AND tool_name=?")
+                    .bind(id)
+                    .bind(name)
+                    .execute(&self.pool)
+                    .await?;
+            } else {
+                sqlx::query(
+                    "INSERT OR IGNORE INTO token_denied_tools (token_id,tool_name) VALUES (?,?)",
+                )
                 .bind(id)
-                .bind(tool)
+                .bind(name)
                 .execute(&self.pool)
                 .await?;
-        } else {
-            sqlx::query(
-                "INSERT OR IGNORE INTO token_denied_tools (token_id,tool_name) VALUES (?,?)",
-            )
-            .bind(id)
-            .bind(tool)
-            .execute(&self.pool)
-            .await?;
+            }
         }
         self.touch(id).await?;
         crate::debug_log::info(
