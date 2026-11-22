@@ -16,7 +16,7 @@ function previewApproval(): WriteApprovalDto {
     request: {
       request_id: "preview-only-request", connection_id: "preview-only-connection", token_id: "preview-only-token",
       operation: "update", schema: "public", table: "inventory_demo", status: "pending",
-      created_at: new Date(now).toISOString(), expires_at: new Date(now + 120 * 1000).toISOString(), revision: 1
+      created_at: new Date(now).toISOString(), expires_at: new Date(now + 60 * 1000).toISOString(), revision: 1
     },
     connection_name: "Demo Inventory", token_name: "Preview Agent",
     primary_key: { item_id: { type: "text", value: "DEMO-042" } },

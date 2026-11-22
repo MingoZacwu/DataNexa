@@ -37,7 +37,7 @@ const MAX_REQUEST_BYTES: usize = 64 * 1024;
 /// to any MCP client timeout: `datanexa_submit_write` returns a receipt
 /// immediately, and the caller observes the decision through
 /// `datanexa_get_write_status`.
-const APPROVAL_COUNTDOWN: Duration = Duration::from_secs(120);
+const APPROVAL_COUNTDOWN: Duration = Duration::from_secs(60);
 /// Upper bound for the admission work (authorization, target resolution, and
 /// the durable journal insert) that happens before the receipt is returned.
 /// This is separate from the human review window, so a slow lookup cannot
