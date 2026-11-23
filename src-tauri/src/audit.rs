@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlparser::ast::{Value, VisitMut, VisitorMut};
+use sqlparser::ast::{Value, ValueWithSpan, VisitMut, VisitorMut};
 use sqlparser::dialect::{Dialect, GenericDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
 use sqlparser::parser::Parser;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
@@ -990,9 +990,9 @@ fn dialect(kind: &DbKind) -> &'static dyn Dialect {
 struct LiteralSanitizer;
 impl VisitorMut for LiteralSanitizer {
     type Break = ();
-    fn pre_visit_value(&mut self, value: &mut Value) -> ControlFlow<Self::Break> {
-        if !matches!(value, Value::Placeholder(_)) {
-            *value = Value::SingleQuotedString(REDACTED_LITERAL.to_string());
+    fn pre_visit_value(&mut self, value: &mut ValueWithSpan) -> ControlFlow<Self::Break> {
+        if !matches!(value.value, Value::Placeholder(_)) {
+            value.value = Value::SingleQuotedString(REDACTED_LITERAL.to_string());
         }
         ControlFlow::Continue(())
     }

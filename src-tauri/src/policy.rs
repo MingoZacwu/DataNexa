@@ -797,6 +797,25 @@ mod tests {
     }
 
     #[test]
+    fn permits_postgres_lateral_function_with_ordinality() {
+        // Regression: sqlparser 0.59 could not parse LATERAL <set-returning
+        // function>(...) WITH ORDINALITY, a valid read-only PostgreSQL form,
+        // and the fail-closed policy turned the parse gap into a rejection.
+        // Fixed upstream in 0.62 (PR #2304); this pins the grammar support.
+        assert!(rewritten(
+            &DbKind::Postgres,
+            "SELECT e.elem->>'k' AS v FROM t CROSS JOIN LATERAL \
+             jsonb_array_elements(t.j::jsonb) WITH ORDINALITY AS e(elem, ord)"
+        )
+        .ends_with("LIMIT 11"));
+        assert!(rewritten(
+            &DbKind::Postgres,
+            "SELECT DISTINCT ON (id) * FROM t ORDER BY id"
+        )
+        .ends_with("LIMIT 11"));
+    }
+
+    #[test]
     fn uses_wider_integer_for_probe_row_count() {
         let result = PolicyEngine::check_with_text(
             &DbKind::Postgres,
